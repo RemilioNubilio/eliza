@@ -1,0 +1,16 @@
+{
+  "name": "@elizaos/app-coding",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Placeholder workspace package for the coding app surface while the implementation lives elsewhere.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0"
+  }
+}
