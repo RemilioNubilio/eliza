@@ -1,5 +1,5 @@
 import type http from "node:http";
-import { logger, stringToUuid, type UUID } from "@elizaos/core";
+import { type Agent, logger, stringToUuid, type UUID } from "@elizaos/core";
 import type { ElizaConfig } from "../config/config.js";
 import { configFileExists, loadElizaConfig } from "../config/config.js";
 import {
@@ -167,8 +167,8 @@ export interface OnboardingRouteContext {
   hasPersistedOnboardingState: (config: ElizaConfig) => boolean;
   ensureWalletKeysInEnvAndConfig: (config: ElizaConfig) => boolean;
   getWalletAddresses: () => {
-    evmAddress?: string;
-    solanaAddress?: string;
+    evmAddress?: string | null;
+    solanaAddress?: string | null;
   };
   pickRandomNames: (count: number) => string[];
   getStylePresets: (lang: string) => unknown[];
@@ -181,7 +181,9 @@ export interface OnboardingRouteContext {
     req: http.IncomingMessage,
   ) => string;
   normalizeCharacterLanguage: (lang: string | undefined) => string;
-  readUiLanguageHeader: (req: http.IncomingMessage) => string | null;
+  readUiLanguageHeader: (
+    req: http.IncomingMessage,
+  ) => string | null | undefined;
   applyOnboardingVoicePreset: (
     config: ElizaConfig,
     body: Record<string, unknown>,
@@ -194,8 +196,8 @@ export interface OnboardingServerState {
   config: ElizaConfig;
   runtime: {
     agentId: string;
-    character: Record<string, unknown> & { name: string };
-    updateAgent: (...args: unknown[]) => Promise<unknown>;
+    character: Record<string, unknown> & { name?: string };
+    updateAgent: (agentId: string, agent: Partial<Agent>) => Promise<unknown>;
   } | null;
   agentName: string;
   adminEntityId: UUID | null;

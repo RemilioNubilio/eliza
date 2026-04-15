@@ -1,23 +1,16 @@
-import { v4 as uuidv4 } from "uuid";
-
-interface WorkingMemoryEntry {
-	actionName: string;
-	result: ActionResult;
-	timestamp: number;
-}
-
 import Handlebars from "handlebars";
+import { v4 as uuidv4 } from "uuid";
 import {
 	withCanonicalActionDocs,
 	withCanonicalEvaluatorDocs,
 } from "./action-docs";
 import { parseActionParams, validateActionParams } from "./actions";
+import { ensureConnection as ensureConnectionStandalone } from "./connection";
+import { InMemoryDatabaseAdapter } from "./database/inMemoryAdapter";
 import {
 	type CapabilityConfig,
 	createBasicCapabilitiesPlugin,
 } from "./features/basic-capabilities/index";
-import { ensureConnection as ensureConnectionStandalone } from "./connection";
-import { InMemoryDatabaseAdapter } from "./database/inMemoryAdapter";
 import { createLogger } from "./logger";
 import { simpleHash } from "./optimization/ab-analysis";
 import { getOptimizationRootDir } from "./optimization-root-dir";
@@ -160,6 +153,12 @@ import {
 } from "./utils/streaming";
 import { encodeToonValue } from "./utils/toon";
 import { isPlainObject } from "./utils/type-guards";
+
+interface WorkingMemoryEntry {
+	actionName: string;
+	result: ActionResult;
+	timestamp: number;
+}
 
 const environmentSettings: RuntimeSettings = {};
 const RUNTIME_TEMPLATE_CACHE = new Map<
