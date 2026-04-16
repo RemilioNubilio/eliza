@@ -67,11 +67,8 @@
     "packages/*",
     "packages/native-plugins/*",
     "apps/*",
-    "plugins/plugin-sql/typescript",
-    "plugins/plugin-ollama/typescript",
-    "plugins/plugin-local-ai/typescript",
-    "plugins/plugin-elizacloud/typescript",
-    "../packages/ui"
+    "plugins/*",
+    "plugins/*/typescript"
   ],
   "devDependencies": {
     "@bufbuild/buf": "^1.47.2",
