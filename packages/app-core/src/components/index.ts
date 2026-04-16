@@ -21,6 +21,7 @@ export * from "./chat/AgentActivityBox";
 export * from "./chat/MessageContent";
 export * from "./chat/SaveCommandModal";
 export * from "./chat/TasksEventsPanel";
+export * from "./cloud/CloudStatusBadge";
 export * from "./cloud/CloudSourceControls";
 
 export * from "./config-ui";

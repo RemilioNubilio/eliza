@@ -23,6 +23,7 @@ export * from "./components/companion/CompanionView.tsx";
 export * from "./components/companion/companion-app.ts";
 export * from "./components/companion/companion-scene-status-context.ts";
 export * from "./components/companion/companion-shell-styles.ts";
+export * from "./components/companion/shell-control-styles.ts";
 export * from "./components/companion/EmotePicker.tsx";
 export * from "./components/companion/GlobalEmoteOverlay.tsx";
 export * from "./components/companion/InferenceCloudAlertButton.tsx";

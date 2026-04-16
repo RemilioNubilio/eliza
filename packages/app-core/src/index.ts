@@ -50,6 +50,11 @@ export * from "./shell/index";
 export * from "./voice/index";
 export * from "./chat/index";
 export * from "./state/index";
+export {
+  ONBOARDING_STEPS,
+  type OnboardingStep,
+  type OnboardingStepMeta,
+} from "./state/types";
 export * from "./utils/index";
 
 export * from "./character-catalog";

@@ -45,6 +45,11 @@ export * from "./shell/index.ts";
 export * from "./voice/index.ts";
 export * from "./chat/index.ts";
 export * from "./state/index.ts";
+export {
+  ONBOARDING_STEPS,
+  type OnboardingStep,
+  type OnboardingStepMeta,
+} from "./state/types";
 export * from "./utils/index.ts";
 
 export * from "./character-catalog.ts";

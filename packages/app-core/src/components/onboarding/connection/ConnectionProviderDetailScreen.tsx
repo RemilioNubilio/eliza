@@ -851,7 +851,7 @@ export function ConnectionProviderDetailScreen({
                 {t("onboarding.loginWithOpenAI")}
               </Button>
               {openaiError && (
-                <OnboardingStatusBanner tone="danger">
+                <OnboardingStatusBanner tone="error">
                   {openaiError}
                 </OnboardingStatusBanner>
               )}
