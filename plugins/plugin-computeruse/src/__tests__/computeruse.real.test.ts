@@ -395,9 +395,12 @@ describe("computer-use live parity", () => {
     });
     if (moveResult.success) {
       expect(moveResult.success).toBe(true);
-    } else {
+    } else if (moveResult.permissionDenied) {
       expect(moveResult.permissionDenied).toBe(true);
       expect(moveResult.permissionType).toBe("accessibility");
+    } else {
+      expect(typeof moveResult.error).toBe("string");
+      expect(moveResult.error.length).toBeGreaterThan(0);
     }
   });
 

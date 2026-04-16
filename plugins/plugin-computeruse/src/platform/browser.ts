@@ -44,7 +44,12 @@ async function getPuppeteer() {
 let browser: Browser | null = null;
 let activePage: Page | null = null;
 let tempUserDataDir: string | null = null;
-let browserHeadless = false;
+let browserHeadless =
+  process.env.CI === "true" ||
+  process.env.GITHUB_ACTIONS === "true" ||
+  (currentPlatform() === "linux" &&
+    !process.env.DISPLAY &&
+    !process.env.WAYLAND_DISPLAY);
 
 export function setBrowserRuntimeOptions(options: {
   headless?: boolean;
