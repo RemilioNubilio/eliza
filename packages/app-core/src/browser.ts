@@ -14,10 +14,6 @@ export {
 } from "@elizaos/shared/restart";
 
 export * from "./api/index.ts";
-export * from "./api/auth.ts";
-export * from "./api/response.ts";
-export * from "./api/compat-route-shared.ts";
-export * from "./api/server-cloud-tts.ts";
 
 export * from "./bridge/index.ts";
 export * from "./config/index.ts";
@@ -54,7 +50,6 @@ export * from "./utils/index.ts";
 export * from "./character-catalog.ts";
 export * from "./security/platform-secure-store.ts";
 export * from "./security/agent-vault-id.ts";
-export * from "./security/platform-secure-store-node.ts";
 
 export * from "./onboarding/flow.ts";
 export * from "./onboarding/types.ts";
