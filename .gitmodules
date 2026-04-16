@@ -126,3 +126,7 @@
 	path = plugins/plugin-agent-orchestrator
 	url = https://github.com/elizaos-plugins/plugin-agent-orchestrator.git
 	branch = alpha
+[submodule "plugins/plugin-shroud"]
+	path = plugins/plugin-shroud
+	url = https://github.com/RemilioNubilio/plugin-shroud.git
+	branch = alpha
