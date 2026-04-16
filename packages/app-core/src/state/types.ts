@@ -1,11 +1,4 @@
-import type {
-  WalletChainKind,
-  WalletEntry,
-  WalletPrimaryMap,
-  WalletSource,
-} from "@elizaos/shared/contracts/wallet";
 import type { Dispatch, SetStateAction } from "react";
-import type { AgentProfile } from "./agent-profile-types";
 import type {
   AgentStatus,
   AppRunSummary,
@@ -46,14 +39,9 @@ import type {
   SkillMarketplaceResult,
   SkillScanReportSummary,
   StewardApprovalActionResponse,
-  StewardBalanceResponse,
   StewardHistoryResponse,
   StewardPendingResponse,
   StewardStatusResponse,
-  StewardTokenBalancesResponse,
-  StewardWalletAddressesResponse,
-  StewardWebhookEventsResponse,
-  StewardWebhookEventType,
   StreamEventEnvelope,
   SystemPermissionId,
   TriggerHealthSnapshot,
@@ -159,8 +147,12 @@ export const ONBOARDING_PERMISSION_LABELS: Record<SystemPermissionId, string> =
     "website-blocking": "Website Blocking",
   };
 
-import type { ActionNotice } from "./action-notice";
-export type { ActionNotice };
+export interface ActionNotice {
+  tone: string;
+  text: string;
+  /** When true, ShellOverlays shows an indeterminate spinner (long-running work). */
+  busy?: boolean;
+}
 
 export type LifecycleAction = "start" | "stop" | "restart" | "reset";
 
@@ -236,40 +228,6 @@ export interface StartupErrorState {
   path?: string;
 }
 
-export interface StartupCoordinatorView {
-  state: {
-    phase:
-      | "splash"
-      | "restoring-session"
-      | "resolving-target"
-      | "polling-backend"
-      | "pairing-required"
-      | "onboarding-required"
-      | "starting-runtime"
-      | "hydrating"
-      | "ready"
-      | "error";
-    [key: string]: unknown;
-  };
-  dispatch: (event: { type: string; [key: string]: unknown }) => void;
-  retry: () => void;
-  reset: () => void;
-  pairingSuccess: () => void;
-  onboardingComplete: () => void;
-  policy: {
-    supportsLocalRuntime: boolean;
-    backendTimeoutMs: number;
-    agentReadyTimeoutMs: number;
-    probeForExistingInstall: boolean;
-    defaultTarget: "embedded-local" | "remote-backend" | "cloud-managed" | null;
-  };
-  legacyPhase: StartupPhase;
-  loading: boolean;
-  terminal: boolean;
-  target: "embedded-local" | "remote-backend" | "cloud-managed" | null;
-  phase: StartupCoordinatorView["state"]["phase"];
-}
-
 export interface ApiLikeError {
   kind?: string;
   status?: number;
@@ -319,7 +277,7 @@ export interface AppState {
   startupPhase: StartupPhase;
   startupError: StartupErrorState | null;
   /** StartupCoordinator handle — the sole startup authority. */
-  startupCoordinator: StartupCoordinatorView;
+  startupCoordinator: import("./useStartupCoordinator").StartupCoordinatorHandle;
   authRequired: boolean;
   actionNotice: ActionNotice | null;
   lifecycleBusy: boolean;
@@ -437,11 +395,6 @@ export interface AppState {
   inventorySortDirection: "asc" | "desc";
   inventoryChainFilters: InventoryChainFilters;
   walletError: string | null;
-  wallets: WalletEntry[];
-  walletPrimary: WalletPrimaryMap | null;
-  walletPrimaryRestarting: Partial<Record<WalletChainKind, boolean>>;
-  walletPrimaryPending: Partial<Record<WalletChainKind, boolean>>;
-  cloudRefreshing: boolean;
 
   // ERC-8004 Registry
   registryStatus: RegistryStatus | null;
@@ -502,7 +455,7 @@ export interface AppState {
   elizaCloudDisconnecting: boolean;
 
   // Multi-agent profiles
-  activeAgentProfile: AgentProfile | null;
+  activeAgentProfile: import("./agent-profiles").AgentProfile | null;
 
   // Updates
   updateStatus: UpdateStatus | null;
@@ -824,13 +777,6 @@ export interface AppActions {
   ) => Promise<BscTradeQuoteResponse>;
   getBscTradeTxStatus: (hash: string) => Promise<BscTradeTxStatusResponse>;
   getStewardStatus: () => Promise<StewardStatusResponse>;
-  getStewardAddresses: () => Promise<StewardWalletAddressesResponse>;
-  getStewardBalance: (chainId?: number) => Promise<StewardBalanceResponse>;
-  getStewardTokens: (chainId?: number) => Promise<StewardTokenBalancesResponse>;
-  getStewardWebhookEvents: (opts?: {
-    event?: StewardWebhookEventType;
-    since?: number;
-  }) => Promise<StewardWebhookEventsResponse>;
   getStewardHistory: (opts?: {
     status?: string;
     limit?: number;
@@ -854,11 +800,6 @@ export interface AppActions {
   handleWalletApiKeySave: (
     config: WalletConfigUpdateRequest,
   ) => Promise<boolean>;
-  setWalletPrimary: (
-    chain: WalletChainKind,
-    source: WalletSource,
-  ) => Promise<void>;
-  refreshCloudWallets: () => Promise<void>;
   handleExportKeys: () => Promise<void>;
 
   // Registry / Drop

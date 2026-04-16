@@ -1,9 +1,3 @@
-/**
- * @deprecated This file is maintained for backward compatibility.
- * The canonical source has moved to `@elizaos/app-steward/api/wallet-rpc`.
- * New development should target the app-steward package.
- */
-
 import {
   isElizaCloudServiceSelectedInConfig,
   migrateLegacyRuntimeConfig,
@@ -75,13 +69,6 @@ type WalletCapableConfig = Pick<ElizaConfig, "cloud" | "env"> & {
   };
 };
 
-type CloudApiKeyRuntimeLike = {
-  getSetting?: (key: string) => unknown;
-  character?: {
-    secrets?: Record<string, unknown>;
-  } | null;
-} | null;
-
 export interface InventoryProviderOption {
   id: WalletRpcChain;
   name: string;
@@ -97,6 +84,8 @@ export interface InventoryProviderOption {
 
 export interface WalletRpcResolutionOptions {
   cloudManagedAccess?: boolean | null;
+  /** When eliza-cloud RPC is selected but no cloud API key is available, merge public RPC fallbacks so chain reads still work. */
+  includePublicRpcFallbacks?: boolean | null;
   cloudApiKey?: string | null;
   cloudBaseUrl?: string | null;
   walletNetwork?: "mainnet" | "testnet" | null;
@@ -166,29 +155,10 @@ const WALLET_RPC_CONFIG_KEYS = [
   "SOLANA_RPC_URL",
 ] as const satisfies readonly WalletRpcCredentialKey[];
 
-function _resolveWalletNetwork(): "mainnet" | "testnet" {
-  const explicit = process.env.ELIZA_WALLET_NETWORK?.trim().toLowerCase();
-  if (explicit === "testnet") return "testnet";
-  if (explicit === "mainnet") return "mainnet";
-  return process.env.BSC_TESTNET_RPC_URL?.trim() ? "testnet" : "mainnet";
-}
-
 function normalizeSecret(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function resolveRuntimeCloudApiKey(
-  runtime?: CloudApiKeyRuntimeLike,
-): string | null {
-  const fromSetting = runtime?.getSetting?.("ELIZAOS_CLOUD_API_KEY");
-  if (typeof fromSetting === "string") {
-    return normalizeSecret(fromSetting);
-  }
-
-  const fromSecrets = runtime?.character?.secrets?.ELIZAOS_CLOUD_API_KEY;
-  return typeof fromSecrets === "string" ? normalizeSecret(fromSecrets) : null;
 }
 
 export function resolveWalletNetworkMode(
@@ -274,6 +244,14 @@ function buildLegacyCustomChains(
   );
 }
 
+function shouldMergePublicRpcFallbacks(
+  options: WalletRpcResolutionOptions,
+): boolean {
+  return Boolean(
+    options.cloudManagedAccess || options.includePublicRpcFallbacks,
+  );
+}
+
 export function normalizeRpcUrl(url: string | null | undefined): string | null {
   if (typeof url !== "string") return null;
   const trimmed = url.trim();
@@ -313,12 +291,10 @@ export function resolveCloudApiBaseUrl(
 
 export function resolveCloudApiKey(
   config?: Pick<ElizaConfig, "cloud"> | null,
-  runtime?: CloudApiKeyRuntimeLike,
+  _runtime?: unknown,
 ): string | null {
   return normalizeSecret(
-    config?.cloud?.apiKey ??
-      resolveRuntimeCloudApiKey(runtime) ??
-      process.env.ELIZAOS_CLOUD_API_KEY,
+    config?.cloud?.apiKey ?? process.env.ELIZAOS_CLOUD_API_KEY,
   );
 }
 
@@ -503,7 +479,7 @@ export function resolveBscRpcUrls(
       process.env.BSC_RPC_URL,
       cloudRpcUrl,
     ],
-    options.cloudManagedAccess ? publicDefaults : [],
+    shouldMergePublicRpcFallbacks(options) ? publicDefaults : [],
   );
 }
 
@@ -512,7 +488,9 @@ export function resolveEthereumRpcUrls(
 ): string[] {
   return uniqueRpcUrls(
     [process.env.ETHEREUM_RPC_URL, buildCloudEvmRpcUrl("mainnet", options)],
-    options.cloudManagedAccess ? DEFAULT_PUBLIC_ETHEREUM_RPC_URLS : [],
+    shouldMergePublicRpcFallbacks(options)
+      ? DEFAULT_PUBLIC_ETHEREUM_RPC_URLS
+      : [],
   );
 }
 
@@ -521,7 +499,7 @@ export function resolveBaseRpcUrls(
 ): string[] {
   return uniqueRpcUrls(
     [process.env.BASE_RPC_URL, buildCloudEvmRpcUrl("base", options)],
-    options.cloudManagedAccess ? DEFAULT_PUBLIC_BASE_RPC_URLS : [],
+    shouldMergePublicRpcFallbacks(options) ? DEFAULT_PUBLIC_BASE_RPC_URLS : [],
   );
 }
 
@@ -530,7 +508,9 @@ export function resolveAvalancheRpcUrls(
 ): string[] {
   return uniqueRpcUrls(
     [process.env.AVALANCHE_RPC_URL, buildCloudEvmRpcUrl("avalanche", options)],
-    options.cloudManagedAccess ? DEFAULT_PUBLIC_AVALANCHE_RPC_URLS : [],
+    shouldMergePublicRpcFallbacks(options)
+      ? DEFAULT_PUBLIC_AVALANCHE_RPC_URLS
+      : [],
   );
 }
 
@@ -550,7 +530,7 @@ export function resolveSolanaRpcUrls(
       process.env.SOLANA_RPC_URL,
       cloudRpcUrl,
     ],
-    options.cloudManagedAccess ? publicDefaults : [],
+    shouldMergePublicRpcFallbacks(options) ? publicDefaults : [],
   );
 }
 
@@ -637,8 +617,10 @@ export function resolveWalletRpcReadiness(
       "rpc",
     );
   const cloudManagedAccess = Boolean(cloudApiKey && cloudRpcSelected);
+  const includePublicRpcFallbacks = Boolean(cloudRpcSelected && !cloudApiKey);
   const cloudOptions = {
     cloudManagedAccess,
+    includePublicRpcFallbacks,
     cloudApiKey,
     cloudBaseUrl,
     walletNetwork,

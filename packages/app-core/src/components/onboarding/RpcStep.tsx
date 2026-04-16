@@ -1,5 +1,6 @@
-import { useApp } from "../../state/useApp";
-
+import { normalizeWalletRpcSelections } from "@elizaos/agent/contracts/wallet";
+import { useApp } from "@elizaos/app-core/state";
+import { Button, Input } from "@elizaos/app-core";
 import { useState } from "react";
 import {
   onboardingCardSurfaceClassName,
@@ -12,7 +13,6 @@ import {
   onboardingRecommendedSurfaceClassName,
   onboardingRecommendedSurfaceHoverClassName,
 } from "./onboarding-form-primitives";
-import { Button, Input } from "@elizaos/ui";
 import {
   OnboardingSecondaryActionButton,
   OnboardingStepHeader,
@@ -381,7 +381,12 @@ export function RpcStep() {
             if (rpcKeys.HELIUS_API_KEY) {
               selections.solana = "helius-birdeye";
             }
-            setState("onboardingRpcSelections", selections);
+            const normalized = normalizeWalletRpcSelections(selections);
+            setState("onboardingRpcSelections", {
+              evm: normalized.evm,
+              bsc: normalized.bsc,
+              solana: normalized.solana,
+            });
             void handleOnboardingNext();
           }}
           type="button"

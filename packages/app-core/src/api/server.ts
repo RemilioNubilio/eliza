@@ -79,7 +79,7 @@ export {
   isSafeResetStateDir,
   resolveCorsOrigin,
 } from "./server-startup";
-export { resolveWalletExportRejection } from "@elizaos/app-steward/routes/server-wallet-trade";
+export { resolveWalletExportRejection } from "./server-wallet-trade";
 export {
   AGENT_EVENT_ALLOWED_STREAMS,
   CONFIG_WRITE_ALLOWED_TOP_KEYS,
@@ -108,14 +108,14 @@ export {
   type CompatRuntimeState,
 } from "./compat-route-shared";
 
-import { initStewardWalletCache } from "@elizaos/agent/api/wallet";
 import {
   type ElizaConfig,
   loadElizaConfig,
   saveElizaConfig,
 } from "@elizaos/agent/config/config";
 import { resolveUserPath } from "@elizaos/agent/config/paths";
-import { buildCharacterFromConfig } from "../runtime/build-character-from-config";
+import { buildCharacterFromConfig } from "../runtime/eliza";
+import { loadStewardCredentials } from "../services/steward-credentials";
 import { resolveDefaultAgentWorkspaceDir } from "@elizaos/agent/providers/workspace";
 import {
   isElizaSettingsDebugEnabled,
@@ -136,8 +136,8 @@ import {
   getCorsAllowedPorts,
   isAllowedLocalOrigin,
 } from "./server-cors";
-// Phase 2 extraction: Vincent routes → app-vincent/src/plugin.ts (vincentPlugin)
-// Phase 2 extraction: Shopify routes → app-shopify/src/plugin.ts (shopifyPlugin)
+import { handleShopifyRoute } from "./shopify-routes";
+import { handleVincentRoute } from "./vincent-routes";
 import {
   isAllowedDevConsoleLogPath,
   readDevConsoleLogTail,
@@ -148,10 +148,11 @@ import { handleDatabaseRowsCompatRoute } from "./database-rows-compat-routes";
 import { handleDevCompatRoutes } from "./dev-compat-routes";
 import { handleOnboardingCompatRoute } from "./onboarding-compat-routes";
 import { handlePluginsCompatRoutes } from "./plugins-compat-routes";
-// Phase 2 extraction: Steward compat routes → app-steward/src/plugin.ts (stewardPlugin)
-// Includes: handleWalletBrowserCompatRoutes, handleWalletTradeCompatRoutes,
-//           handleStewardCompatRoutes, handleWalletCompatRoutes
+import { handleWalletBrowserCompatRoutes } from "./wallet-browser-compat-routes";
+import { handleWalletTradeCompatRoutes } from "./wallet-trade-compat-routes";
+import { handleStewardCompatRoutes } from "./steward-compat-routes";
 import { handleWorkbenchCompatRoutes } from "./workbench-compat-routes";
+import { handleWalletCompatRoutes } from "./wallet-compat-routes";
 import { resolveDevStackFromEnv } from "./dev-stack";
 
 const require = createRequire(import.meta.url);
@@ -165,8 +166,8 @@ const lazyEnsureTTS = () =>
   );
 
 import { getStartupEmbeddingAugmentation } from "../runtime/startup-overlay.js";
-import { hydrateWalletKeysFromNodePlatformSecureStore } from "@elizaos/app-steward/security/hydrate-wallet-keys-from-platform-store";
-import { deleteWalletSecretsFromOsStore } from "@elizaos/app-steward/security/wallet-os-store-actions";
+import { hydrateWalletKeysFromNodePlatformSecureStore } from "../security/hydrate-wallet-keys-from-platform-store";
+import { deleteWalletSecretsFromOsStore } from "../security/wallet-os-store-actions";
 import { clearCloudSecrets, getCloudSecret } from "./cloud-secrets";
 import { clearPersistedOnboardingConfig } from "@elizaos/agent/api/provider-switch-config";
 
@@ -234,7 +235,11 @@ function resolveCompatConfigPaths(): {
 
 export function syncCompatConfigFiles(): void {
   const { elizaConfigPath, appConfigPath } = resolveCompatConfigPaths();
-  if (!elizaConfigPath || !appConfigPath || elizaConfigPath === appConfigPath) {
+  if (
+    !elizaConfigPath ||
+    !appConfigPath ||
+    elizaConfigPath === appConfigPath
+  ) {
     return;
   }
 
@@ -729,7 +734,6 @@ async function handleCompatRoute(
     }
     return handleCloudCompatRoute(req, res, url.pathname, method, {
       config: resolveCloudConfig(state.current),
-      runtime: state.current,
     });
   }
 
@@ -742,7 +746,6 @@ async function handleCompatRoute(
     }
     return handleCloudBillingRoute(req, res, url.pathname, method, {
       config: resolveCloudConfig(state.current),
-      runtime: state.current,
     });
   }
 
@@ -867,13 +870,34 @@ async function handleCompatRoute(
     return handled;
   }
 
-  // ── Vincent OAuth routes — extracted to app-vincent/src/plugin.ts ──
-  // Now served via vincentPlugin.routes (rawPath) on the runtime plugin
-  // route system.  /callback/vincent is marked public: true.
+  // ── Vincent OAuth routes ────────────────────────────────────────
+  // /callback/vincent is the OAuth redirect target and is hit by the user's
+  // external system browser — it has no compat API token, so it must bypass
+  // ensureCompatApiAuthorized. The PKCE code_verifier stored server-side
+  // (keyed by the OAuth state param) is what actually authorizes the
+  // token exchange.
+  if (
+    url.pathname.startsWith("/api/vincent/") ||
+    url.pathname === "/callback/vincent"
+  ) {
+    if (
+      url.pathname !== "/callback/vincent" &&
+      !ensureCompatApiAuthorized(req, res)
+    )
+      return true;
+    const vincentConfig = loadElizaConfig();
+    const handled = await handleVincentRoute(req, res, url.pathname, method, {
+      config: vincentConfig,
+    });
+    if (handled) return true;
+  }
 
-  // ── Shopify routes — extracted to app-shopify/src/plugin.ts ───────
-  // Now served via shopifyPlugin.routes (rawPath) on the runtime plugin
-  // route system.
+  // ── Shopify routes ────────────────────────────────────────────────
+  if (url.pathname.startsWith("/api/shopify")) {
+    if (!ensureCompatApiAuthorized(req, res)) return true;
+    const handled = await handleShopifyRoute(req, res, url.pathname, method);
+    if (handled) return true;
+  }
 
   if (method === "POST" && url.pathname === "/api/agent/reset") {
     if (!ensureCompatSensitiveRouteAuthorized(req, res)) {
@@ -916,10 +940,17 @@ async function handleCompatRoute(
     return true;
   }
 
-  // ── Steward wallet compat routes — extracted to app-steward/src/plugin.ts ──
-  // All four handler groups (wallet-compat, wallet-browser-compat,
-  // steward-compat, wallet-trade-compat) are now served via
-  // stewardPlugin.routes (rawPath) on the runtime plugin route system.
+  // Wallet OS-store, keys, NFTs — extracted to wallet-compat-routes.ts
+  if (await handleWalletCompatRoutes(req, res, state)) return true;
+
+  // Browser wallet bridge transactions.
+  if (await handleWalletBrowserCompatRoutes(req, res, state)) return true;
+
+  // Steward wallet routes — extracted to steward-compat-routes.ts
+  if (await handleStewardCompatRoutes(req, res, state)) return true;
+
+  // Wallet trade / transfer routes — extracted to wallet-trade-compat-routes.ts
+  if (await handleWalletTradeCompatRoutes(req, res, state)) return true;
 
   // Plugin routes — extracted to plugins-compat-routes.ts
   if (await handlePluginsCompatRoutes(req, res, state)) return true;
@@ -993,14 +1024,6 @@ async function handleCompatRoute(
 
   if (!ensureCompatApiAuthorized(req, res)) return true;
   return handleDatabaseRowsCompatRoute(req, res, state.current);
-}
-
-export async function handleMiladyCompatRoute(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  state: CompatRuntimeState,
-): Promise<boolean> {
-  return await handleCompatRoute(req, res, state);
 }
 
 export function patchHttpCreateServerForCompat(
@@ -1092,7 +1115,10 @@ export function patchHttpCreateServerForCompat(
             return;
           }
         } catch (err) {
-          console.error("[compat] unhandled error in route handler", err);
+          console.error(
+            "[compat] unhandled error in route handler",
+            err,
+          );
           if (!res.headersSent) {
             res.statusCode = 500;
             res.setHeader("content-type", "application/json; charset=utf-8");
@@ -1136,9 +1162,39 @@ export async function startApiServer(
   hydrateWalletOsStoreFlagFromConfig();
   await hydrateWalletKeysFromNodePlatformSecureStore();
 
-  // Pre-load steward wallet addresses so getWalletAddresses() has them
-  // available synchronously from the start.
-  await initStewardWalletCache();
+  // Hydrate steward credentials from persisted steward-credentials.json so the
+  // @stwd/eliza-plugin can find existing tenant/agent on restart without re-bootstrap.
+  try {
+    const creds = loadStewardCredentials();
+    if (creds) {
+      const stewardEnvMap: Record<string, string | undefined> = {
+        STEWARD_API_URL: creds.apiUrl,
+        STEWARD_TENANT_ID: creds.tenantId,
+        STEWARD_API_KEY: creds.apiKey,
+        STEWARD_AGENT_ID: creds.agentId,
+        STEWARD_AGENT_TOKEN: creds.agentToken,
+        STEWARD_EVM_ADDRESS: creds.walletAddresses?.evm,
+        STEWARD_SOLANA_ADDRESS: creds.walletAddresses?.solana,
+      };
+      for (const [k, v] of Object.entries(stewardEnvMap)) {
+        if (typeof v === "string" && v.trim()) {
+          // Overwrite stale values from milady.json — steward-credentials.json
+          // is the authoritative source for steward connection state.
+          process.env[k] = v.trim();
+        }
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // Subscription credentials (Claude Code OAuth, Codex) are applied by
+  // applySubscriptionCredentials() in the runtime startup — not here.
+  // Only the user's active subscription provider should auto-enable,
+  // not every provider with a detectable key (that causes race/duplicate issues).
+
+  // Steward address cache: upstream `startApiServer` calls `initStewardWalletCache`
+  // after `loadElizaConfig` + `envKeysToHydrate` (so EVM/SOL keys from milady.json
+  // and STEWARD_* are in process.env first). Do not call it here — an early call
+  // ran before blocked keys were hydrated and could not see steward file paths.
   const compatState: CompatRuntimeState = {
     current: (args[0]?.runtime as AgentRuntime | null) ?? null,
     pendingAgentName: null,

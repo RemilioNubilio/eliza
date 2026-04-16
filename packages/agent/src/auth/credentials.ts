@@ -419,12 +419,12 @@ export async function applySubscriptionCredentials(config?: {
   // ── Anthropic subscription ──────────────────────────────────────────
   //
   // Anthropic subscription tokens (sk-ant-oat*) are restricted to the
-  // Claude Code CLI by Anthropic's TOS. They must NOT be used for direct
-  // API calls from the elizaOS runtime. The subscription token only flows
-  // to spawned coding-agent CLI sessions via the orchestrator plugin
-  // (which ARE Claude Code). If the user has only a subscription and no
-  // API key, the runtime simply won't have an Anthropic provider — they
-  // need an API key or Eliza Cloud for the main agent.
+  // Claude Code CLI — the Anthropic API does not accept OAuth tokens
+  // directly ("OAuth authentication is currently not supported").
+  // The subscription token only flows to spawned coding-agent CLI
+  // sessions via the orchestrator plugin (which ARE Claude Code).
+  // If the user has only a subscription and no API key, the runtime
+  // needs an API key, Eliza Cloud, or another provider for the main agent.
   let anthropicToken = await getAccessToken("anthropic-subscription");
   if (!anthropicToken) {
     anthropicToken = await importClaudeCodeOAuthToken();
@@ -432,7 +432,7 @@ export async function applySubscriptionCredentials(config?: {
   if (anthropicToken) {
     logger.info(
       "[auth] Anthropic subscription detected — available for coding agents (Claude Code CLI). " +
-        "Not applied to runtime env. Add an API key or connect Eliza Cloud for the main agent.",
+        "Not applied to runtime env (OAuth not supported by Anthropic API).",
     );
   }
 

@@ -30,6 +30,7 @@ import {
   openExternalUrl,
   yieldHttpAfterNativeMessageBox,
 } from "../utils";
+import { shouldReuseExistingCloudSession } from "./cloud-session";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -151,9 +152,22 @@ export function useCloudState({
       return lastElizaCloudPollConnectedRef.current;
     }
     if (!cloudStatus) {
-      // Preserve the last applied cloud snapshot across transient backend
-      // restarts so the UI does not flap into a false "disconnected" state.
-      return lastElizaCloudPollConnectedRef.current;
+      setElizaCloudConnected(false);
+      publishElizaCloudVoiceSnapshot(setElizaCloudHasPersistedKey, {
+        apiConnected: false,
+        enabled: false,
+        cloudVoiceProxyAvailable: false,
+        hasPersistedApiKey: false,
+      });
+      setElizaCloudVoiceProxyAvailable(false);
+      setElizaCloudCredits(null);
+      setElizaCloudCreditsLow(false);
+      setElizaCloudCreditsCritical(false);
+      setElizaCloudAuthRejected(false);
+      setElizaCloudCreditsError(null);
+      setElizaCloudStatusReason(null);
+      lastElizaCloudPollConnectedRef.current = false;
+      return false;
     }
     const enabled = Boolean(cloudStatus.enabled ?? false);
     const cloudVoiceProxyAvailable = Boolean(
@@ -257,9 +271,25 @@ export function useCloudState({
   }, []);
 
   const handleCloudLogin = useCallback(async () => {
-    // Already connected (existing API key) — no need to re-authenticate.
-    if (elizaCloudConnected) return;
     if (elizaCloudLoginBusyRef.current || elizaCloudLoginBusy) return;
+
+    const existingStatus = elizaCloudConnected
+      ? { connected: true }
+      : await client.getCloudStatus().catch(() => null);
+    if (
+      shouldReuseExistingCloudSession({
+        localConnected: elizaCloudConnected,
+        statusSnapshot: existingStatus,
+      })
+    ) {
+      if (Boolean(client.getBaseUrl())) {
+        void pollCloudCredits();
+      }
+      void loadWalletConfig();
+      setActionNotice("Already connected to Eliza Cloud.", "success", 4000);
+      return;
+    }
+
     elizaCloudLoginBusyRef.current = true;
     setElizaCloudLoginBusy(true);
     setElizaCloudLoginError(null);
@@ -271,18 +301,6 @@ export function useCloudState({
     const cloudApiBase =
       getBootConfig().cloudApiBase ?? "https://www.elizacloud.ai";
     const useDirectAuth = !hasBackend;
-
-    if (hasBackend) {
-      const alreadyConnected = await pollCloudCredits();
-      if (alreadyConnected) {
-        await loadWalletConfig().catch(() => undefined);
-        setElizaCloudLoginError(null);
-        setActionNotice("Already connected to Eliza Cloud.", "info", 4000);
-        elizaCloudLoginBusyRef.current = false;
-        setElizaCloudLoginBusy(false);
-        return;
-      }
-    }
 
     try {
       let resp: {
@@ -388,7 +406,7 @@ export function useCloudState({
               // Direct auth bypasses the backend's login/status handler, so
               // the API key was never persisted server-side. Send it now so
               // billing/compat routes can authenticate with Eliza Cloud.
-              void fetch("/api/cloud/login/persist", {
+              await fetch("/api/cloud/login/persist", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ apiKey: poll.token }),
@@ -397,9 +415,17 @@ export function useCloudState({
               });
             }
 
-            // The backend owns the cloud-wallet bind + runtime reload now.
-            // Startup/ws recovery will rehydrate wallet + cloud state once the
-            // restart completes, so avoid kicking off a second client restart.
+            if (hasBackend) {
+              await pollCloudCredits();
+            }
+
+            await loadWalletConfig();
+            await client
+              .getStewardStatus()
+              .then(() => loadWalletConfig())
+              .catch(() => {
+                /* Steward optional */
+              });
           } else if (poll.status === "expired" || poll.status === "error") {
             stopCloudLoginPolling(
               poll.error ?? "Login session expired. Please try again.",

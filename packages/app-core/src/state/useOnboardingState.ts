@@ -6,6 +6,7 @@
  * Remote connection state (connecting/connected/error) collapses into one object.
  */
 
+import { DEFAULT_WALLET_RPC_SELECTIONS } from "@elizaos/agent/contracts/wallet";
 import { getDefaultStylePreset } from "@elizaos/shared/onboarding-presets";
 import { useCallback, useReducer, useRef } from "react";
 import type { OnboardingOptions } from "../api";
@@ -240,7 +241,11 @@ function createInitialState(cloudOnly?: boolean): OnboardingState {
     subscriptionTab: "token",
     elizaCloudTab: "login",
     selectedChains: new Set(["evm", "solana"]),
-    rpcSelections: {},
+    rpcSelections: {
+      evm: DEFAULT_WALLET_RPC_SELECTIONS.evm,
+      bsc: DEFAULT_WALLET_RPC_SELECTIONS.bsc,
+      solana: DEFAULT_WALLET_RPC_SELECTIONS.solana,
+    },
     rpcKeys: {},
     featureTelegram: false,
     featureDiscord: false,

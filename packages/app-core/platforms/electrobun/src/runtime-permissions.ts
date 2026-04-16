@@ -4,6 +4,7 @@ import type {
   SystemPermissionId,
 } from "./native/permissions-shared";
 import { getBrandConfig } from "./brand-config";
+import { getDesktopApiHeaders } from "./native/agent";
 
 export const RUNTIME_PERMISSION_IDS = ["website-blocking"] as const;
 
@@ -59,8 +60,10 @@ export async function fetchRuntimePermissionState(
         : `/api/permissions/${permissionId}/open-settings`;
 
   try {
+    const authHeaders = getDesktopApiHeaders();
     const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
       method: operation === "check" ? "GET" : "POST",
+      ...(authHeaders ? { headers: authHeaders } : {}),
     });
     if (!response.ok) {
       console.warn(

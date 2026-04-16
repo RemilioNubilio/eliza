@@ -2,10 +2,7 @@
 import type { ProviderOption } from "../../../api";
 import { appNameInterpolationVars, useBranding } from "../../../config";
 import { canRunLocal } from "../../../platform/init";
-import type {
-  ConnectionEffect,
-  ConnectionEvent,
-} from "../../../onboarding/connection-flow";
+import type { ConnectionEvent } from "../../../onboarding/connection-flow";
 import { CONNECTION_RECOMMENDED_PROVIDER_IDS } from "../../../onboarding/connection-flow";
 import { getProviderLogo } from "../../../providers";
 import { useApp } from "../../../state";
@@ -29,14 +26,12 @@ const recommendedIds = new Set<string>(CONNECTION_RECOMMENDED_PROVIDER_IDS);
 
 export function ConnectionProviderGridScreen({
   dispatch,
-  onTransitionEffect,
   sortedProviders,
   getProviderDisplay,
   getCustomLogo,
   getDetectedLabel,
 }: {
   dispatch: (event: ConnectionEvent) => void;
-  onTransitionEffect: (effect: ConnectionEffect) => void;
   sortedProviders: ProviderOption[];
   getProviderDisplay: (provider: ProviderOption) => {
     name: string;
@@ -51,7 +46,7 @@ export function ConnectionProviderGridScreen({
   getDetectedLabel: (providerId: string) => string | null;
 }) {
   const branding = useBranding();
-  const { t, onboardingRemoteConnected, handleOnboardingBack, handleOnboardingNext } = useApp();
+  const { t, onboardingRemoteConnected, handleOnboardingNext } = useApp();
 
   return (
     <>
@@ -146,27 +141,7 @@ export function ConnectionProviderGridScreen({
           );
         })}
       </div>
-      <div className={`${onboardingFooterClass} pb-1`}>
-        <Button
-          variant="ghost"
-          className={onboardingSecondaryActionClass}
-          style={onboardingSecondaryActionTextShadowStyle}
-          onClick={() => {
-            if (onboardingRemoteConnected) {
-              onTransitionEffect("useLocalBackend");
-              return;
-            }
-            // Local-default skips the hosting screen, so back goes to previous wizard step.
-            if (canRunLocal()) {
-              handleOnboardingBack();
-              return;
-            }
-            dispatch({ type: "backRemoteOrGrid" });
-          }}
-          type="button"
-        >
-          {t("onboarding.back")}
-        </Button>
+      <div className={`${onboardingFooterClass} !justify-end pb-1`}>
         <Button
           variant="ghost"
           className={onboardingSecondaryActionClass}

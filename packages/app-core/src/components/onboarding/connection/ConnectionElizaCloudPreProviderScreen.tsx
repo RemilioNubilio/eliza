@@ -17,7 +17,6 @@ import {
 } from "../onboarding-form-primitives";
 import {
   OnboardingLinkActionButton,
-  OnboardingSecondaryActionButton,
   OnboardingStepHeader,
   onboardingFooterClass,
   onboardingPrimaryActionClass,
@@ -189,13 +188,7 @@ export function ConnectionElizaCloudPreProviderScreen({
         )}
       </div>
 
-      <div className={onboardingFooterClass}>
-        <OnboardingSecondaryActionButton
-          onClick={() => dispatch({ type: "backElizaCloudPreProvider" })}
-          type="button"
-        >
-          {t("onboarding.back")}
-        </OnboardingSecondaryActionButton>
+      <div className={`${onboardingFooterClass} !justify-end`}>
         <Button
           className={onboardingPrimaryActionClass}
           style={onboardingPrimaryActionTextShadowStyle}

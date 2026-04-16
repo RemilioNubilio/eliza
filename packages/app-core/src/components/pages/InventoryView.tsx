@@ -1,7 +1,30 @@
-import type { StewardStatusResponse } from "@elizaos/shared/contracts/wallet";
-import { useApp } from "../../state/useApp";
-import { WidgetHost } from "../../widgets";
+/**
+ * Inventory view — unified wallet balances, NFTs, and scoped BSC trading.
+ *
+ * Thin coordinator that delegates rendering to sub-components
+ * in the ./inventory/ directory.
+ */
 
+import type { StewardStatusResponse } from "@elizaos/app-core/api";
+import { useApp } from "@elizaos/app-core/state";
+import { WidgetHost } from "../../widgets";
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  PageLayout,
+  PagePanel,
+  SegmentedControl,
+  Sidebar,
+  SidebarContent,
+  SidebarFilterBar,
+  SidebarHeader,
+  SidebarPanel,
+  SidebarScrollRegion,
+  TooltipHint,
+} from "@elizaos/app-core";
 import {
   AlertTriangle,
   ChevronDown,
@@ -39,10 +62,10 @@ import { NftGrid } from "../inventory/NftGrid";
 import { TokensTable } from "../inventory/TokensTable";
 import { useInventoryData } from "../inventory/useInventoryData";
 import { PolicyControlsView } from "../settings/PolicyControlsView";
-import { ApprovalQueue } from "@elizaos/app-steward/ApprovalQueue";
-import { TransactionHistory } from "@elizaos/app-steward/TransactionHistory";
+import { ApprovalQueue } from "@elizaos/app-steward/ui";
+import { TransactionHistory } from "@elizaos/app-steward/ui";
+import { buildWalletRpcUpdateRequest } from "../../wallet-rpc";
 import { ConfigPageView } from "./ConfigPageView";
-import { PagePanel, SidebarContent, SidebarFilterBar, SidebarHeader, SidebarPanel, Sidebar, SidebarScrollRegion, Button, Dialog, DialogContent, DialogHeader, DialogTitle, SegmentedControl, TooltipHint, PageLayout } from "@elizaos/ui";
 
 /* ── Component ─────────────────────────────────────────────────────── */
 
@@ -173,7 +196,7 @@ function StewardWalletInfoPopup({
       </Button>
 
       {/* RPC configuration */}
-      <div className="pt-4">
+      <div className="border-t border-border/50 pt-4">
         <div className="text-xs font-semibold text-txt mb-2">
           {t("settings.rpcConfiguration", {
             defaultValue: "RPC Configuration",
@@ -183,7 +206,7 @@ function StewardWalletInfoPopup({
       </div>
 
       {/* Advanced: show local key import */}
-      <div className="pt-3">
+      <div className="border-t border-border/50 pt-3">
         <Button
           variant="ghost"
           size="sm"
@@ -253,6 +276,9 @@ export function InventoryView() {
     loadBalances,
     loadNfts,
     elizaCloudConnected,
+    elizaCloudHasPersistedKey,
+    handleWalletApiKeySave,
+    walletApiKeySaving,
     setTab,
     setState,
     setActionNotice,
@@ -273,6 +299,11 @@ export function InventoryView() {
     handleVincentDisconnect,
     t,
   } = useApp();
+
+  const cloudReadyForWalletImport = useMemo(
+    () => elizaCloudConnected || Boolean(elizaCloudHasPersistedKey),
+    [elizaCloudConnected, elizaCloudHasPersistedKey],
+  );
 
   // ── Tracked tokens state ──────────────────────────────────────────
   const [trackedTokens, setTrackedTokens] = useState<TrackedToken[]>(() =>
@@ -353,6 +384,37 @@ export function InventoryView() {
   const goToRpcSettings = useCallback(() => {
     setWalletRpcOpen(true);
   }, []);
+
+  /** Enable Eliza Cloud managed RPC for all chains without restarting the agent. */
+  const handleImportFromCloud = useCallback(async () => {
+    if (!cloudReadyForWalletImport) {
+      setActionNotice(
+        t("wallet.setup.loginCloudFirst", {
+          defaultValue: "Sign in to Eliza Cloud first (Settings → Cloud).",
+        }),
+        "error",
+      );
+      return;
+    }
+    const config = buildWalletRpcUpdateRequest({
+      walletConfig,
+      rpcFieldValues: {},
+      selectedProviders: {
+        evm: "eliza-cloud",
+        bsc: "eliza-cloud",
+        solana: "eliza-cloud",
+      },
+      selectedNetwork:
+        walletConfig?.walletNetwork === "testnet" ? "testnet" : "mainnet",
+    });
+    await handleWalletApiKeySave(config);
+  }, [
+    cloudReadyForWalletImport,
+    handleWalletApiKeySave,
+    setActionNotice,
+    t,
+    walletConfig,
+  ]);
 
   // ── Derived data (hook) ───────────────────────────────────────────
   const {
@@ -845,6 +907,7 @@ export function InventoryView() {
   const hasAnyAddress = Boolean(
     evmAddr || solAddr || stewardEvmAddrPresent || stewardSolAddrPresent,
   );
+  const cloudRpcReadyWithoutWallet = !hasAnyAddress && cloudManagedAccess;
   const walletSubTabItems = [
     { value: "balances" as const, label: "Balances" },
     { value: "transactions" as const, label: "Transactions" },
@@ -863,7 +926,7 @@ export function InventoryView() {
     <div className="mb-4 flex justify-end">
       <SegmentedControl
         value={walletSubTab}
-        onValueChange={(value: WalletSubTab) => setWalletSubTab(value)}
+        onValueChange={setWalletSubTab}
         items={walletSubTabItems}
       />
     </div>
@@ -952,28 +1015,42 @@ export function InventoryView() {
                 </div>
                 <div className="text-center">
                   <h3 className="text-sm font-semibold text-txt">
-                    {t("wallet.setup.title", {
-                      defaultValue: "Connect your wallet",
-                    })}
+                    {cloudRpcReadyWithoutWallet
+                      ? t("wallet.setup.cloudRpcReadyTitle", {
+                          defaultValue: "Eliza Cloud RPC connected",
+                        })
+                      : t("wallet.setup.title", {
+                          defaultValue: "Connect your wallet",
+                        })}
                   </h3>
                   <p className="mt-1 max-w-sm text-xs text-muted">
-                    {t("wallet.setup.description", {
-                      defaultValue:
-                        "Connect via Eliza Cloud or configure wallet keys directly to start trading.",
-                    })}
+                    {cloudRpcReadyWithoutWallet
+                      ? t("wallet.setup.cloudRpcReadyDescription", {
+                          defaultValue:
+                            "Managed RPC is ready. Add or import wallet keys in Wallet & RPC to start trading.",
+                        })
+                      : t("wallet.setup.description", {
+                          defaultValue:
+                            "Use Eliza Cloud for managed RPC or configure wallet keys directly to start trading.",
+                        })}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-2">
-                  {elizaCloudConnected ? (
+                  {cloudReadyForWalletImport && !cloudRpcReadyWithoutWallet ? (
                     <Button
                       variant="default"
                       size="sm"
                       className="rounded-full px-5"
-                      onClick={goToRpcSettings}
+                      disabled={walletApiKeySaving}
+                      onClick={() => void handleImportFromCloud()}
                     >
-                      {t("wallet.setup.importFromCloud", {
-                        defaultValue: "Import from Eliza Cloud",
-                      })}
+                      {walletApiKeySaving
+                        ? t("wallet.setup.importFromCloudSaving", {
+                            defaultValue: "Connecting…",
+                          })
+                        : t("wallet.setup.importFromCloud", {
+                            defaultValue: "Use Eliza Cloud RPC",
+                          })}
                     </Button>
                   ) : null}
                   {/* Vincent connection moved to Apps → Vincent */}
@@ -1086,7 +1163,12 @@ export function InventoryView() {
               }}
             />
           ) : (
-            <ConfigPageView embedded />
+            <ConfigPageView
+              embedded
+              onWalletSaveSuccess={() => {
+                setWalletRpcOpen(false);
+              }}
+            />
           )}
         </DialogContent>
       </Dialog>

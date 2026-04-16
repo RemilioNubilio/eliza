@@ -67,18 +67,23 @@ export async function handleStewardCompatRoutes(
       return true;
     }
 
-    const addresses = getWalletAddresses();
+    let addresses = getWalletAddresses();
 
-    // Lazy initialization: on first request, ensure the steward agent exists
+    // Lazy initialization: on first request, ensure the steward agent exists.
+    // Must await so persisted addresses land in the runtime cache before we
+    // build status (otherwise the first response stays stale until restart).
     if (isStewardConfigured()) {
       const agentId = resolveStewardAgentId(process.env, addresses.evmAddress);
       const characterName = getConfiguredCompatAgentName();
-      void ensureStewardAgent({
-        agentId: agentId ?? undefined,
-        agentName: characterName ?? undefined,
-      }).catch(() => {
+      try {
+        await ensureStewardAgent({
+          agentId: agentId ?? undefined,
+          agentName: characterName ?? undefined,
+        });
+        addresses = getWalletAddresses();
+      } catch {
         /* non-fatal — logged internally */
-      });
+      }
     }
 
     const status = await getStewardBridgeStatus({

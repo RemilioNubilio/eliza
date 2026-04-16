@@ -19,12 +19,21 @@ const requiredPaths = [
 ];
 const forbiddenPrefixes = ["dist/Eliza.app/"];
 const orchestratorBrokenLifecycleTarget = "./scripts/ensure-node-pty.mjs";
-const orchestratorPluginPackageJsonPath = resolve(
-  "eliza",
-  "plugins",
-  "plugin-agent-orchestrator",
-  "package.json",
-);
+const orchestratorPluginPackageJsonPathCandidates = [
+  resolve("eliza", "plugins", "plugin-agent-orchestrator", "package.json"),
+  resolve(
+    ".eliza.ci-disabled",
+    "plugins",
+    "plugin-agent-orchestrator",
+    "package.json",
+  ),
+  resolve(
+    "node_modules",
+    "@elizaos",
+    "plugin-agent-orchestrator",
+    "package.json",
+  ),
+] as const;
 const autonomousServerPathCandidates = [
   "node_modules/@elizaos/agent/src/api/server.js",
   "eliza/packages/agent/src/api/server.ts",
@@ -36,6 +45,14 @@ const autonomousElizaPathCandidates = [
 const homepageReleaseDataPathCandidates = [
   "apps/homepage/src/generated/release-data.ts",
 ] as const;
+
+function resolveExistingPath(candidates: readonly string[]) {
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function resolveOrchestratorPluginPackageJsonPath() {
+  return resolveExistingPath(orchestratorPluginPackageJsonPathCandidates);
+}
 const requiredWorkflowSnippets = [
   'BUN_VERSION: "1.3.11"',
   "workflow_call:",
@@ -237,8 +254,8 @@ const requiredElectrobunConfigSnippets = [
   'postBuild: "scripts/postwrap-sign-runtime-macos.ts"',
   'postWrap: "scripts/postwrap-diagnostics.ts"',
   "process.env.ELIZA_ELECTROBUN_NOTARIZE ??",
-  '"../../../plugins.json": `${runtimeDistDir}/plugins.json`',
-  '"../../../package.json": `${runtimeDistDir}/package.json`',
+  "[repoPluginsJsonPath]: `${runtimeDistDir}/plugins.json`",
+  "[repoPackageJsonPath]: `${runtimeDistDir}/package.json`",
 ];
 const localPackHotspotPaths = [
   "dist",
@@ -247,6 +264,25 @@ const localPackHotspotPaths = [
   "apps/app/dist/vrms",
   "apps/app/dist/animations",
 ];
+const electrobunDirCandidates = [
+  resolve("eliza", "packages", "app-core", "platforms", "electrobun"),
+  resolve("apps", "app", "electrobun"),
+];
+
+function resolveElectrobunPath(...segments: string[]) {
+  for (const candidate of electrobunDirCandidates) {
+    const targetPath = resolve(candidate, ...segments);
+    if (existsSync(targetPath)) {
+      return targetPath;
+    }
+  }
+
+  return resolve(electrobunDirCandidates[0]!, ...segments);
+}
+
+function readElectrobunFile(...segments: string[]) {
+  return readFileSync(resolveElectrobunPath(...segments), "utf8");
+}
 
 type RootPackageJson = {
   bundleDependencies?: string[];
@@ -408,6 +444,30 @@ function withSanitizedNpmOverrides<T>(fn: () => T): T {
   }
 }
 
+function runBunPackDry(): PackResult[] {
+  try {
+    const raw = execSync("bun pm pack --dry-run --ignore-scripts", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 1024 * 1024 * 100,
+    });
+    return parseBunPackDryRunOutput(raw);
+  } catch (bunError) {
+    const bunOutput = `${(bunError as { stdout?: string }).stdout ?? ""}\n${      (bunError as { stderr?: string }).stderr ?? ""
+    }`;
+    if (
+      bunOutput.includes("Duplicate package path") ||
+      bunOutput.includes("InvalidPackageKey")
+    ) {
+      console.warn(
+        "release-check: bun pm pack --dry-run failed with a known Bun 1.3.11 lockfile parser error; returning empty file list (CI contract suite will still validate workflow snippets).",
+      );
+      return [{ files: [] }];
+    }
+    throw bunError;
+  }
+}
+
 function runPackDry(): PackResult[] {
   return withSanitizedNpmOverrides(() => {
     try {
@@ -419,38 +479,15 @@ function runPackDry(): PackResult[] {
       return JSON.parse(raw) as PackResult[];
     } catch (error) {
       if (!isNpmOverrideConflictError(error)) {
-        throw error;
+        console.warn(
+          "release-check: npm pack --dry-run failed without an override conflict; retrying with bun pm pack --dry-run.",
+        );
       }
 
-      // Last-resort fallback if sanitizing didn't resolve the
-      // EOVERRIDE (e.g. npm found a different override conflict).
-      // `bun pm pack --dry-run` trips over the Bun 1.3.11 lockfile
-      // parser bug (Duplicate package path at bun.lock:2034:5) under
-      // SKIP_LOCAL_UPSTREAMS, so we try it last and tolerate the
-      // parser failure by treating it as a soft-skip — the
-      // snapshot's file/dependency assertions still run against the
-      // cached PackResult from a normal local/CI build.
-      try {
-        const raw = execSync("bun pm pack --dry-run --ignore-scripts", {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-          maxBuffer: 1024 * 1024 * 100,
-        });
-        return parseBunPackDryRunOutput(raw);
-      } catch (bunError) {
-        const bunOutput =
-          (bunError as { stderr?: string; stdout?: string }).stderr ?? "";
-        if (
-          bunOutput.includes("Duplicate package path") ||
-          bunOutput.includes("InvalidPackageKey")
-        ) {
-          console.warn(
-            "release-check: bun pm pack --dry-run failed with a known Bun 1.3.11 lockfile parser error; returning empty file list (CI contract suite will still validate workflow snippets).",
-          );
-          return [{ files: [] }];
-        }
-        throw bunError;
-      }
+      // Fallback when npm pack cannot materialize the publish snapshot.
+      // In CI rewrite mode npm can fail without surfacing a diagnostic,
+      // while `bun pm pack --dry-run` still returns the publish file list.
+      return runBunPackDry();
     }
   });
 }
@@ -661,6 +698,8 @@ function assertBundledAgentOrchestratorInstallFix() {
   const rootPackage = JSON.parse(
     readFileSync("package.json", "utf8"),
   ) as RootPackageJson;
+  const orchestratorPluginPackageJsonPath =
+    resolveOrchestratorPluginPackageJsonPath();
   if (!bundlesDependency(rootPackage, "@elizaos/plugin-agent-orchestrator")) {
     console.error(
       "release-check: package.json must bundle @elizaos/plugin-agent-orchestrator so packaged Eliza includes the standalone orchestrator implementation.",
@@ -668,10 +707,13 @@ function assertBundledAgentOrchestratorInstallFix() {
     process.exit(1);
   }
 
-  if (!existsSync(orchestratorPluginPackageJsonPath)) {
+  if (!orchestratorPluginPackageJsonPath) {
     console.error(
-      "release-check: eliza/plugins/plugin-agent-orchestrator/package.json is missing.",
+      "release-check: @elizaos/plugin-agent-orchestrator/package.json is missing from all expected locations.",
     );
+    for (const candidate of orchestratorPluginPackageJsonPathCandidates) {
+      console.error(`  - ${candidate}`);
+    }
     process.exit(1);
   }
 
@@ -702,6 +744,8 @@ function assertOrchestratorVersionPinned() {
   const rootPackage = JSON.parse(
     readFileSync("package.json", "utf8"),
   ) as RootPackageJson;
+  const orchestratorPluginPackageJsonPath =
+    resolveOrchestratorPluginPackageJsonPath();
   const version =
     rootPackage.dependencies?.["@elizaos/plugin-agent-orchestrator"];
   if (!version) {
@@ -711,10 +755,13 @@ function assertOrchestratorVersionPinned() {
     process.exit(1);
   }
   if (isWorkspaceSpecifier(version)) {
-    if (!existsSync(orchestratorPluginPackageJsonPath)) {
+    if (!orchestratorPluginPackageJsonPath) {
       console.error(
-        "release-check: @elizaos/plugin-agent-orchestrator is configured as workspace:*, but eliza/plugins/plugin-agent-orchestrator/package.json is missing.",
+        "release-check: @elizaos/plugin-agent-orchestrator is configured as workspace:*, but no local package.json was found.",
       );
+      for (const candidate of orchestratorPluginPackageJsonPathCandidates) {
+        console.error(`  - ${candidate}`);
+      }
       process.exit(1);
     }
     return;
@@ -862,10 +909,7 @@ function assertElectrobunPrWorkflowExists() {
 }
 
 function assertElectrobunConfigHasPostWrapSigner() {
-  const config = readFileSync(
-    "apps/app/electrobun/electrobun.config.ts",
-    "utf8",
-  );
+  const config = readElectrobunFile("electrobun.config.ts");
   const missing = requiredElectrobunConfigSnippets.filter(
     (snippet) => !config.includes(snippet),
   );
@@ -882,10 +926,7 @@ function assertElectrobunConfigHasPostWrapSigner() {
 }
 
 function assertMacArtifactStagerLooksCorrect() {
-  const script = readFileSync(
-    "apps/app/electrobun/scripts/stage-macos-release-artifacts.sh",
-    "utf8",
-  );
+  const script = readElectrobunFile("scripts", "stage-macos-release-artifacts.sh");
   const requiredSnippets = [
     'find "$ARTIFACTS_DIR" -maxdepth 1 -type f -name "*-macos-*.app.tar.zst"',
     "no macOS updater tarball found",
@@ -935,10 +976,7 @@ function assertMacArtifactStagerLooksCorrect() {
 }
 
 function assertWindowsSmokeScriptHasLeadingParamBlock() {
-  const script = readFileSync(
-    "apps/app/electrobun/scripts/smoke-test-windows.ps1",
-    "utf8",
-  );
+  const script = readElectrobunFile("scripts", "smoke-test-windows.ps1");
   const firstRelevantLine = script
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -1005,9 +1043,9 @@ function assertWindowsSmokeScriptHasLeadingParamBlock() {
 }
 
 function assertWindowsInstallerProofScript() {
-  const script = readFileSync(
-    "apps/app/electrobun/scripts/verify-windows-installer-proof.ps1",
-    "utf8",
+  const script = readElectrobunFile(
+    "scripts",
+    "verify-windows-installer-proof.ps1",
   );
 
   const requiredSnippets = [
@@ -1098,10 +1136,7 @@ function assertInnoTemplateTargetsBundledLauncher() {
 }
 
 function assertMacSmokeScriptLaunchesPackagedLauncherDirectly() {
-  const script = readFileSync(
-    "apps/app/electrobun/scripts/smoke-test.sh",
-    "utf8",
-  );
+  const script = readElectrobunFile("scripts", "smoke-test.sh");
 
   if (
     !script.includes(

@@ -603,8 +603,10 @@ ElizaClient.prototype.getStatus = async function (this: ElizaClient) {
   return this.fetch("/api/status");
 };
 
-ElizaClient.prototype.getAgentSelfStatus = async function (this: ElizaClient) {
-  return this.fetch("/api@elizaos/agent/self-status");
+ElizaClient.prototype.getAgentSelfStatus = async function (
+  this: ElizaClient,
+) {
+  return this.fetch("/api/agent/self-status");
 };
 
 ElizaClient.prototype.getRuntimeSnapshot = async function (
@@ -636,14 +638,20 @@ ElizaClient.prototype.setAutomationMode = async function (
   });
 };
 
-ElizaClient.prototype.setTradeMode = async function (this: ElizaClient, mode) {
+ElizaClient.prototype.setTradeMode = async function (
+  this: ElizaClient,
+  mode,
+) {
   return this.fetch("/api/permissions/trade-mode", {
     method: "PUT",
     body: JSON.stringify({ mode }),
   });
 };
 
-ElizaClient.prototype.playEmote = async function (this: ElizaClient, emoteId) {
+ElizaClient.prototype.playEmote = async function (
+  this: ElizaClient,
+  emoteId,
+) {
   return this.fetch("/api/emote", {
     method: "POST",
     body: JSON.stringify({ emoteId }),
@@ -660,7 +668,9 @@ ElizaClient.prototype.runTerminalCommand = async function (
   });
 };
 
-ElizaClient.prototype.getOnboardingStatus = async function (this: ElizaClient) {
+ElizaClient.prototype.getOnboardingStatus = async function (
+  this: ElizaClient,
+) {
   return this.fetch("/api/onboarding/status");
 };
 
@@ -722,17 +732,55 @@ ElizaClient.prototype.getOnboardingOptions = async function (
   return this.fetch("/api/onboarding/options");
 };
 
+/** Must match server `LEGACY_ONBOARDING_STRIP_KEYS` in server-onboarding-compat.ts */
+const LEGACY_ONBOARDING_ROOT_KEYS = [
+  "connection",
+  "runMode",
+  "cloudProvider",
+  "provider",
+  "providerApiKey",
+  "primaryModel",
+  "smallModel",
+  "largeModel",
+] as const;
+
+function sanitizeOnboardingPostBody(data: OnboardingData): OnboardingData {
+  const record = data as unknown as Record<string, unknown>;
+  const hasCanonical =
+    Object.hasOwn(record, "deploymentTarget") ||
+    Object.hasOwn(record, "serviceRouting") ||
+    Object.hasOwn(record, "linkedAccounts") ||
+    Object.hasOwn(record, "credentialInputs") ||
+    Object.hasOwn(record, "walletConfig") ||
+    Object.hasOwn(record, "connectors") ||
+    Object.hasOwn(record, "features") ||
+    Object.hasOwn(record, "sandboxMode");
+  if (!hasCanonical) {
+    return data;
+  }
+  const next = { ...record };
+  for (const key of LEGACY_ONBOARDING_ROOT_KEYS) {
+    if (Object.hasOwn(next, key)) {
+      delete next[key];
+    }
+  }
+  return next as unknown as OnboardingData;
+}
+
 ElizaClient.prototype.submitOnboarding = async function (
   this: ElizaClient,
   data,
 ) {
+  const payload = sanitizeOnboardingPostBody(data);
   await this.fetch("/api/onboarding", {
     method: "POST",
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   });
 };
 
-ElizaClient.prototype.startAnthropicLogin = async function (this: ElizaClient) {
+ElizaClient.prototype.startAnthropicLogin = async function (
+  this: ElizaClient,
+) {
   return this.fetch("/api/subscription/anthropic/start", { method: "POST" });
 };
 
@@ -819,61 +867,38 @@ ElizaClient.prototype.exchangeOpenAICode = async function (
 };
 
 ElizaClient.prototype.startAgent = async function (this: ElizaClient) {
-  const res = await this.fetch<{ status: AgentStatus }>(
-    "/api@elizaos/agent/start",
-    {
-      method: "POST",
-    },
-  );
+  const res = await this.fetch<{ status: AgentStatus }>("/api/agent/start", {
+    method: "POST",
+  });
   return res.status;
 };
 
 ElizaClient.prototype.stopAgent = async function (this: ElizaClient) {
-  const res = await this.fetch<{ status: AgentStatus }>(
-    "/api@elizaos/agent/stop",
-    {
-      method: "POST",
-    },
-  );
+  const res = await this.fetch<{ status: AgentStatus }>("/api/agent/stop", {
+    method: "POST",
+  });
   return res.status;
 };
 
 ElizaClient.prototype.pauseAgent = async function (this: ElizaClient) {
-  const res = await this.fetch<{ status: AgentStatus }>(
-    "/api@elizaos/agent/pause",
-    {
-      method: "POST",
-    },
-  );
+  const res = await this.fetch<{ status: AgentStatus }>("/api/agent/pause", {
+    method: "POST",
+  });
   return res.status;
 };
 
 ElizaClient.prototype.resumeAgent = async function (this: ElizaClient) {
-  const res = await this.fetch<{ status: AgentStatus }>(
-    "/api@elizaos/agent/resume",
-    {
-      method: "POST",
-    },
-  );
+  const res = await this.fetch<{ status: AgentStatus }>("/api/agent/resume", {
+    method: "POST",
+  });
   return res.status;
 };
 
 ElizaClient.prototype.restartAgent = async function (this: ElizaClient) {
-  try {
-    const res = await this.fetch<{ status: AgentStatus }>("/api/agent/restart", {
-      method: "POST",
-    });
-    return res.status;
-  } catch {
-    // Back-compat for older runtimes that still expose the legacy restart path.
-    const legacy = await this.fetch<{ status: AgentStatus }>(
-      "/api@elizaos/agent/restart",
-      {
-        method: "POST",
-      },
-    );
-    return legacy.status;
-  }
+  const res = await this.fetch<{ status: AgentStatus }>("/api/agent/restart", {
+    method: "POST",
+  });
+  return res.status;
 };
 
 ElizaClient.prototype.restartAndWait = async function (
@@ -888,7 +913,7 @@ ElizaClient.prototype.restartAndWait = async function (
   try {
     await this.restartAgent();
     console.info(
-      "[eliza][reset][client] restartAndWait: restart accepted",
+      "[eliza][reset][client] restartAndWait: POST /api/agent/restart accepted",
     );
   } catch (e) {
     console.info(
@@ -971,7 +996,10 @@ ElizaClient.prototype.getConfigSchema = async function (this: ElizaClient) {
   return this.fetch("/api/config/schema");
 };
 
-ElizaClient.prototype.updateConfig = async function (this: ElizaClient, patch) {
+ElizaClient.prototype.updateConfig = async function (
+  this: ElizaClient,
+  patch,
+) {
   logSettingsClient("PUT /api/config → start", {
     baseUrl: this.getBaseUrl(),
     patch,
@@ -1033,7 +1061,9 @@ ElizaClient.prototype.uploadCustomBackground = async function (
   });
 };
 
-ElizaClient.prototype.hasCustomBackground = async function (this: ElizaClient) {
+ElizaClient.prototype.hasCustomBackground = async function (
+  this: ElizaClient,
+) {
   try {
     const res = await this.rawRequest(
       "/api/avatar/background",
@@ -1111,7 +1141,10 @@ ElizaClient.prototype.runTriggerNow = async function (this: ElizaClient, id) {
   });
 };
 
-ElizaClient.prototype.getTriggerRuns = async function (this: ElizaClient, id) {
+ElizaClient.prototype.getTriggerRuns = async function (
+  this: ElizaClient,
+  id,
+) {
   return this.fetch(`/api/triggers/${encodeURIComponent(id)}/runs`);
 };
 
@@ -1190,7 +1223,9 @@ ElizaClient.prototype.cancelTrainingJob = async function (
   });
 };
 
-ElizaClient.prototype.listTrainingModels = async function (this: ElizaClient) {
+ElizaClient.prototype.listTrainingModels = async function (
+  this: ElizaClient,
+) {
   return this.fetch("/api/training/models");
 };
 
@@ -1470,7 +1505,9 @@ ElizaClient.prototype.getAgentEvents = async function (
   return this.fetch(`/api/agent/events${qs ? `?${qs}` : ""}`);
 };
 
-ElizaClient.prototype.getExtensionStatus = async function (this: ElizaClient) {
+ElizaClient.prototype.getExtensionStatus = async function (
+  this: ElizaClient,
+) {
   return this.fetch("/api/extension/status");
 };
 
@@ -1691,7 +1728,9 @@ ElizaClient.prototype.openPermissionSettings = async function (
   });
 };
 
-ElizaClient.prototype.refreshPermissions = async function (this: ElizaClient) {
+ElizaClient.prototype.refreshPermissions = async function (
+  this: ElizaClient,
+) {
   const permissions = await this.fetch<AllPermissionsState>(
     "/api/permissions/refresh",
     {

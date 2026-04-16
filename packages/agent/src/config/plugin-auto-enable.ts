@@ -154,10 +154,24 @@ function resolveEvmAutoEnableReason(env: NodeJS.ProcessEnv): string | null {
     return "env: EVM_PRIVATE_KEY";
   }
 
+  if (env.ENABLE_EVM_PLUGIN === "1") {
+    return "env: ENABLE_EVM_PLUGIN";
+  }
+
   const cloudProvisioned = env.ELIZA_CLOUD_PROVISIONED === "1";
 
   if (cloudProvisioned && env.STEWARD_AGENT_TOKEN?.trim()) {
     return "cloud-provisioned Steward wallet";
+  }
+
+  // Desktop Steward wallet (provisioned via cloud login, not a cloud container)
+  if (env.STEWARD_API_URL?.trim() && env.STEWARD_API_KEY?.trim()) {
+    return "Steward wallet (cloud-login provisioned)";
+  }
+
+  // Cloud-provisioned wallet address present (from cloud login provisioning)
+  if (env.STEWARD_EVM_ADDRESS?.trim()) {
+    return "cloud wallet (STEWARD_EVM_ADDRESS)";
   }
 
   return null;
@@ -391,11 +405,11 @@ export function applyPluginAutoEnable(
   // the subscription's own plugin because the user deliberately connected
   // the subscription.
   //
-  // Exception: Anthropic subscriptions are restricted to the Claude Code
-  // CLI by TOS.  Their tokens cannot be used by the runtime, so we must
-  // NOT force-enable @elizaos/plugin-anthropic based on subscription alone.
-  // A direct ANTHROPIC_API_KEY (set below via env-var detection) will still
-  // enable the plugin if available.
+  // Exception: Anthropic subscriptions use OAuth tokens that the Anthropic
+  // API does not accept directly — they only work through the Claude Code
+  // CLI. Their tokens cannot be used by the runtime, so we must NOT
+  // force-enable @elizaos/plugin-anthropic based on subscription alone.
+  // A direct ANTHROPIC_API_KEY will still enable the plugin if available.
   const subscriptionProvider = getSubscriptionProvider(updatedConfig);
   const subscriptionIsRuntimeApplicable =
     typeof subscriptionProvider === "string" &&
@@ -452,6 +466,25 @@ export function applyPluginAutoEnable(
       EVM_PLUGIN_SHORT_ID,
       changes,
       evmAutoEnableReason,
+    );
+  }
+
+  // Auto-enable @elizaos/plugin-solana when Steward wallet is configured
+  // (desktop path — cloud-login provisioned). Steward manages the private key
+  // server-side so SOLANA_PRIVATE_KEY won't be set locally.
+  if (
+    pluginsConfig.entries["solana"]?.enabled !== false &&
+    ((env.STEWARD_API_URL?.trim() && env.STEWARD_API_KEY?.trim()) ||
+      env.STEWARD_SOLANA_ADDRESS?.trim())
+  ) {
+    addToAllowlist(
+      pluginsConfig.allow,
+      "@elizaos/plugin-solana",
+      "solana",
+      changes,
+      env.STEWARD_SOLANA_ADDRESS?.trim()
+        ? "cloud wallet (STEWARD_SOLANA_ADDRESS)"
+        : "Steward wallet (cloud-login provisioned)",
     );
   }
 

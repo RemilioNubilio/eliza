@@ -1,13 +1,14 @@
 /**
  * Steward credential persistence for non-sidecar (web/dev) mode.
  *
- * On first setup, saves steward credentials to `~/.eliza/steward-credentials.json`.
- * On subsequent launches, loads credentials from this file.
+ * Persists to `~/.<namespace>/steward-credentials.json` (e.g. `~/.milady/` for
+ * Milady). Falls back to `~/.eliza/steward-credentials.json` for legacy installs.
  * Environment variables always override file values.
  */
 
 import fs from "node:fs";
 import path from "node:path";
+import { resolveStateDir } from "@elizaos/agent/config/paths";
 
 export interface PersistedStewardCredentials {
   apiUrl: string;
@@ -25,13 +26,13 @@ export interface PersistedStewardCredentials {
 
 const CREDENTIALS_FILENAME = "steward-credentials.json";
 
-function resolveCredentialsDir(): string {
-  const home = process.env.HOME || process.env.USERPROFILE || "";
-  return path.join(home, ".eliza");
+function resolvePrimaryCredentialsPath(): string {
+  return path.join(resolveStateDir(), CREDENTIALS_FILENAME);
 }
 
-function resolveCredentialsPath(): string {
-  return path.join(resolveCredentialsDir(), CREDENTIALS_FILENAME);
+function resolveLegacyCredentialsPath(): string {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  return path.join(home, ".eliza", CREDENTIALS_FILENAME);
 }
 
 /**
@@ -39,20 +40,31 @@ function resolveCredentialsPath(): string {
  * Returns null if file doesn't exist or is unreadable.
  */
 export function loadStewardCredentials(): PersistedStewardCredentials | null {
-  const credPath = resolveCredentialsPath();
-  try {
-    if (!fs.existsSync(credPath)) {
-      return null;
+  const candidates = [
+    resolvePrimaryCredentialsPath(),
+    resolveLegacyCredentialsPath(),
+  ];
+  const seen = new Set<string>();
+  for (const credPath of candidates) {
+    if (seen.has(credPath)) {
+      continue;
     }
-    const raw = fs.readFileSync(credPath, "utf-8");
-    const parsed = JSON.parse(raw) as PersistedStewardCredentials;
-    if (!parsed.apiUrl || !parsed.tenantId || !parsed.agentId) {
-      return null;
+    seen.add(credPath);
+    try {
+      if (!fs.existsSync(credPath)) {
+        continue;
+      }
+      const raw = fs.readFileSync(credPath, "utf-8");
+      const parsed = JSON.parse(raw) as PersistedStewardCredentials;
+      if (!parsed.apiUrl || !parsed.tenantId || !parsed.agentId) {
+        continue;
+      }
+      return parsed;
+    } catch {
+      /* try next */
     }
-    return parsed;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 /**
@@ -61,12 +73,12 @@ export function loadStewardCredentials(): PersistedStewardCredentials | null {
 export function saveStewardCredentials(
   credentials: PersistedStewardCredentials,
 ): void {
-  const dir = resolveCredentialsDir();
+  const credPath = resolvePrimaryCredentialsPath();
+  const dir = path.dirname(credPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  const credPath = resolveCredentialsPath();
   const data = {
     ...credentials,
     createdAt: credentials.createdAt ?? new Date().toISOString(),

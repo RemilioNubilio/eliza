@@ -88,6 +88,15 @@ export function getOnboardingNavMetas(
   return [...ONBOARDING_STEPS];
 }
 
+export function hasOnboardingPreviousStep(
+  current: OnboardingStep,
+  cloudOnly: boolean,
+): boolean {
+  const metas = getOnboardingNavMetas(current, cloudOnly);
+  const index = metas.findIndex((m) => m.id === current);
+  return index > 0;
+}
+
 export function shouldSkipConnectionStepsForCloudProvisionedContainer(args: {
   currentStep: OnboardingStep;
   cloudProvisionedContainer: boolean;

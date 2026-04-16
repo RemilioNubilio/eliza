@@ -49,6 +49,7 @@ import {
   isRuntimePermissionId,
   mergeRuntimePermissionStates,
 } from "./runtime-permissions";
+import { getDesktopApiHeaders } from "./native/agent";
 import { isDetachedSurface } from "./surface-windows";
 import type { SendToWebview } from "./types.js";
 
@@ -66,7 +67,10 @@ async function syncPermissionsToRestApi(
     );
     await fetch(`http://127.0.0.1:${port}/api/permissions/state`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getDesktopApiHeaders(),
+      },
       body: JSON.stringify({ permissions }),
     });
   } catch (error) {

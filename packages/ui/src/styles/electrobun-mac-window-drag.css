@@ -17,10 +17,29 @@ html.eliza-electrobun-frameless {
    * the traffic lights — hiddenInset draws them over the web view with no title bar.
    */
   --eliza-macos-frame-top-inset: 26px;
+  /**
+   * Leading inset so the header nav (Chat, Apps, …) clears the traffic-light
+   * cluster. hiddenInset draws controls over the web view; ~68–80px is typical
+   * on Apple Silicon macOS (was 56px — still overlapped the lights).
+   */
+  --eliza-macos-frame-left-inset: 78px;
 }
 
 html.eliza-electrobun-frameless body {
   -webkit-app-region: drag;
+}
+
+/*
+ * Header chrome: use `pe-*` + `py-*` in Header.tsx (not `px-*`) so Tailwind does
+ * not emit `padding-inline`, which would fight this longhand in some builds.
+ */
+html.eliza-electrobun-frameless header [data-header-toolbar-padding] {
+  padding-inline-start: max(
+    env(safe-area-inset-left, 0px),
+    var(--eliza-macos-frame-left-inset)
+  ) !important;
+  /* Keep end padding aligned with former `px-2` (0.5rem) */
+  padding-inline-end: 0.5rem;
 }
 
 html.eliza-electrobun-frameless a,

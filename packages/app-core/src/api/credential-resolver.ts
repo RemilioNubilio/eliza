@@ -86,7 +86,10 @@ function resolveClaudeOAuthToken(): string | null {
 function resolveCodexApiKey(): string | null {
   const authPath = path.join(os.homedir(), ".codex", "auth.json");
   const data = readJsonSafe<{ OPENAI_API_KEY?: string }>(authPath);
-  return data?.OPENAI_API_KEY?.trim() || null;
+  const key = data?.OPENAI_API_KEY?.trim();
+  // Codex stores "None" as a string when using ChatGPT OAuth (not a real key)
+  if (key && key !== "None") return key;
+  return null;
 }
 
 // ── Credential source registry ───────────────────────────────────────

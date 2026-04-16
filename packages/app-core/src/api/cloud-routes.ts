@@ -22,6 +22,355 @@ import {
 } from "./cloud-connection";
 import { clearCloudSecrets, scrubCloudSecretsFromEnv } from "./cloud-secrets";
 import { sendJson, sendJsonError } from "./response";
+import { applyStewardWalletAddressesToRuntimeCache } from "@elizaos/agent/api/wallet";
+import { saveStewardCredentials } from "../services/steward-credentials";
+
+// ── Cloud wallet provisioning on login ─────────────────────────────────────
+
+/** A dummy client address used when provisioning cloud-managed wallets. */
+const CLOUD_WALLET_CLIENT_ADDRESS_EVM =
+  "0x0000000000000000000000000000000000000001";
+const CLOUD_WALLET_CLIENT_ADDRESS_SOLANA =
+  "11111111111111111111111111111111";
+
+interface CloudWalletProvisionResult {
+  evmAddress: string | null;
+  solanaAddress: string | null;
+}
+
+/**
+ * Persist cloud wallet addresses into config.env so they survive restarts.
+ * On next startup, `initStewardWalletCache` will pick them up from
+ * `process.env` (hydrated from config.env).
+ */
+function persistWalletAddressesToConfig(
+  config: ElizaConfig,
+  wallets: CloudWalletProvisionResult,
+): void {
+  if (!wallets.evmAddress && !wallets.solanaAddress) return;
+  const env = ((config as Record<string, unknown>).env ??
+    {}) as Record<string, unknown>;
+  if (wallets.evmAddress) {
+    env.STEWARD_EVM_ADDRESS = wallets.evmAddress;
+  }
+  if (wallets.solanaAddress) {
+    env.STEWARD_SOLANA_ADDRESS = wallets.solanaAddress;
+  }
+  (config as Record<string, unknown>).env = env;
+  try {
+    saveElizaConfig(config);
+    logger.info("[cloud-wallet] Wallet addresses persisted to config");
+  } catch (err) {
+    logger.warn(
+      `[cloud-wallet] Failed to persist wallet addresses to config: ${String(err)}`,
+    );
+  }
+}
+
+// ── Steward credential fetching on cloud login ─────────────────────────────
+
+interface CloudStewardCredentials {
+  apiUrl: string;
+  tenantId: string;
+  apiKey: string;
+  agentId: string | null;
+}
+
+/**
+ * Fetch Steward tenant credentials from the cloud and the steward_agent_id
+ * from provisioned wallets. Combines two cloud API calls:
+ *   GET /api/v1/steward/tenants/credentials  → apiUrl, tenantId, apiKey
+ *   GET /api/v1/user/wallets                 → stewardAgentId (from first wallet)
+ *
+ * Best-effort: returns null if credentials are unavailable (not yet provisioned,
+ * endpoint not deployed, etc.).
+ */
+async function fetchCloudStewardCredentials(
+  cloudBaseUrl: string,
+  cloudApiKey: string,
+): Promise<CloudStewardCredentials | null> {
+  const headers = { "X-Api-Key": cloudApiKey };
+
+  // Fetch tenant credentials and wallet list in parallel
+  const [credRes, walletsRes] = await Promise.allSettled([
+    fetch(`${cloudBaseUrl}/api/v1/steward/tenants/credentials`, {
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    }),
+    fetch(`${cloudBaseUrl}/api/v1/user/wallets`, {
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    }),
+  ]);
+
+  // Parse tenant credentials
+  let apiUrl: string | null = null;
+  let tenantId: string | null = null;
+  let apiKey: string | null = null;
+
+  if (credRes.status === "fulfilled" && credRes.value.ok) {
+    try {
+      const body = (await credRes.value.json()) as {
+        stewardApiUrl?: string;
+        tenantId?: string;
+        apiKey?: string;
+      };
+      apiUrl = body.stewardApiUrl || null;
+      tenantId = body.tenantId || null;
+      apiKey = body.apiKey || null;
+    } catch {
+      // parse error
+    }
+  } else {
+    logger.debug(
+      `[cloud-steward] Credentials endpoint not available: ${
+        credRes.status === "fulfilled"
+          ? `HTTP ${credRes.value.status}`
+          : String((credRes as PromiseRejectedResult).reason)
+      }`,
+    );
+  }
+
+  if (!apiUrl || !tenantId) {
+    return null;
+  }
+
+  // Extract steward_agent_id from the first provisioned wallet
+  let agentId: string | null = null;
+  if (walletsRes.status === "fulfilled" && walletsRes.value.ok) {
+    try {
+      const body = (await walletsRes.value.json()) as {
+        success?: boolean;
+        data?: Array<{ stewardAgentId?: string | null }>;
+      };
+      if (body.data?.length) {
+        const firstWithAgent = body.data.find((w) => w.stewardAgentId);
+        agentId = firstWithAgent?.stewardAgentId ?? null;
+      }
+    } catch {
+      // parse error
+    }
+  }
+
+  return { apiUrl, tenantId, apiKey: apiKey || "", agentId };
+}
+
+/**
+ * Persist Steward credentials to config.env and steward-credentials.json.
+ * Also sets them in process.env so steward-bridge can connect immediately.
+ */
+function persistStewardCredentials(
+  config: ElizaConfig,
+  creds: CloudStewardCredentials,
+  wallets: CloudWalletProvisionResult | null,
+): void {
+  // Set process.env so steward-bridge connects without restart
+  process.env.STEWARD_API_URL = creds.apiUrl;
+  process.env.STEWARD_TENANT_ID = creds.tenantId;
+  if (creds.apiKey) process.env.STEWARD_API_KEY = creds.apiKey;
+  if (creds.agentId) process.env.STEWARD_AGENT_ID = creds.agentId;
+
+  // Persist to config.env for restart survival
+  const env = ((config as Record<string, unknown>).env ??
+    {}) as Record<string, unknown>;
+  env.STEWARD_API_URL = creds.apiUrl;
+  env.STEWARD_TENANT_ID = creds.tenantId;
+  if (creds.apiKey) env.STEWARD_API_KEY = creds.apiKey;
+  if (creds.agentId) env.STEWARD_AGENT_ID = creds.agentId;
+  (config as Record<string, unknown>).env = env;
+  try {
+    saveElizaConfig(config);
+    logger.info("[cloud-steward] Steward credentials persisted to config");
+  } catch (err) {
+    logger.warn(
+      `[cloud-steward] Failed to persist steward credentials: ${String(err)}`,
+    );
+  }
+
+  // Also save to steward-credentials.json for the credential resolver
+  try {
+    saveStewardCredentials({
+      apiUrl: creds.apiUrl,
+      tenantId: creds.tenantId,
+      agentId: creds.agentId || "",
+      apiKey: creds.apiKey,
+      agentToken: "", // Cloud path uses apiKey+tenantId auth, not agent token
+      walletAddresses: {
+        evm: wallets?.evmAddress || undefined,
+        solana: wallets?.solanaAddress || undefined,
+      },
+    });
+    logger.info("[cloud-steward] Steward credentials saved to credentials file");
+  } catch (err) {
+    logger.warn(
+      `[cloud-steward] Failed to save credentials file: ${String(err)}`,
+    );
+  }
+}
+
+/**
+ * Provision cloud-managed wallets (EVM + Solana) after Eliza Cloud login.
+ *
+ * Calls the cloud's `/api/v1/user/wallets/provision` endpoint for each chain.
+ * The cloud creates Steward-backed wallets and returns addresses. We then
+ * push those addresses into the runtime cache so `getWalletAddresses()`
+ * returns them immediately and chains activate in the UI.
+ *
+ * Best-effort: never throws. Returns whatever addresses were provisioned.
+ */
+async function provisionCloudWallets(
+  cloudBaseUrl: string,
+  cloudApiKey: string,
+): Promise<CloudWalletProvisionResult> {
+  const result: CloudWalletProvisionResult = {
+    evmAddress: null,
+    solanaAddress: null,
+  };
+
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Api-Key": cloudApiKey,
+  };
+
+  // Provision EVM and Solana wallets in parallel
+  const [evmRes, solRes] = await Promise.allSettled([
+    fetch(`${cloudBaseUrl}/api/v1/user/wallets/provision`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        chainType: "evm",
+        clientAddress: CLOUD_WALLET_CLIENT_ADDRESS_EVM,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    }),
+    fetch(`${cloudBaseUrl}/api/v1/user/wallets/provision`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        chainType: "solana",
+        clientAddress: CLOUD_WALLET_CLIENT_ADDRESS_SOLANA,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    }),
+  ]);
+
+  // Extract EVM address
+  if (evmRes.status === "fulfilled" && evmRes.value.ok) {
+    try {
+      const body = (await evmRes.value.json()) as {
+        success?: boolean;
+        data?: { address?: string };
+      };
+      if (body.data?.address) {
+        result.evmAddress = body.data.address;
+      }
+    } catch {
+      // parse error — skip
+    }
+  } else if (evmRes.status === "fulfilled") {
+    // May be 409/500 "already exists" — try to extract address from response
+    try {
+      const errBody = (await evmRes.value.json()) as {
+        error?: string;
+        success?: boolean;
+        data?: { address?: string };
+      };
+      if (errBody.data?.address) {
+        result.evmAddress = errBody.data.address;
+      } else {
+        logger.debug(
+          `[cloud-wallet] EVM provision HTTP ${evmRes.value.status}: ${errBody.error ?? "unknown"}`,
+        );
+      }
+    } catch {
+      // ignore
+    }
+  } else {
+    logger.warn(
+      `[cloud-wallet] EVM provision failed: ${String((evmRes as PromiseRejectedResult).reason)}`,
+    );
+  }
+
+  // Extract Solana address
+  if (solRes.status === "fulfilled" && solRes.value.ok) {
+    try {
+      const body = (await solRes.value.json()) as {
+        success?: boolean;
+        data?: { address?: string };
+      };
+      if (body.data?.address) {
+        result.solanaAddress = body.data.address;
+      }
+    } catch {
+      // parse error — skip
+    }
+  } else if (solRes.status === "fulfilled") {
+    try {
+      const errBody = (await solRes.value.json()) as {
+        error?: string;
+        success?: boolean;
+        data?: { address?: string };
+      };
+      if (errBody.data?.address) {
+        result.solanaAddress = errBody.data.address;
+      } else {
+        logger.debug(
+          `[cloud-wallet] Solana provision HTTP ${solRes.value.status}: ${errBody.error ?? "unknown"}`,
+        );
+      }
+    } catch {
+      // ignore
+    }
+  } else {
+    logger.warn(
+      `[cloud-wallet] Solana provision failed: ${String((solRes as PromiseRejectedResult).reason)}`,
+    );
+  }
+
+  // If provisioning didn't return addresses (e.g. wallets already exist and
+  // the cloud hasn't deployed the idempotent fix yet), fall back to listing.
+  if (!result.evmAddress || !result.solanaAddress) {
+    try {
+      const listRes = await fetch(`${cloudBaseUrl}/api/v1/user/wallets`, {
+        method: "GET",
+        headers: { "X-Api-Key": cloudApiKey },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (listRes.ok) {
+        const listBody = (await listRes.json()) as {
+          success?: boolean;
+          data?: Array<{ address?: string; chainType?: string }>;
+        };
+        if (listBody.data && Array.isArray(listBody.data)) {
+          for (const w of listBody.data) {
+            if (w.chainType === "evm" && w.address && !result.evmAddress) {
+              result.evmAddress = w.address;
+            }
+            if (w.chainType === "solana" && w.address && !result.solanaAddress) {
+              result.solanaAddress = w.address;
+            }
+          }
+        }
+      }
+    } catch {
+      // Non-fatal — list endpoint may not be deployed yet
+    }
+  }
+
+  // Push addresses into the runtime wallet cache so getWalletAddresses()
+  // returns them immediately (no restart needed).
+  if (result.evmAddress || result.solanaAddress) {
+    applyStewardWalletAddressesToRuntimeCache(
+      result.evmAddress,
+      result.solanaAddress,
+    );
+    logger.info(
+      `[cloud-wallet] Addresses cached — EVM=${result.evmAddress ?? "none"}, SOL=${result.solanaAddress ?? "none"}`,
+    );
+  }
+
+  return result;
+}
 
 export interface CloudRouteState {
   config: ElizaConfig;
@@ -233,7 +582,35 @@ export async function handleCloudRoute(
         return true;
       }
       await persistCloudLoginStatus({ apiKey: body.apiKey.trim(), state });
-      sendJson(res, 200, { ok: true });
+
+      // Provision cloud wallets and fetch Steward credentials on direct-auth path
+      let wallets: CloudWalletProvisionResult | null = null;
+      const baseUrl = normalizeCloudSiteUrl(state.config.cloud?.baseUrl);
+      const apiKey = body.apiKey.trim();
+      try {
+        wallets = await provisionCloudWallets(baseUrl, apiKey);
+        if (wallets) {
+          persistWalletAddressesToConfig(state.config, wallets);
+        }
+      } catch {
+        // Non-fatal
+      }
+
+      // Fetch Steward credentials so steward-bridge can connect immediately
+      try {
+        const stewardCreds = await fetchCloudStewardCredentials(baseUrl, apiKey);
+        if (stewardCreds) {
+          persistStewardCredentials(state.config, stewardCreds, wallets);
+        }
+      } catch {
+        // Non-fatal — steward connection will fail gracefully
+      }
+
+      sendJson(res, 200, {
+        ok: true,
+        evmAddress: wallets?.evmAddress ?? null,
+        solanaAddress: wallets?.solanaAddress ?? null,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`[cloud/login/persist] Failed: ${msg}`);
@@ -348,10 +725,39 @@ export async function handleCloudRoute(
         state,
         epochAtPollStart: epochBeforePoll,
       });
+
+      // Provision cloud-managed wallets (best-effort — login succeeds regardless)
+      let wallets: CloudWalletProvisionResult | null = null;
+      const baseUrl = normalizeCloudSiteUrl(state.config.cloud?.baseUrl);
+      try {
+        wallets = await provisionCloudWallets(baseUrl, data.apiKey);
+        if (wallets) {
+          persistWalletAddressesToConfig(state.config, wallets);
+        }
+      } catch (err) {
+        logger.warn(
+          `[cloud-login] Wallet provisioning failed (non-fatal): ${String(err)}`,
+        );
+      }
+
+      // Fetch Steward credentials so steward-bridge can connect immediately
+      try {
+        const stewardCreds = await fetchCloudStewardCredentials(baseUrl, data.apiKey);
+        if (stewardCreds) {
+          persistStewardCredentials(state.config, stewardCreds, wallets);
+        }
+      } catch (err) {
+        logger.warn(
+          `[cloud-login] Steward credential fetch failed (non-fatal): ${String(err)}`,
+        );
+      }
+
       sendJson(res, 200, {
         status: "authenticated",
         keyPrefix:
           typeof data.keyPrefix === "string" ? data.keyPrefix : undefined,
+        evmAddress: wallets?.evmAddress ?? null,
+        solanaAddress: wallets?.solanaAddress ?? null,
       });
       return true;
     }

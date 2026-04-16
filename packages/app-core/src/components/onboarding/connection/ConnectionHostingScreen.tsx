@@ -1,4 +1,4 @@
-
+import { Button } from "@elizaos/app-core";
 import { appNameInterpolationVars, useBranding } from "../../../config";
 import type { ConnectionEvent } from "../../../onboarding/connection-flow";
 import { useApp } from "../../../state";
@@ -8,12 +8,7 @@ import {
   onboardingChoiceCardDescriptionClassName,
   onboardingChoiceCardTitleClassName,
 } from "../onboarding-form-primitives";
-import { Button } from "@elizaos/ui";
-import {
-  OnboardingSecondaryActionButton,
-  OnboardingStepHeader,
-  onboardingFooterClass,
-} from "../onboarding-step-chrome";
+import { OnboardingStepHeader } from "../onboarding-step-chrome";
 
 export function ConnectionHostingScreen({
   showHostingLocalCard,
@@ -23,7 +18,7 @@ export function ConnectionHostingScreen({
   dispatch: (event: ConnectionEvent) => void;
 }) {
   const branding = useBranding();
-  const { t, handleOnboardingBack } = useApp();
+  const { t } = useApp();
 
   return (
     <>
@@ -90,15 +85,6 @@ export function ConnectionHostingScreen({
             </div>
           </div>
         </Button>
-      </div>
-      <div className={onboardingFooterClass}>
-        <OnboardingSecondaryActionButton
-          onClick={handleOnboardingBack}
-          type="button"
-        >
-          {t("onboarding.back")}
-        </OnboardingSecondaryActionButton>
-        <span />
       </div>
     </>
   );

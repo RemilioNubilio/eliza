@@ -85,10 +85,22 @@ function resolveCompatOnboardingStyle(
   return getDefaultStylePreset(language);
 }
 
-const LEGACY_ONBOARDING_REQUEST_KEYS = [
+/**
+ * Top-level keys from the obsolete v1 onboarding API. If these appear **without**
+ * any canonical field, reject — the client must be upgraded.
+ */
+const LEGACY_ONBOARDING_REJECT_KEYS = [
   "connection",
   "runMode",
   "cloudProvider",
+] as const;
+
+/**
+ * Keys to strip from mixed or replay bodies (includes reject keys plus model/provider
+ * fields that must not remain at the root next to canonical routing).
+ */
+const LEGACY_ONBOARDING_STRIP_KEYS = [
+  ...LEGACY_ONBOARDING_REJECT_KEYS,
   "provider",
   "providerApiKey",
   "primaryModel",
@@ -96,10 +108,56 @@ const LEGACY_ONBOARDING_REQUEST_KEYS = [
   "largeModel",
 ] as const;
 
+/** @deprecated Use {@link hasLegacyOnboardingStripFields} — kept for export compatibility. */
 export function hasLegacyOnboardingRequestFields(
   body: Record<string, unknown>,
 ): boolean {
-  return LEGACY_ONBOARDING_REQUEST_KEYS.some((key) => Object.hasOwn(body, key));
+  return hasLegacyOnboardingStripFields(body);
+}
+
+export function hasLegacyOnboardingStripFields(
+  body: Record<string, unknown>,
+): boolean {
+  return LEGACY_ONBOARDING_STRIP_KEYS.some((key) => Object.hasOwn(body, key));
+}
+
+export function hasLegacyOnboardingRejectFields(
+  body: Record<string, unknown>,
+): boolean {
+  return LEGACY_ONBOARDING_REJECT_KEYS.some((key) => Object.hasOwn(body, key));
+}
+
+/** True when the body uses the current onboarding contract (nested deployment/routing). */
+export function hasCanonicalOnboardingRequestFields(
+  body: Record<string, unknown>,
+): boolean {
+  return (
+    Object.hasOwn(body, "deploymentTarget") ||
+    Object.hasOwn(body, "serviceRouting") ||
+    Object.hasOwn(body, "linkedAccounts") ||
+    Object.hasOwn(body, "credentialInputs") ||
+    Object.hasOwn(body, "walletConfig") ||
+    Object.hasOwn(body, "connectors") ||
+    Object.hasOwn(body, "features") ||
+    Object.hasOwn(body, "sandboxMode")
+  );
+}
+
+/**
+ * Remove pre-canonical top-level keys that sometimes leak onto the same object
+ * (e.g. `primaryModel` alongside `serviceRouting`). The server rejects those as
+ * "legacy" unless we strip them when canonical fields are present.
+ */
+export function stripLegacyOnboardingRootKeys(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...body };
+  for (const key of LEGACY_ONBOARDING_STRIP_KEYS) {
+    if (Object.hasOwn(next, key)) {
+      delete next[key];
+    }
+  }
+  return next;
 }
 
 /**
@@ -335,7 +393,7 @@ export function deriveCompatOnboardingReplayBody(
   const isCloudMode = deploymentTarget?.runtime === "cloud";
 
   const replayBody = { ...body };
-  for (const key of LEGACY_ONBOARDING_REQUEST_KEYS) {
+  for (const key of LEGACY_ONBOARDING_STRIP_KEYS) {
     delete replayBody[key];
   }
 

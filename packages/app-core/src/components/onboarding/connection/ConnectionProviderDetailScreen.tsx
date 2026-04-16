@@ -851,7 +851,7 @@ export function ConnectionProviderDetailScreen({
                 {t("onboarding.loginWithOpenAI")}
               </Button>
               {openaiError && (
-                <OnboardingStatusBanner tone="danger">
+                <OnboardingStatusBanner tone="error">
                   {openaiError}
                 </OnboardingStatusBanner>
               )}
@@ -1018,15 +1018,6 @@ export function ConnectionProviderDetailScreen({
 
       {anthropicRequiresRuntimeProvider ? (
         <div className={onboardingFooterClass}>
-          <Button
-            variant="ghost"
-            className={onboardingSecondaryActionClass}
-            style={onboardingSecondaryActionTextShadowStyle}
-            onClick={clearProvider}
-            type="button"
-          >
-            {t("onboarding.back")}
-          </Button>
           {anthropicConnected ? (
             <>
               <Button
@@ -1108,15 +1099,6 @@ export function ConnectionProviderDetailScreen({
         </div>
       ) : (
         <div className={onboardingFooterClass}>
-          <Button
-            variant="ghost"
-            className={onboardingSecondaryActionClass}
-            style={onboardingSecondaryActionTextShadowStyle}
-            onClick={clearProvider}
-            type="button"
-          >
-            {t("onboarding.back")}
-          </Button>
           <Button
             variant="ghost"
             className={onboardingSecondaryActionClass}

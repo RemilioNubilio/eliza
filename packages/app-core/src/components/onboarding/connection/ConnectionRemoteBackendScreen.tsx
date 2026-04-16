@@ -1,10 +1,6 @@
 
 
 import { appNameInterpolationVars, useBranding } from "../../../config";
-import type {
-  ConnectionEffect,
-  ConnectionEvent,
-} from "../../../onboarding/connection-flow";
 import { useApp } from "../../../state";
 import {
   OnboardingField,
@@ -14,7 +10,6 @@ import {
 } from "../onboarding-form-primitives";
 import { Button, Input } from "@elizaos/ui";
 import {
-  OnboardingSecondaryActionButton,
   OnboardingStepHeader,
   onboardingFooterClass,
   onboardingPrimaryActionClass,
@@ -22,13 +17,7 @@ import {
   spawnOnboardingRipple,
 } from "../onboarding-step-chrome";
 
-export function ConnectionRemoteBackendScreen({
-  dispatch,
-  onTransitionEffect,
-}: {
-  dispatch: (event: ConnectionEvent) => void;
-  onTransitionEffect: (effect: ConnectionEffect) => void;
-}) {
+export function ConnectionRemoteBackendScreen() {
   const branding = useBranding();
   const {
     t,
@@ -36,7 +25,6 @@ export function ConnectionRemoteBackendScreen({
     onboardingRemoteToken,
     onboardingRemoteConnecting,
     onboardingRemoteError,
-    onboardingRemoteConnected,
     handleOnboardingRemoteConnect,
     setState,
   } = useApp();
@@ -96,19 +84,7 @@ export function ConnectionRemoteBackendScreen({
           </OnboardingStatusBanner>
         ) : null}
       </div>
-      <div className={onboardingFooterClass}>
-        <OnboardingSecondaryActionButton
-          onClick={() => {
-            if (onboardingRemoteConnected) {
-              onTransitionEffect("useLocalBackend");
-              return;
-            }
-            dispatch({ type: "backRemoteOrGrid" });
-          }}
-          type="button"
-        >
-          {t("onboarding.back")}
-        </OnboardingSecondaryActionButton>
+      <div className={`${onboardingFooterClass} !justify-end`}>
         <Button
           className={onboardingPrimaryActionClass}
           style={onboardingPrimaryActionTextShadowStyle}

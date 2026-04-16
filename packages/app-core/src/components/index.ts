@@ -22,6 +22,7 @@ export * from "./chat/MessageContent";
 export * from "./chat/SaveCommandModal";
 export * from "./chat/TasksEventsPanel";
 export * from "./cloud/CloudSourceControls";
+export * from "./cloud/CloudStatusBadge";
 
 export * from "./config-ui";
 export * from "./connectors/BlueBubblesStatusPanel";

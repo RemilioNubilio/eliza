@@ -198,8 +198,6 @@ export function useChatLifecycle(deps: UseChatLifecycleDeps) {
     lifecycleBusyRef,
     lifecycleActionRef,
     setActionNotice,
-    pendingRestart,
-    pendingRestartReasons,
     setPendingRestart,
     setPendingRestartReasons,
     setBackendDisconnectedBannerDismissed,
@@ -262,7 +260,6 @@ export function useChatLifecycle(deps: UseChatLifecycleDeps) {
   } = deps;
 
   const heartbeatNotificationKeyRef = useRef<string | null>(null);
-  const restartNotificationSignatureRef = useRef<string | null>(null);
 
   const handleStartDraftConversation = useCallback(async () => {
     interruptActiveChatPipeline();
@@ -536,36 +533,6 @@ export function useChatLifecycle(deps: UseChatLifecycleDeps) {
     },
     [showDesktopNotification],
   );
-
-  useEffect(() => {
-    if (!pendingRestart) {
-      restartNotificationSignatureRef.current = null;
-      return;
-    }
-
-    const signature =
-      pendingRestartReasons.length > 0
-        ? pendingRestartReasons.join("\n")
-        : "restart-required";
-    if (restartNotificationSignatureRef.current === signature) {
-      return;
-    }
-    restartNotificationSignatureRef.current = signature;
-
-    const summary =
-      pendingRestartReasons.length === 1
-        ? pendingRestartReasons[0]
-        : pendingRestartReasons.length > 1
-          ? `${pendingRestartReasons.length} changes are waiting for restart.`
-          : "Restart required to apply changes.";
-
-    void showDesktopNotification({
-      title: "Restart required",
-      body: `${summary}\nUse Restart Now from the banner or Menu > Restart Agent. Use Menu > Relaunch App when the desktop shell itself needs a full relaunch.`,
-      urgency: "normal",
-      silent: false,
-    });
-  }, [pendingRestart, pendingRestartReasons, showDesktopNotification]);
 
   const completeResetLocalStateAfterServerWipe = useCallback(
     async (postResetAgentStatus: AgentStatus | null): Promise<void> => {

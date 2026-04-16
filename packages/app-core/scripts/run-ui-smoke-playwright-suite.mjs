@@ -34,7 +34,7 @@ const specGroups = [
   ],
   [
     "test/ui-smoke/ui-smoke.spec.ts",
-    "test/ui-smoke/settings-chat-companion.spec.ts",
+    "test/ui-smoke/cloud-wallet-import.spec.ts",
   ],
 ];
 
@@ -61,15 +61,15 @@ function getFreePort() {
 }
 
 const env = { ...process.env };
-if (!env.ELIZA_UI_SMOKE_API_PORT) {
+if (!env.MILADY_UI_SMOKE_API_PORT) {
   const apiPort = await getFreePort();
-  env.ELIZA_UI_SMOKE_API_PORT = String(apiPort);
-  env.ELIZA_API_PORT = env.ELIZA_API_PORT || String(apiPort);
+  env.MILADY_UI_SMOKE_API_PORT = String(apiPort);
+  env.MILADY_API_PORT = env.MILADY_API_PORT || String(apiPort);
 }
-if (!env.ELIZA_UI_SMOKE_PORT) {
+if (!env.MILADY_UI_SMOKE_PORT) {
   const uiPort = await getFreePort();
-  env.ELIZA_UI_SMOKE_PORT = String(uiPort);
-  env.ELIZA_PORT = env.ELIZA_PORT || String(uiPort);
+  env.MILADY_UI_SMOKE_PORT = String(uiPort);
+  env.MILADY_PORT = env.MILADY_PORT || String(uiPort);
 }
 
 for (const specs of specGroups) {

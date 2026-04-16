@@ -18,8 +18,11 @@ import { applyCanonicalOnboardingConfig } from "@elizaos/agent/api/provider-swit
 import {
   deriveCompatOnboardingReplayBody,
   extractAndPersistOnboardingApiKey,
-  hasLegacyOnboardingRequestFields,
+  hasCanonicalOnboardingRequestFields,
+  hasLegacyOnboardingRejectFields,
+  hasLegacyOnboardingStripFields,
   persistCompatOnboardingDefaults,
+  stripLegacyOnboardingRootKeys,
 } from "./server-onboarding-compat";
 
 async function syncCompatOnboardingConfigState(
@@ -123,11 +126,22 @@ export async function handleOnboardingCompatRoute(
   let capturedCloudApiKey: string | undefined;
 
   try {
-    const body = JSON.parse(rawBody.toString("utf8")) as Record<
+    let body = JSON.parse(rawBody.toString("utf8")) as Record<
       string,
       unknown
     >;
-    if (hasLegacyOnboardingRequestFields(body)) {
+    if (
+      hasCanonicalOnboardingRequestFields(body) &&
+      hasLegacyOnboardingStripFields(body)
+    ) {
+      logger.info(
+        "[api] POST /api/onboarding: stripping legacy top-level keys (canonical onboarding fields present)",
+      );
+      body = stripLegacyOnboardingRootKeys(body);
+    } else if (
+      hasLegacyOnboardingRejectFields(body) &&
+      !hasCanonicalOnboardingRequestFields(body)
+    ) {
       sendJsonResponse(res, 400, {
         error:
           "legacy onboarding payloads are no longer supported; send deploymentTarget, linkedAccounts, serviceRouting, and credentialInputs",

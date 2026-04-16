@@ -130,7 +130,11 @@ export async function tryHandleRuntimePluginRoute(options: {
     const params = matchPluginRoutePath(route.path, pathname);
     if (params === null) continue;
 
-    if (route.public !== true && !isAuthorized()) {
+    // Opt-in auth: only routes with `public: false` require `isAuthorized()`.
+    // Treating `public` as undefined used to mean "protected", which broke
+    // plugin routes whose `public` flag was omitted or stripped at build time
+    // (e.g. music-player GET endpoints polled without a Bearer token).
+    if (route.public === false && !isAuthorized()) {
       if (!res.headersSent) {
         res.statusCode = 401;
         res.setHeader("Content-Type", "application/json; charset=utf-8");

@@ -332,7 +332,8 @@ function getDesktopApiToken(
   return resolveApiToken(env);
 }
 
-function getDesktopApiHeaders(
+/** Auth headers for loopback fetches to the embedded agent API (Bearer + legacy key headers). */
+export function getDesktopApiHeaders(
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> | undefined {
   const token = getDesktopApiToken(env);
@@ -778,7 +779,7 @@ export function buildChildNodePaths(
     nodePaths.add(distModules);
   }
 
-  if (opts?.packagedRuntime) {
+  if (opts?.packagedRuntime && process.env.NODE_ENV !== "development") {
     return [...nodePaths];
   }
 
@@ -1220,7 +1221,11 @@ export class AgentManager {
       const nodePaths = buildChildNodePaths(runtimeDistPath, {
         packagedRuntime,
       });
-      if (packagedRuntime && nodePaths.length === 0) {
+      if (
+        packagedRuntime &&
+        nodePaths.length === 0 &&
+        process.env.NODE_ENV !== "development"
+      ) {
         const errMsg =
           `Packaged runtime is missing bundle-local node_modules under ${runtimeDistPath}; ` +
           "refusing to inherit the parent NODE_PATH";

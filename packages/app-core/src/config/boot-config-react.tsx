@@ -2,7 +2,7 @@ import { createContext, useContext } from "react";
 import {
   DEFAULT_BOOT_CONFIG,
   type AppBootConfig,
-} from "./boot-config-store.js";
+} from "./boot-config.js";
 
 export const AppBootContext = createContext<AppBootConfig>(DEFAULT_BOOT_CONFIG);
 

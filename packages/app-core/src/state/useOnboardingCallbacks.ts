@@ -402,6 +402,42 @@ export function useOnboardingCallbacks(deps: OnboardingCallbacksDeps) {
           const defaultName =
             style.name ?? getDefaultStylePreset(uiLanguage).name;
 
+          // Legacy onboarding keys (runMode, cloudProvider, *Model) are rejected by
+          // POST /api/onboarding — use the same canonical deployment/routing payload
+          // as the main wizard path.
+          const fastTrackRuntime = buildOnboardingRuntimeConfig({
+            onboardingServerTarget: "elizacloud",
+            onboardingCloudApiKey,
+            onboardingProvider: onboardingProvider || "elizacloud",
+            onboardingApiKey,
+            omitRuntimeProvider: options?.omitRuntimeProvider,
+            onboardingVoiceProvider,
+            onboardingVoiceApiKey,
+            onboardingPrimaryModel,
+            onboardingOpenRouterModel,
+            onboardingRemoteConnected: onboardingRemote.status === "connected",
+            onboardingRemoteApiBase,
+            onboardingRemoteToken,
+            onboardingSmallModel,
+            onboardingLargeModel,
+            onboardingFeatureTelegram,
+            onboardingFeatureDiscord,
+            onboardingFeaturePhone,
+            onboardingFeatureCrypto,
+            onboardingFeatureBrowser,
+          });
+          const rpcSelFast = onboardingRpcSelections as Record<string, string>;
+          const rpcKFast = onboardingRpcKeys as Record<string, string>;
+          const nextWalletConfigFast = buildWalletRpcUpdateRequest({
+            walletConfig,
+            rpcFieldValues: rpcKFast,
+            selectedProviders: {
+              evm: rpcSelFast.evm,
+              bsc: rpcSelFast.bsc,
+              solana: rpcSelFast.solana,
+            },
+          });
+
           await client.submitOnboarding({
             name: onboardingName || defaultName,
             bio: style?.bio ?? ["An autonomous AI agent."],
@@ -419,12 +455,19 @@ export function useOnboardingCallbacks(deps: OnboardingCallbacksDeps) {
             avatarIndex: style?.avatarIndex ?? 1,
             language: uiLanguage,
             presetId: style?.id ?? getDefaultStylePreset(uiLanguage).id,
-            runMode: "cloud",
-            cloudProvider: "elizacloud",
-            smallModel: onboardingSmallModel,
-            largeModel: onboardingLargeModel,
+            deploymentTarget: fastTrackRuntime.deploymentTarget,
+            ...(fastTrackRuntime.linkedAccounts
+              ? { linkedAccounts: fastTrackRuntime.linkedAccounts }
+              : {}),
+            ...(fastTrackRuntime.serviceRouting
+              ? { serviceRouting: fastTrackRuntime.serviceRouting }
+              : {}),
+            ...(fastTrackRuntime.credentialInputs
+              ? { credentialInputs: fastTrackRuntime.credentialInputs }
+              : {}),
             ...onboardingFeaturePayload,
-          } as unknown as Parameters<typeof client.submitOnboarding>[0]);
+            walletConfig: nextWalletConfigFast,
+          } as Parameters<typeof client.submitOnboarding>[0]);
           try {
             await persistOnboardingStyleVoice({
               style,

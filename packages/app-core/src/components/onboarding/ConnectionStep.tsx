@@ -145,7 +145,6 @@ function applyOnboardingPatch(
 
 export function ConnectionStep() {
   const {
-    onboardingStep,
     onboardingOptions,
     onboardingServerTarget,
     onboardingProvider,
@@ -310,12 +309,6 @@ export function ConnectionStep() {
     onboardingDetectedProviders,
     setState,
   ]);
-
-  useEffect(() => {
-    if (onboardingStep !== "providers") {
-      setState("onboardingStep", "providers");
-    }
-  }, [onboardingStep, setState]);
 
   const shared: ConnectionUiSharedProps = {
     dispatch: dispatchConnection,

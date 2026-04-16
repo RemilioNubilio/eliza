@@ -52,12 +52,7 @@ export function ConnectionUiRoot({
         />
       );
     case "remoteBackend":
-      return (
-        <ConnectionRemoteBackendScreen
-          dispatch={shared.dispatch}
-          onTransitionEffect={shared.onTransitionEffect}
-        />
-      );
+      return <ConnectionRemoteBackendScreen />;
     case "elizaCloud_preProvider":
       return (
         <ConnectionElizaCloudPreProviderScreen dispatch={shared.dispatch} />
@@ -66,7 +61,6 @@ export function ConnectionUiRoot({
       return (
         <ConnectionProviderGridScreen
           dispatch={shared.dispatch}
-          onTransitionEffect={shared.onTransitionEffect}
           sortedProviders={shared.sortedProviders}
           getProviderDisplay={shared.getProviderDisplay}
           getCustomLogo={shared.getCustomLogo}

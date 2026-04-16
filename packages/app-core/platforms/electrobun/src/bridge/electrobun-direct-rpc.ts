@@ -1,13 +1,13 @@
 /**
  * Electrobun Renderer Bridge
  *
- * Exposes the direct the app Electrobun RPC surface in the webview context.
+ * Exposes the direct Milady Electrobun RPC surface in the webview context.
  *
  * This script runs in the webview context (injected as a preload).
  * It uses `Electroview.defineRPC()` + `new Electroview()` to connect to
  * the Bun main process via the Electrobun WebSocket RPC channel.
  *
- * `window.__ELIZA_ELECTROBUN_RPC__` is the only public desktop bridge exposed
+ * `window.__MILADY_ELECTROBUN_RPC__` is the only public desktop bridge exposed
  * to renderer code. It mirrors the native Electrobun RPC surface directly:
  * `request.<method>(params)` plus `onMessage(<message>, listener)`.
  */
@@ -22,9 +22,10 @@ type RendererBridgeRpc = {
 };
 
 const listenersByRpcMessage: Record<string, Set<RpcMessageListener>> = {};
+/** Must match `boot-config.ts` so `getBootConfig()` sees preload updates. */
 const BOOT_CONFIG_STORE_KEY = Symbol.for("elizaos.app.boot-config");
-const BOOT_CONFIG_WINDOW_KEY = "__ELIZA_APP_BOOT_CONFIG__";
-const RENDERER_LOG_MIRROR_KEY = "__ELIZA_ELECTROBUN_LOG_MIRROR__";
+const BOOT_CONFIG_WINDOW_KEY = "__ELIZAOS_APP_BOOT_CONFIG__";
+const RENDERER_LOG_MIRROR_KEY = "__MILADY_ELECTROBUN_LOG_MIRROR__";
 
 type BootConfig = {
   apiBase?: string;
@@ -61,20 +62,86 @@ function updateBootConfig(
   globalObject[BOOT_CONFIG_STORE_KEY] = { current: nextConfig };
 }
 
+function resolveDesktopApiBearerToken(): string | undefined {
+  const w = window as Window & {
+    __MILADY_API_TOKEN__?: string;
+    __ELIZAOS_APP_BOOT_CONFIG__?: { apiToken?: string };
+  };
+  const direct =
+    typeof w.__MILADY_API_TOKEN__ === "string"
+      ? w.__MILADY_API_TOKEN__.trim()
+      : "";
+  if (direct) return direct;
+  const boot = w.__ELIZAOS_APP_BOOT_CONFIG__;
+  const fromBoot =
+    typeof boot?.apiToken === "string" ? boot.apiToken.trim() : "";
+  if (fromBoot) return fromBoot;
+  return undefined;
+}
+
+function shouldAttachLoopbackBearer(resolvedUrl: string): boolean {
+  try {
+    const u = new URL(resolvedUrl, window.location.href);
+    const p = u.pathname;
+    if (p.startsWith("/music-player") || p.startsWith("/api")) return true;
+    const h = u.hostname;
+    if (h === "127.0.0.1" || h === "localhost") return true;
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Raw `fetch()` does not send `ElizaClient` auth headers; runtime plugin routes
+ * (e.g. music-player) require Bearer when `route.public === false` — mirror
+ * the same token the preload injects for `/api/*`.
+ */
+function mergeLoopbackFetchArgs(
+  args: Parameters<typeof window.fetch>,
+): Parameters<typeof window.fetch> {
+  const token = resolveDesktopApiBearerToken();
+  if (!token) return args;
+
+  const [input, init] = args;
+  const url =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input instanceof Request
+          ? input.url
+          : String(input);
+
+  if (!shouldAttachLoopbackBearer(url)) return args;
+
+  if (input instanceof Request) {
+    const h = new Headers(input.headers);
+    if (h.has("Authorization")) return args;
+    h.set("Authorization", `Bearer ${token}`);
+    return [new Request(input, { headers: h }), undefined];
+  }
+
+  const headers = new Headers(init?.headers ?? {});
+  if (headers.has("Authorization")) return args;
+  headers.set("Authorization", `Bearer ${token}`);
+  return [input, { ...init, headers }];
+}
+
 function dispatchMessage(messageName: string, payload: unknown): void {
   if (messageName === "apiBaseUpdate") {
     const apiBaseUpdate = payload as { base: string; token?: string };
-    window.__ELIZA_API_BASE__ = apiBaseUpdate.base;
+    window.__MILADY_API_BASE__ = apiBaseUpdate.base;
     if (apiBaseUpdate.token) {
-      Object.defineProperty(window, "__ELIZA_API_TOKEN__", {
+      Object.defineProperty(window, "__MILADY_API_TOKEN__", {
         value: apiBaseUpdate.token,
         configurable: true,
         writable: true,
         enumerable: false,
       });
     }
-    // Propagate to boot config so the appClient picks up port changes.
-    // We modify it directly instead of importing @elizaos/app-core
+    // Propagate to boot config so MiladyClient picks up port changes.
+    // We modify it directly instead of importing @elizaos/app-core/config
     // to prevent bundling React and the entire UI layer into the preload script.
     updateBootConfig({
       apiBase: apiBaseUpdate.base,
@@ -158,7 +225,7 @@ const instrumentedRequest = new Proxy(rpc.request, {
   },
 }) as RendererBridgeRpc["request"];
 
-const electrobunRpc = {
+const miladyElectrobunRpc = {
   request: instrumentedRequest,
   onMessage: (messageName: string, listener: RpcMessageListener): void => {
     if (!listenersByRpcMessage[messageName]) {
@@ -176,13 +243,13 @@ const electrobunRpc = {
 
 declare global {
   interface Window {
-    __ELIZA_API_BASE__: string;
-    __ELIZA_API_TOKEN__: string;
-    __ELIZA_ELECTROBUN_RPC__: typeof electrobunRpc;
+    __MILADY_API_BASE__: string;
+    __MILADY_API_TOKEN__: string;
+    __MILADY_ELECTROBUN_RPC__: typeof miladyElectrobunRpc;
   }
 }
 
-window.__ELIZA_ELECTROBUN_RPC__ = electrobunRpc;
+window.__MILADY_ELECTROBUN_RPC__ = miladyElectrobunRpc;
 
 function installRendererLogMirror(): void {
   const globalWindow = window as typeof window & {
@@ -276,8 +343,9 @@ function installRendererLogMirror(): void {
     const originalFetch = window.fetch.bind(window);
     window.fetch = (async (...args: Parameters<typeof window.fetch>) => {
       const startedAt = Date.now();
-      const input = args[0];
-      const init = args[1];
+      const merged = mergeLoopbackFetchArgs(args);
+      const input = merged[0];
+      const init = merged[1];
       const url =
         typeof input === "string"
           ? input
@@ -290,7 +358,7 @@ function installRendererLogMirror(): void {
         "GET";
 
       try {
-        const response = await originalFetch(...args);
+        const response = await originalFetch(...merged);
         if (!response.ok) {
           reportDiagnostic(
             response.status >= 500 ? "error" : "warn",
@@ -327,9 +395,9 @@ function installRendererLogMirror(): void {
     ) {
       (
         this as XMLHttpRequest & {
-          __elizaDiag?: { method: string; url: string; startedAt: number };
+          __miladyDiag?: { method: string; url: string; startedAt: number };
         }
-      ).__elizaDiag = {
+      ).__miladyDiag = {
         method,
         url: String(url),
         startedAt: Date.now(),
@@ -344,10 +412,10 @@ function installRendererLogMirror(): void {
 
     XMLHttpRequest.prototype.send = function (...args: unknown[]) {
       const xhr = this as XMLHttpRequest & {
-        __elizaDiag?: { method: string; url: string; startedAt: number };
+        __miladyDiag?: { method: string; url: string; startedAt: number };
       };
       const handleComplete = () => {
-        const diag = xhr.__elizaDiag;
+        const diag = xhr.__miladyDiag;
         if (!diag) {
           return;
         }
@@ -366,7 +434,7 @@ function installRendererLogMirror(): void {
       };
 
       const handleError = () => {
-        const diag = xhr.__elizaDiag;
+        const diag = xhr.__miladyDiag;
         reportDiagnostic("error", "xhr", "XMLHttpRequest failed", {
           url: diag?.url,
           method: diag?.method,

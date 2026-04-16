@@ -130,16 +130,30 @@ export function ensureCompatApiAuthorized(
   const expectedToken = getCompatApiToken();
   if (!expectedToken) return true;
 
+  const providedToken = getProvidedApiToken(req);
   const ip = req.socket?.remoteAddress ?? null;
+  const ipKey = ip ?? "unknown";
+
+  // Validate the token BEFORE checking the failed-auth rate limit. Otherwise a
+  // burst of wrong/stale tokens (e.g. desktop polling many routes) trips the
+  // lockout and every request returns 429 — including ones that send the
+  // correct token after the user fixes config. Successful auth clears the IP.
+  if (providedToken && tokenMatches(expectedToken, providedToken)) {
+    authAttempts.delete(ipKey);
+    return true;
+  }
+
   if (isAuthRateLimited(ip)) {
     sendJsonError(res, 429, "Too many authentication attempts");
     return false;
   }
 
-  const providedToken = getProvidedApiToken(req);
-  if (providedToken && tokenMatches(expectedToken, providedToken)) return true;
-
-  recordFailedAuth(ip);
+  // Only count mismatched credentials toward the rate limit. Missing tokens are
+  // common for dashboard polling (no Authorization header) and would otherwise
+  // trip the limit and return 429, blocking real mutations like plugin toggles.
+  if (providedToken) {
+    recordFailedAuth(ip);
+  }
   sendJsonError(res, 401, "Unauthorized");
   return false;
 }

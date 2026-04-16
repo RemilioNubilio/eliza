@@ -36,7 +36,7 @@ import {
   type WhitelistStatus,
   client,
 } from "../api";
-
+import type { PromptOptions } from "@elizaos/app-core";
 import { confirmDesktopAction } from "../utils";
 import {
   loadBrowserEnabled,
@@ -45,7 +45,6 @@ import {
   saveWalletEnabled,
 } from "./persistence";
 import type { InventoryChainFilters } from "./types";
-import { type PromptOptions } from "@elizaos/ui";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -333,10 +332,10 @@ export function useWalletState({
     [
       walletApiKeySaving,
       fetchWalletConfig,
-      loadBalances,
-      loadWalletConfig,
-      setActionNotice,
       summarizeCloudWalletImport,
+      loadWalletConfig,
+      loadBalances,
+      setActionNotice,
     ],
   );
 
