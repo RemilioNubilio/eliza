@@ -115,6 +115,15 @@ function createWorkflowDraftId(): string {
   return globalThis.crypto.randomUUID();
 }
 
+function pluralCount(
+  t: (key: string, vars?: Record<string, string | number>) => string,
+  baseKey: string,
+  count: number,
+): string {
+  const suffix = count === 1 ? "one" : "other";
+  return t(`${baseKey}_${suffix}`, { count });
+}
+
 function isSystemTask(task: WorkbenchTask): boolean {
   if (SYSTEM_TASK_NAMES.has(task.name)) {
     return true;
@@ -212,20 +221,23 @@ function buildWorkflowCompilationPrompt(item: AutomationItem): string {
   return lines.join("\n");
 }
 
-function getNodeClassLabel(className: AutomationNodeDescriptor["class"]): string {
+function getNodeClassLabel(
+  className: AutomationNodeDescriptor["class"],
+  t: (key: string) => string,
+): string {
   switch (className) {
     case "agent":
-      return "Agent";
+      return t("automations.nodes.classAgent");
     case "action":
-      return "Actions";
+      return t("automations.nodes.classAction");
     case "context":
-      return "Context";
+      return t("automations.nodes.classContext");
     case "integration":
-      return "Integrations";
+      return t("automations.nodes.classIntegration");
     case "trigger":
-      return "Triggers";
+      return t("automations.nodes.classTrigger");
     case "flow-control":
-      return "Flow Control";
+      return t("automations.nodes.classFlowControl");
     default:
       return className;
   }
@@ -598,7 +610,7 @@ function useAutomationsViewController() {
   const onSubmitTask = async () => {
     const name = taskFormName.trim();
     if (!name) {
-      setFormError("Name is required");
+      setFormError(t("automations.task.nameRequired"));
       return;
     }
     setFormError(null);
@@ -651,8 +663,8 @@ function useAutomationsViewController() {
 
   const onDeleteTask = async (taskId: string) => {
     const confirmed = await confirmDesktopAction({
-      title: "Delete Task",
-      message: "Are you sure you want to delete this task?",
+      title: t("automations.task.deleteTitle"),
+      message: t("automations.task.deleteMessage"),
       confirmLabel: t("triggersview.Delete"),
       cancelLabel: t("common.cancel"),
       type: "warning",
@@ -714,10 +726,10 @@ function useAutomationsViewController() {
             name: form.displayName.trim() || "Task",
             defaultValue: "Edit {{name}}",
           })
-        : "New Schedule"
+        : t("automations.trigger.modalTitleNew")
       : editingTaskId
-        ? "Edit Coordinator"
-        : "New Coordinator";
+        ? t("automations.task.modalTitleEdit")
+        : t("automations.task.modalTitleNew");
 
   const editorEnabled =
     editingId != null
@@ -818,27 +830,27 @@ function useAutomationsViewContext(): AutomationsViewController {
 }
 
 function FilterTabs() {
-  const { filter, setFilter, allItems } = useAutomationsViewContext();
+  const { filter, setFilter, allItems, t } = useAutomationsViewContext();
 
   const filters: Array<{
     key: AutomationFilter;
     label: string;
     count: number;
   }> = [
-    { key: "all", label: "All", count: allItems.length },
+    { key: "all", label: t("automations.filter.all"), count: allItems.length },
     {
       key: "coordinator",
-      label: "Coordinator",
+      label: t("automations.filter.coordinator"),
       count: allItems.filter((item) => item.type === "coordinator_text").length,
     },
     {
       key: "workflows",
-      label: "Workflows",
+      label: t("automations.filter.workflows"),
       count: allItems.filter((item) => item.type === "n8n_workflow").length,
     },
     {
       key: "scheduled",
-      label: "Scheduled",
+      label: t("automations.filter.scheduled"),
       count: allItems.filter((item) => item.schedules.length > 0).length,
     },
   ];
@@ -899,20 +911,20 @@ function TaskForm() {
 
       <div className="space-y-3">
         <div>
-          <FieldLabel>Name</FieldLabel>
+          <FieldLabel>{t("automations.task.nameLabel")}</FieldLabel>
           <Input
             value={taskFormName}
             onChange={(event) => setTaskFormName(event.target.value)}
-            placeholder="Coordinator automation name..."
+            placeholder={t("automations.task.namePlaceholder")}
             autoFocus
           />
         </div>
         <div>
-          <FieldLabel>Description</FieldLabel>
+          <FieldLabel>{t("automations.task.descriptionLabel")}</FieldLabel>
           <Textarea
             value={taskFormDescription}
             onChange={(event) => setTaskFormDescription(event.target.value)}
-            placeholder="What should the coordinator do..."
+            placeholder={t("automations.task.descriptionPlaceholder")}
             rows={4}
           />
         </div>
@@ -925,7 +937,9 @@ function TaskForm() {
           disabled={taskSaving || !taskFormName.trim()}
           onClick={() => void onSubmitTask()}
         >
-          {editingTaskId ? "Save Coordinator" : "Create Coordinator"}
+          {editingTaskId
+            ? t("automations.task.save")
+            : t("automations.task.create")}
         </Button>
         {editingTaskId && (
           <Button
@@ -955,6 +969,8 @@ function WorkflowRuntimeNotice({
   onRefresh: () => void;
   onStartLocal: () => void;
 }) {
+  const { t } = useApp();
+
   if (!status && !workflowFetchError) {
     return null;
   }
@@ -968,12 +984,10 @@ function WorkflowRuntimeNotice({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <div className="text-sm font-semibold text-txt">
-              Workflow execution needs n8n.
+              {t("automations.runtime.needsN8nTitle")}
             </div>
             <p className="text-sm text-muted">
-              Coordinator automations stay usable without n8n. Workflow
-              automations become deployable once Eliza Cloud or local n8n is
-              available.
+              {t("automations.runtime.needsN8nBody")}
             </p>
           </div>
           {status.platform !== "mobile" && (
@@ -983,7 +997,7 @@ function WorkflowRuntimeNotice({
               disabled={busy}
               onClick={onStartLocal}
             >
-              Enable Local n8n
+              {t("automations.runtime.enableLocalN8n")}
             </Button>
           )}
         </div>
@@ -1000,7 +1014,7 @@ function WorkflowRuntimeNotice({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <div className="text-sm font-semibold text-danger">
-              Workflow backend unavailable
+              {t("automations.runtime.backendUnavailable")}
             </div>
             <p className="text-sm text-danger/90">{workflowFetchError}</p>
           </div>
@@ -1012,7 +1026,7 @@ function WorkflowRuntimeNotice({
                 disabled={busy}
                 onClick={onStartLocal}
               >
-                Start Local n8n
+                {t("automations.runtime.startLocalN8n")}
               </Button>
             )}
             <Button
@@ -1021,7 +1035,7 @@ function WorkflowRuntimeNotice({
               disabled={busy}
               onClick={onRefresh}
             >
-              Refresh
+              {t("common.refresh")}
             </Button>
           </div>
         </div>
@@ -1038,11 +1052,10 @@ function WorkflowRuntimeNotice({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <div className="text-sm font-semibold text-warning">
-              Local n8n is {status.status}.
+              {t("automations.runtime.localStatus", { status: status.status })}
             </div>
             <p className="text-sm text-muted">
-              Draft rooms still work. Workflow deploy, activate, and delete
-              operations resume when local n8n is ready.
+              {t("automations.runtime.localStatusBody")}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1052,7 +1065,7 @@ function WorkflowRuntimeNotice({
               disabled={busy}
               onClick={onStartLocal}
             >
-              Start Local n8n
+              {t("automations.runtime.startLocalN8n")}
             </Button>
             <Button
               variant="outline"
@@ -1060,7 +1073,7 @@ function WorkflowRuntimeNotice({
               disabled={busy}
               onClick={onRefresh}
             >
-              Refresh
+              {t("common.refresh")}
             </Button>
           </div>
         </div>
@@ -1077,11 +1090,10 @@ function WorkflowRuntimeNotice({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <div className="text-sm font-semibold text-warning">
-              Eliza Cloud workflow gateway is degraded.
+              {t("automations.runtime.cloudDegraded")}
             </div>
             <p className="text-sm text-muted">
-              Chat rooms remain usable while workflow execution and sync may be
-              delayed.
+              {t("automations.runtime.cloudDegradedBody")}
             </p>
           </div>
           <Button
@@ -1090,7 +1102,7 @@ function WorkflowRuntimeNotice({
             disabled={busy}
             onClick={onRefresh}
           >
-            Refresh
+            {t("common.refresh")}
           </Button>
         </div>
       </PagePanel>
@@ -1109,6 +1121,7 @@ function AutomationNodePalette({
   title: string;
   subtitle: string;
 }) {
+  const { t } = useApp();
   const groupedNodes = useMemo(
     () =>
       NODE_CLASS_ORDER.map((className) => ({
@@ -1117,6 +1130,13 @@ function AutomationNodePalette({
       })).filter((group) => group.nodes.length > 0),
     [nodes],
   );
+
+  const enabledCount = nodes.filter(
+    (node) => node.availability === "enabled",
+  ).length;
+  const setupCount = nodes.filter(
+    (node) => node.availability === "disabled",
+  ).length;
 
   return (
     <PagePanel variant="padded" className="space-y-4">
@@ -1129,14 +1149,13 @@ function AutomationNodePalette({
 
       <div className="flex flex-wrap gap-2 text-xs">
         <span className="rounded-full bg-bg/40 px-2.5 py-1 text-muted">
-          {nodes.length} total
+          {t("automations.nodes.totalCount", { count: nodes.length })}
         </span>
         <span className="rounded-full bg-ok/10 px-2.5 py-1 text-ok">
-          {nodes.filter((node) => node.availability === "enabled").length} enabled
+          {t("automations.nodes.enabledCount", { count: enabledCount })}
         </span>
         <span className="rounded-full bg-warning/10 px-2.5 py-1 text-warning">
-          {nodes.filter((node) => node.availability === "disabled").length} setup
-          required
+          {t("automations.nodes.setupCount", { count: setupCount })}
         </span>
       </div>
 
@@ -1144,7 +1163,7 @@ function AutomationNodePalette({
         {groupedNodes.map((group) => (
           <div key={group.className} className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wider text-muted">
-              {getNodeClassLabel(group.className)}
+              {getNodeClassLabel(group.className, t)}
             </div>
             <div className="grid gap-3 xl:grid-cols-2">
               {group.nodes.map((node) => (
@@ -1173,7 +1192,9 @@ function AutomationNodePalette({
                         </div>
                         <StatusBadge
                           label={
-                            node.availability === "enabled" ? "Ready" : "Setup"
+                            node.availability === "enabled"
+                              ? t("automations.nodes.ready")
+                              : t("automations.nodes.setup")
                           }
                           variant={
                             node.availability === "enabled" ? "success" : "warning"
@@ -1182,7 +1203,7 @@ function AutomationNodePalette({
                         />
                         {node.ownerScoped && (
                           <span className="rounded-full bg-bg/40 px-2 py-0.5 text-[11px] text-muted">
-                            Owner scoped
+                            {t("automations.nodes.ownerScoped")}
                           </span>
                         )}
                       </div>
@@ -1245,22 +1266,22 @@ function TaskAutomationDetailPane({
               {automation.system ? (
                 <>
                   <Settings className="mr-1.5 inline h-3.5 w-3.5" />
-                  System Automation
+                  {t("automations.task.systemKicker")}
                 </>
               ) : (
                 <>
                   <SquareTerminal className="mr-1.5 inline h-3.5 w-3.5" />
-                  Coordinator Automation
+                  {t("automations.task.coordinatorKicker")}
                 </>
               )}
             </FieldLabel>
             <StatusBadge
               label={
                 automation.system
-                  ? "System"
+                  ? t("automations.task.statusSystem")
                   : task.isCompleted
-                    ? "Completed"
-                    : "Active"
+                    ? t("automations.task.statusCompleted")
+                    : t("automations.task.statusActive")
               }
               variant={
                 automation.system
@@ -1306,7 +1327,9 @@ function TaskAutomationDetailPane({
               }`}
               onClick={() => void onToggleTaskCompleted(task.id, task.isCompleted)}
             >
-              {task.isCompleted ? "Reopen" : "Complete"}
+              {task.isCompleted
+                ? t("automations.task.reopen")
+                : t("automations.task.complete")}
             </Button>
             <Button
               variant="outline"
@@ -1315,7 +1338,7 @@ function TaskAutomationDetailPane({
               onClick={() => void onPromoteToWorkflow(automation)}
             >
               <GitBranch className="mr-1.5 h-3.5 w-3.5" />
-              Compile to Workflow
+              {t("automations.task.compileToWorkflow")}
             </Button>
             <Button
               variant="outline"
@@ -1345,7 +1368,7 @@ function TaskAutomationDetailPane({
           metadata={metadata}
           onAutomationMutated={onAutomationMutated}
           onToggleCollapse={() => setChatCollapsed((value) => !value)}
-          placeholder="Ask the coordinator to plan or execute this automation."
+          placeholder={t("automations.task.chatPlaceholder")}
           systemAddendum={COORDINATOR_SYSTEM_ADDENDUM}
           title={automation.title}
         />
@@ -1353,8 +1376,8 @@ function TaskAutomationDetailPane({
 
       <AutomationNodePalette
         nodes={nodes}
-        title="Available Automation Nodes"
-        subtitle="These are the runtime capabilities the coordinator can reference while building or converting this automation."
+        title={t("automations.nodes.title")}
+        subtitle={t("automations.nodes.subtitleTask")}
       />
     </div>
   );
@@ -1429,10 +1452,14 @@ function TriggerAutomationDetailPane({
           <div className="flex flex-wrap items-center gap-2">
             <FieldLabel variant="kicker">
               <Clock3 className="mr-1.5 inline h-3.5 w-3.5" />
-              Scheduled Coordinator Automation
+              {t("automations.trigger.scheduledKicker")}
             </FieldLabel>
             <StatusBadge
-              label={trigger.enabled ? "Active" : "Paused"}
+              label={
+                trigger.enabled
+                  ? t("automations.trigger.statusActive")
+                  : t("automations.trigger.statusPaused")
+              }
               variant={trigger.enabled ? "success" : "muted"}
               withDot
             />
@@ -1456,7 +1483,9 @@ function TriggerAutomationDetailPane({
             }`}
             onClick={() => void onToggleTriggerEnabled(trigger.id, trigger.enabled)}
           >
-            {trigger.enabled ? "Pause" : "Resume"}
+            {trigger.enabled
+              ? t("automations.trigger.pause")
+              : t("automations.trigger.resume")}
           </Button>
           <Button
             variant="outline"
@@ -1465,7 +1494,7 @@ function TriggerAutomationDetailPane({
             onClick={() => void onPromoteToWorkflow(automation)}
           >
             <GitBranch className="mr-1.5 h-3.5 w-3.5" />
-            Compile to Workflow
+            {t("automations.task.compileToWorkflow")}
           </Button>
           <Button
             variant="outline"
@@ -1506,7 +1535,7 @@ function TriggerAutomationDetailPane({
       <dl className="grid gap-4 text-sm sm:grid-cols-2 xl:grid-cols-4">
         <PagePanel.SummaryCard className="px-4 py-4">
           <dt className="text-xs-tight font-semibold uppercase tracking-wider text-muted">
-            Schedule
+            {t("automations.trigger.summarySchedule")}
           </dt>
           <dd className="mt-1 font-medium text-txt">
             {scheduleLabel(trigger, t, uiLanguage)}
@@ -1514,29 +1543,29 @@ function TriggerAutomationDetailPane({
         </PagePanel.SummaryCard>
         <PagePanel.SummaryCard className="px-4 py-4">
           <dt className="text-xs-tight font-semibold uppercase tracking-wider text-muted">
-            Last Run
+            {t("automations.trigger.summaryLastRun")}
           </dt>
           <dd className="mt-1 font-medium text-txt">
             {formatDateTime(trigger.lastRunAtIso, {
-              fallback: "Not yet run",
+              fallback: t("automations.trigger.notYetRun"),
               locale: uiLanguage,
             })}
           </dd>
         </PagePanel.SummaryCard>
         <PagePanel.SummaryCard className="px-4 py-4">
           <dt className="text-xs-tight font-semibold uppercase tracking-wider text-muted">
-            Next Run
+            {t("automations.trigger.summaryNextRun")}
           </dt>
           <dd className="mt-1 font-medium text-txt">
             {formatDateTime(trigger.nextRunAtMs, {
-              fallback: "Not scheduled",
+              fallback: t("automations.trigger.notScheduled"),
               locale: uiLanguage,
             })}
           </dd>
         </PagePanel.SummaryCard>
         <PagePanel.SummaryCard className="px-4 py-4">
           <dt className="text-xs-tight font-semibold uppercase tracking-wider text-muted">
-            Runs
+            {t("automations.trigger.summaryRuns")}
           </dt>
           <dd className="mt-1 flex items-center gap-2 text-sm font-medium">
             <span className="text-txt">{selectedRuns.length}</span>
@@ -1551,7 +1580,7 @@ function TriggerAutomationDetailPane({
       <PagePanel variant="padded" className="space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div className="text-xs font-semibold uppercase tracking-wider text-muted">
-            Run History
+            {t("automations.trigger.runHistory")}
           </div>
           <Button
             variant="outline"
@@ -1612,15 +1641,15 @@ function TriggerAutomationDetailPane({
         metadata={metadata}
         onAutomationMutated={onAutomationMutated}
         onToggleCollapse={() => setChatCollapsed((value) => !value)}
-        placeholder="Ask the coordinator to refine or convert this scheduled automation."
+        placeholder={t("automations.trigger.chatPlaceholder")}
         systemAddendum={COORDINATOR_SYSTEM_ADDENDUM}
         title={automation.title}
       />
 
       <AutomationNodePalette
         nodes={nodes}
-        title="Available Automation Nodes"
-        subtitle="These nodes stay visible even when setup is missing so you can design the workflow shape before connecting services."
+        title={t("automations.nodes.title")}
+        subtitle={t("automations.nodes.subtitleTrigger")}
       />
     </div>
   );
@@ -1700,8 +1729,8 @@ function WorkflowAutomationDetailPane({
         onToggleCollapse={() => setChatCollapsed((value) => !value)}
         placeholder={
           automation.isDraft
-            ? "Describe the workflow you want to build."
-            : "Refine or debug this workflow with the automation agent."
+            ? t("automations.workflow.draftPlaceholder")
+            : t("automations.workflow.refinePlaceholder")
         }
         systemAddendum={WORKFLOW_SYSTEM_ADDENDUM}
         title={automation.title || WORKFLOW_DRAFT_TITLE}
@@ -1713,15 +1742,17 @@ function WorkflowAutomationDetailPane({
             <div className="flex flex-wrap items-center gap-2">
               <FieldLabel variant="kicker">
                 <Workflow className="mr-1.5 inline h-3.5 w-3.5" />
-                {automation.isDraft ? "Workflow Draft" : "Workflow Automation"}
+                {automation.isDraft
+                  ? t("automations.workflow.draftKicker")
+                  : t("automations.workflow.workflowKicker")}
               </FieldLabel>
               <StatusBadge
                 label={
                   automation.isDraft
-                    ? "Draft"
+                    ? t("automations.workflow.statusDraft")
                     : automation.enabled
-                      ? "Active"
-                      : "Paused"
+                      ? t("automations.workflow.statusActive")
+                      : t("automations.workflow.statusPaused")
                 }
                 variant={
                   automation.isDraft
@@ -1734,11 +1765,11 @@ function WorkflowAutomationDetailPane({
               />
               {automation.hasBackingWorkflow ? (
                 <span className="rounded-full bg-ok/10 px-2 py-0.5 text-[11px] text-ok">
-                  Backed by n8n
+                  {t("automations.workflow.badgeBackedByN8n")}
                 </span>
               ) : (
                 <span className="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] text-warning">
-                  Room only
+                  {t("automations.workflow.badgeRoomOnly")}
                 </span>
               )}
             </div>
@@ -1748,8 +1779,8 @@ function WorkflowAutomationDetailPane({
             <p className="text-sm leading-relaxed text-muted">
               {automation.description ||
                 (automation.isDraft
-                  ? "Develop this workflow in chat, then have the agent create and deploy the backing n8n workflow."
-                  : "Workflow automation.")}
+                  ? t("automations.workflow.descriptionDraft")
+                  : t("automations.workflow.descriptionFallback"))}
             </p>
           </div>
 
@@ -1758,6 +1789,7 @@ function WorkflowAutomationDetailPane({
               <Button
                 variant="outline"
                 size="sm"
+                aria-busy={busy}
                 className={`h-8 px-3 text-xs ${
                   automation.workflow.active
                     ? "border-warning/30 text-warning hover:bg-warning/10"
@@ -1766,16 +1798,21 @@ function WorkflowAutomationDetailPane({
                 disabled={busy}
                 onClick={() => void onToggleWorkflowActive(automation)}
               >
-                {automation.workflow.active ? "Deactivate" : "Activate"}
+                {busy
+                  ? t("automations.n8n.updating")
+                  : automation.workflow.active
+                    ? t("automations.n8n.deactivate")
+                    : t("automations.n8n.activate")}
               </Button>
               <Button
                 variant="outline"
                 size="sm"
+                aria-busy={busy}
                 className="h-8 px-3 text-xs border-danger/30 text-danger hover:bg-danger/10"
                 disabled={busy}
                 onClick={() => void onDeleteWorkflow(automation)}
               >
-                Delete Workflow
+                {t("automations.n8n.deleteWorkflow")}
               </Button>
             </div>
           )}
@@ -1784,21 +1821,23 @@ function WorkflowAutomationDetailPane({
         <dl className="grid gap-4 text-sm sm:grid-cols-2 xl:grid-cols-4">
           <PagePanel.SummaryCard className="px-4 py-4">
             <dt className="text-xs-tight font-semibold uppercase tracking-wider text-muted">
-              Workflow ID
+              {t("automations.workflow.summaryWorkflowId")}
             </dt>
             <dd className="mt-1 break-all font-mono text-xs text-txt">
-              {automation.workflowId ?? automation.draftId ?? "Pending"}
+              {automation.workflowId ??
+                automation.draftId ??
+                t("automations.workflow.summaryPending")}
             </dd>
           </PagePanel.SummaryCard>
           <PagePanel.SummaryCard className="px-4 py-4">
             <dt className="text-xs-tight font-semibold uppercase tracking-wider text-muted">
-              Nodes
+              {t("automations.workflow.summaryNodes")}
             </dt>
             <dd className="mt-1 font-medium text-txt">{nodeCount}</dd>
           </PagePanel.SummaryCard>
           <PagePanel.SummaryCard className="px-4 py-4">
             <dt className="text-xs-tight font-semibold uppercase tracking-wider text-muted">
-              Attached Schedules
+              {t("automations.workflow.summaryAttachedSchedules")}
             </dt>
             <dd className="mt-1 font-medium text-txt">
               {automation.schedules.length}
@@ -1806,11 +1845,11 @@ function WorkflowAutomationDetailPane({
           </PagePanel.SummaryCard>
           <PagePanel.SummaryCard className="px-4 py-4">
             <dt className="text-xs-tight font-semibold uppercase tracking-wider text-muted">
-              Updated
+              {t("automations.workflow.summaryUpdated")}
             </dt>
             <dd className="mt-1 font-medium text-txt">
               {formatDateTime(automation.updatedAt, {
-                fallback: "Unknown",
+                fallback: t("automations.workflow.summaryUnknown"),
                 locale: uiLanguage,
               })}
             </dd>
@@ -1820,7 +1859,7 @@ function WorkflowAutomationDetailPane({
         {automation.schedules.length > 0 && (
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wider text-muted">
-              Workflow Schedules
+              {t("automations.workflow.sectionSchedules")}
             </div>
             <div className="space-y-2">
               {automation.schedules.map((schedule) => (
@@ -1833,7 +1872,11 @@ function WorkflowAutomationDetailPane({
                       {schedule.displayName}
                     </div>
                     <StatusBadge
-                      label={schedule.enabled ? "Active" : "Paused"}
+                      label={
+                        schedule.enabled
+                          ? t("automations.workflow.statusActive")
+                          : t("automations.workflow.statusPaused")
+                      }
                       variant={schedule.enabled ? "success" : "muted"}
                       withDot
                     />
@@ -1850,7 +1893,7 @@ function WorkflowAutomationDetailPane({
         {automation.workflow?.nodes && automation.workflow.nodes.length > 0 && (
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wider text-muted">
-              Backing Workflow Graph
+              {t("automations.workflow.sectionBackingGraph")}
             </div>
             <div className="space-y-2">
               {automation.workflow.nodes.map((node) => (
@@ -1859,7 +1902,7 @@ function WorkflowAutomationDetailPane({
                   className="flex items-center justify-between rounded-lg border border-border/30 bg-bg/20 px-4 py-3 text-sm"
                 >
                   <span className="font-medium text-txt">
-                    {node.name ?? "Unnamed node"}
+                    {node.name ?? t("automations.workflow.unnamedNode")}
                   </span>
                   <span className="font-mono text-xs text-muted">
                     {node.type?.split(".").pop() ?? "node"}
@@ -1873,8 +1916,8 @@ function WorkflowAutomationDetailPane({
 
       <AutomationNodePalette
         nodes={nodes}
-        title="Workflow Node Catalog"
-        subtitle="Runtime actions, providers, code-agent nodes, and owner-scoped LifeOps integrations are available here as workflow building blocks."
+        title={t("automations.workflow.nodeCatalogTitle")}
+        subtitle={t("automations.workflow.nodeCatalogSubtitle")}
       />
     </div>
   );
@@ -1895,6 +1938,7 @@ function AutomationSidebarItem({
 
   if (item.type === "n8n_workflow") {
     const nodeCount = getWorkflowNodeCount(item);
+    const scheduleCount = item.schedules.length;
     return (
       <SidebarContent.Item
         onClick={onClick}
@@ -1912,7 +1956,11 @@ function AutomationSidebarItem({
             </div>
             <StatusBadge
               label={
-                item.isDraft ? "Draft" : item.enabled ? "Active" : "Paused"
+                item.isDraft
+                  ? t("automations.workflow.statusDraft")
+                  : item.enabled
+                    ? t("automations.workflow.statusActive")
+                    : t("automations.workflow.statusPaused")
               }
               variant={
                 item.isDraft ? "warning" : item.enabled ? "success" : "muted"
@@ -1923,11 +1971,21 @@ function AutomationSidebarItem({
           <div className="mt-0.5 flex items-center justify-between gap-2 text-xs-tight text-muted">
             <span className="truncate">
               {item.hasBackingWorkflow
-                ? `${nodeCount} workflow nodes`
-                : "Room draft or workflow shadow"}
+                ? pluralCount(
+                    t,
+                    "automations.sidebar.workflowNodeCount",
+                    nodeCount,
+                  )
+                : t("automations.sidebar.roomOnlyDraft")}
             </span>
-            {item.schedules.length > 0 && (
-              <span>{item.schedules.length} schedule(s)</span>
+            {scheduleCount > 0 && (
+              <span>
+                {pluralCount(
+                  t,
+                  "automations.sidebar.scheduleCount",
+                  scheduleCount,
+                )}
+              </span>
             )}
           </div>
         </div>
@@ -1953,7 +2011,11 @@ function AutomationSidebarItem({
               </span>
             </div>
             <StatusBadge
-              label={trigger.enabled ? "Active" : "Paused"}
+              label={
+                trigger.enabled
+                  ? t("automations.trigger.statusActive")
+                  : t("automations.trigger.statusPaused")
+              }
               variant={trigger.enabled ? "success" : "muted"}
               withDot
             />
@@ -2007,7 +2069,11 @@ function AutomationSidebarItem({
             </div>
             <StatusBadge
               label={
-                item.system ? "System" : task.isCompleted ? "Done" : "Active"
+                item.system
+                  ? t("automations.task.statusSystem")
+                  : task.isCompleted
+                    ? t("automations.task.statusDone")
+                    : t("automations.task.statusActive")
               }
               variant={
                 item.system ? "muted" : task.isCompleted ? "muted" : "success"
@@ -2098,7 +2164,7 @@ function AutomationsLayout() {
   const mobileSidebarLabel =
     editorOpen || editingId || editingTaskId
       ? modalTitle
-      : (resolvedSelectedItem?.title ?? "Automations");
+      : (resolvedSelectedItem?.title ?? t("automations.sidebar.title"));
 
   const selectItem = useCallback(
     (item: AutomationItem) => {
@@ -2235,7 +2301,7 @@ function AutomationsLayout() {
         setPageNotice(
           error instanceof Error
             ? error.message
-            : "Failed to create the workflow draft room.",
+            : t("automations.errorCreateDraft"),
         );
       }
     },
@@ -2251,6 +2317,7 @@ function AutomationsLayout() {
       setFilter,
       setSelectedItemId,
       setSelectedItemKind,
+      t,
     ],
   );
 
@@ -2284,12 +2351,12 @@ function AutomationsLayout() {
       await ctx.refreshAutomations();
     } catch (error) {
       setPageNotice(
-        error instanceof Error ? error.message : "Failed to start local n8n.",
+        error instanceof Error ? error.message : t("automations.errorStartLocal"),
       );
     } finally {
       setWorkflowOpsBusy(false);
     }
-  }, [ctx]);
+  }, [ctx, t]);
 
   const handleToggleWorkflowActive = useCallback(
     async (item: AutomationItem) => {
@@ -2309,13 +2376,13 @@ function AutomationsLayout() {
         setPageNotice(
           error instanceof Error
             ? error.message
-            : "Failed to update workflow state.",
+            : t("automations.workflow.errorUpdateActive"),
         );
       } finally {
         setWorkflowBusyId(null);
       }
     },
-    [ctx],
+    [ctx, t],
   );
 
   const handleDeleteWorkflow = useCallback(
@@ -2324,9 +2391,11 @@ function AutomationsLayout() {
         return;
       }
       const confirmed = await confirmDesktopAction({
-        title: "Delete Workflow",
-        message: `Delete ${item.title}?`,
-        confirmLabel: "Delete Workflow",
+        title: t("automations.n8n.deleteWorkflow"),
+        message: t("automations.workflow.deleteConfirmMessage", {
+          name: item.title,
+        }),
+        confirmLabel: t("automations.n8n.deleteWorkflow"),
         cancelLabel: t("common.cancel"),
         type: "warning",
       });
@@ -2339,7 +2408,9 @@ function AutomationsLayout() {
         await ctx.refreshAutomations();
       } catch (error) {
         setPageNotice(
-          error instanceof Error ? error.message : "Failed to delete workflow.",
+          error instanceof Error
+            ? error.message
+            : t("automations.workflow.errorDelete"),
         );
       } finally {
         setWorkflowBusyId(null);
@@ -2355,12 +2426,12 @@ function AutomationsLayout() {
       contentIdentity="automations"
       collapseButtonTestId="automations-sidebar-collapse-toggle"
       expandButtonTestId="automations-sidebar-expand-toggle"
-      collapseButtonAriaLabel="Collapse automations"
-      expandButtonAriaLabel="Expand automations"
+      collapseButtonAriaLabel={t("automations.sidebar.collapse")}
+      expandButtonAriaLabel={t("automations.sidebar.expand")}
       header={null}
       collapsedRailAction={
         <SidebarCollapsedActionButton
-          aria-label="New coordinator automation"
+          aria-label={t("automations.sidebar.newCoordinator")}
           onClick={openCreateTask}
         >
           <Plus className="h-4 w-4" />
@@ -2386,8 +2457,8 @@ function AutomationsLayout() {
               type="text"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search automations"
-              aria-label="Search automations"
+              placeholder={t("automations.sidebar.search")}
+              aria-label={t("automations.sidebar.search")}
               autoComplete="off"
               spellCheck={false}
               className="w-full rounded-lg border border-border/30 bg-bg/30 px-3 py-1.5 text-sm text-txt placeholder:text-muted/50 focus:border-accent/40 focus:outline-none"
@@ -2400,7 +2471,7 @@ function AutomationsLayout() {
                 onClick={openCreateTask}
               >
                 <SquareTerminal className="h-3.5 w-3.5" />
-                Coordinator
+                {t("automations.sidebar.coordinator")}
               </Button>
               <Button
                 variant="outline"
@@ -2409,7 +2480,7 @@ function AutomationsLayout() {
                 onClick={openCreateTrigger}
               >
                 <Clock3 className="h-3.5 w-3.5" />
-                Schedule
+                {t("automations.sidebar.schedule")}
               </Button>
               <Button
                 variant="outline"
@@ -2418,7 +2489,7 @@ function AutomationsLayout() {
                 onClick={() => void createWorkflowDraft()}
               >
                 <Workflow className="h-3.5 w-3.5" />
-                Workflow
+                {t("automations.sidebar.workflow")}
               </Button>
             </div>
           </div>
@@ -2437,7 +2508,7 @@ function AutomationsLayout() {
 
           {!isLoading && normalizedSearchQuery && visibleItems.length === 0 ? (
             <SidebarContent.EmptyState className="px-4 py-6">
-              No matching automations
+              {t("automations.noMatchingItems")}
             </SidebarContent.EmptyState>
           ) : (
             visibleItems.map((item) => (
@@ -2488,7 +2559,7 @@ function AutomationsLayout() {
               ctx.setEditingTaskId(null);
             }}
           >
-            ← Back
+            ← {t("automations.sidebar.back")}
           </button>
         ) : null}
 
@@ -2508,7 +2579,7 @@ function AutomationsLayout() {
                   className="text-danger hover:bg-danger/10"
                   onClick={() => setPageNotice(null)}
                 >
-                  Dismiss
+                  {t("automations.sidebar.dismiss")}
                 </Button>
               )}
             </div>
@@ -2581,13 +2652,12 @@ function AutomationsLayout() {
             <div className="space-y-3">
               <h3 className="text-lg font-semibold text-txt-strong">
                 {showFirstRunEmptyState
-                  ? "Create your first automation"
-                  : "Select an automation"}
+                  ? t("automations.sidebar.emptyTitle")
+                  : t("automations.sidebar.selectPrompt")}
               </h3>
               {showFirstRunEmptyState && (
                 <p className="text-sm text-muted">
-                  Build a coordinator automation, schedule recurring work, or
-                  create an n8n workflow room.
+                  {t("automations.sidebar.emptyBody")}
                 </p>
               )}
             </div>
