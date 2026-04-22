@@ -1730,9 +1730,6 @@ function buildProviderSelectionPrompt(draftReply?: string): string {
 			: [];
 	return `task: Decide whether any providers should be called before sending the assistant's reply.
 
-available provider catalog:
-{{providers}}
-
 recent conversation:
 {{recentMessages}}
 
@@ -1827,9 +1824,6 @@ Plain text only. No XML, JSON, TOON, bullets, or <think>.`;
 
 function buildKnowledgeProviderDecisionPrompt(): string {
 	return `task: Decide whether the assistant should consult uploaded-document or knowledge providers before replying.
-
-available provider catalog:
-{{providers}}
 
 recent conversation:
 {{recentMessages}}

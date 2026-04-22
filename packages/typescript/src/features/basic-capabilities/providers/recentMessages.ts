@@ -145,6 +145,7 @@ export const recentMessagesProvider: Provider = {
 	get: async (runtime: IAgentRuntime, message: Memory, _state: State) => {
 		const { roomId } = message;
 		const conversationLength = runtime.getConversationLength();
+		try { require("node:fs").appendFileSync("/tmp/milady-stage/logs/conv-len.log", `[${new Date().toISOString()}] room=${roomId} convLen=${conversationLength}\n`); } catch {}
 
 		// First get room to check for compaction point
 		const room = await runtime.getRoom(roomId);
