@@ -19,7 +19,7 @@ import type {
   UUID,
 } from "@elizaos/core";
 import { ModelType, logger, parseJSONObjectFromText } from "@elizaos/core";
-import { hasAdminAccess } from "@elizaos/agent/security";
+import { hasAdminAccess } from "@elizaos/agent";
 import { getRecentMessagesData } from "@elizaos/shared/recent-messages-state";
 import {
   type UnifiedSearchChannel,
@@ -303,16 +303,14 @@ export const searchAcrossChannelsAction: Action = {
         text:
           plan.clarification ??
           "What do you want me to search for across your channels?",
-        success: false,
+        success: true,
         values: {
-          success: false,
-          error: "PLANNER_SHOULDACT_FALSE",
+          success: true,
           noop: true,
         },
         data: {
           actionName: ACTION_NAME,
           noop: true,
-          error: "PLANNER_SHOULDACT_FALSE",
         },
       };
     }

@@ -98,7 +98,6 @@ import type {
   MessageExampleContent,
   ModelOption,
   OnboardingConnection,
-  OnboardingData,
   OnboardingOptions,
   OpenRouterModelOption,
   ProviderOption,
@@ -158,7 +157,6 @@ export type {
   MintResult,
   ModelOption,
   OnboardingConnection,
-  OnboardingData,
   OnboardingOptions,
   OpenRouterModelOption,
   PermissionState,
@@ -213,7 +211,6 @@ export {
   normalizeWalletRpcSelections,
   WALLET_RPC_PROVIDER_OPTIONS,
 };
-
 // ---------------------------------------------------------------------------
 // Domain method augmentations (declaration merging + prototype assignment)
 // These import ElizaClient from client-base directly, avoiding circular deps.
@@ -223,12 +220,13 @@ import "./client-agent";
 import "./client-automations";
 import "./client-browser-workspace";
 import "./client-chat";
-import "./client-n8n";
-import "./client-wallet";
 import "./client-cloud";
-import "./client-skills";
 import "./client-computeruse";
+import "./client-lifeops";
 import "./client-local-inference";
+import "./client-n8n";
+import "./client-skills";
+import "./client-wallet";
 import "@elizaos/app-vincent/client";
 
 // ---------------------------------------------------------------------------

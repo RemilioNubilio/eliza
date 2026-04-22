@@ -31,10 +31,6 @@ vi.mock("../../api", () => ({
   client: clientMock,
 }));
 
-vi.mock("./ChatView.js", () => ({
-  ChatView: () => <div data-testid="browser-chat-view" />,
-}));
-
 vi.mock("./useBrowserWorkspaceWalletBridge", () => ({
   useBrowserWorkspaceWalletBridge: () => ({
     postBrowserWalletReady: vi.fn(),
@@ -45,6 +41,7 @@ import { BrowserWorkspaceView } from "./BrowserWorkspaceView";
 
 function buildUseAppState(overrides?: Record<string, unknown>) {
   return {
+    activeConversationId: null,
     getStewardPending: vi.fn().mockResolvedValue([]),
     getStewardStatus: vi.fn().mockResolvedValue(null),
     setActionNotice: vi.fn(),

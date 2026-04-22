@@ -1,11 +1,11 @@
-import type { IAgentRuntime, Task } from "@elizaos/core";
 import { loadElizaConfig, saveElizaConfig } from "@elizaos/agent/config/config";
+import type { IAgentRuntime, Task, UUID } from "@elizaos/core";
 import {
   ensureLifeOpsSchedulerTask,
   LIFEOPS_TASK_NAME,
   LIFEOPS_TASK_TAGS,
   resolveLifeOpsTaskIntervalMs,
-} from "./runtime.js";
+} from "./scheduler-task.js";
 
 const API_PORT = process.env.API_PORT || process.env.SERVER_PORT || "2138";
 export const OWNER_NAME_MAX_LENGTH = 60;
@@ -79,9 +79,9 @@ function isLifeOpsSchedulerTask(task: Task): boolean {
 }
 
 function buildFallbackSchedulerMetadata(
-  agentId: string,
+  agentId: UUID,
 ): Record<string, unknown> {
-  const intervalMs = resolveLifeOpsTaskIntervalMs(agentId as never);
+  const intervalMs = resolveLifeOpsTaskIntervalMs(agentId);
   return {
     updateInterval: intervalMs,
     baseInterval: intervalMs,
@@ -224,7 +224,7 @@ export async function readLifeOpsOwnerProfile(
 ): Promise<LifeOpsOwnerProfile> {
   const [configuredName, task] = await Promise.all([
     fetchConfiguredOwnerName(),
-    readLifeOpsSchedulerTask(runtime).catch(() => null),
+    readLifeOpsSchedulerTask(runtime),
   ]);
   const metadata = isRecord(task?.metadata) ? task.metadata : null;
   return resolveLifeOpsOwnerProfile(metadata, configuredName);
@@ -330,9 +330,7 @@ export function normalizeLifeOpsMeetingPreferencesPatch(
   if (Array.isArray(patch.blackoutWindows)) {
     out.blackoutWindows = patch.blackoutWindows
       .map(normalizeBlackoutWindow)
-      .filter(
-        (w): w is LifeOpsMeetingPreferencesBlackout => w !== null,
-      );
+      .filter((w): w is LifeOpsMeetingPreferencesBlackout => w !== null);
   }
   return out;
 }
@@ -354,7 +352,7 @@ function resolveMeetingPreferences(
 export async function readLifeOpsMeetingPreferences(
   runtime: IAgentRuntime,
 ): Promise<LifeOpsMeetingPreferences> {
-  const task = await readLifeOpsSchedulerTask(runtime).catch(() => null);
+  const task = await readLifeOpsSchedulerTask(runtime);
   const metadata = isRecord(task?.metadata) ? task.metadata : null;
   return resolveMeetingPreferences(metadata);
 }
@@ -367,7 +365,7 @@ export async function updateLifeOpsMeetingPreferences(
   if (Object.keys(normalizedPatch).length === 0) return null;
 
   const taskId = await ensureLifeOpsSchedulerTask(runtime);
-  const task = await readLifeOpsSchedulerTask(runtime).catch(() => null);
+  const task = await readLifeOpsSchedulerTask(runtime);
   const metadata =
     isRecord(task?.metadata) && task.id === taskId
       ? task.metadata
@@ -396,7 +394,7 @@ export async function updateLifeOpsOwnerProfile(
   const taskId = await ensureLifeOpsSchedulerTask(runtime);
   const [configuredName, task] = await Promise.all([
     fetchConfiguredOwnerName(),
-    readLifeOpsSchedulerTask(runtime).catch(() => null),
+    readLifeOpsSchedulerTask(runtime),
   ]);
 
   const metadata =

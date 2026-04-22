@@ -146,7 +146,10 @@ export function parseOptimizedPromptArtifact(
 	if (typeof raw.score !== "number" || typeof raw.baselineScore !== "number") {
 		return null;
 	}
-	if (typeof raw.datasetId !== "string" || typeof raw.datasetSize !== "number") {
+	if (
+		typeof raw.datasetId !== "string" ||
+		typeof raw.datasetSize !== "number"
+	) {
 		return null;
 	}
 	if (typeof raw.generatedAt !== "string") return null;
@@ -227,10 +230,6 @@ export class OptimizedPromptService extends Service {
 
 	private storeRoot: string = defaultStoreRoot();
 	private cache: Partial<Record<OptimizedPromptTask, CachedEntry>> = {};
-
-	constructor(runtime?: IAgentRuntime) {
-		super(runtime);
-	}
 
 	static override async start(
 		runtime: IAgentRuntime,

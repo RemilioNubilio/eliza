@@ -9,6 +9,7 @@ import type {
 import {
   ChannelType,
   ModelType,
+  Role,
   parseJSONObjectFromText,
   parseKeyValueXml,
   stringToUuid,
@@ -45,7 +46,13 @@ type RuntimeLike = IAgentRuntime & {
     messageServerId: UUID;
     metadata?: Record<string, unknown>;
   }) => Promise<void>;
-  getWorld?: (id: UUID) => Promise<{ id: UUID } | null>;
+  getWorld?: (id: UUID) => Promise<{
+    id: UUID;
+    name?: string;
+    agentId?: UUID;
+    messageServerId?: UUID;
+    metadata?: Record<string, unknown>;
+  } | null>;
   createWorld?: (world: {
     id: UUID;
     name: string;
@@ -236,7 +243,7 @@ async function ensureWorld(
     roles: {
       [args.ownerId]: "OWNER",
       [runtime.agentId]: "ADMIN",
-    },
+    } as Record<string, Role>,
     roleSources: {
       [args.ownerId]: "owner",
       [runtime.agentId]: "agent",
@@ -257,8 +264,16 @@ async function ensureWorld(
 
   const existing = await runtime.getWorld?.(args.worldId);
   if (existing) {
+    const currentMetadata =
+      existing.metadata && typeof existing.metadata === "object"
+        ? existing.metadata
+        : {};
     await runtime.updateWorld?.({
+      ...existing,
       id: args.worldId,
+      name: args.worldName,
+      agentId: runtime.agentId,
+      messageServerId: args.ownerId,
       metadata,
     });
     return;

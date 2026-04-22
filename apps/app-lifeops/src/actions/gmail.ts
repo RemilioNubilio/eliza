@@ -1,3 +1,19 @@
+import {
+  extractActionResultsFromState,
+  extractRecentMessageEntriesFromState,
+  extractStateDataRecords,
+  hasContextSignalForKey,
+  renderGroundedActionReply,
+  summarizeActiveTrajectory,
+  summarizeRecentActionHistory,
+} from "@elizaos/agent/actions";
+import type {
+  CreateLifeOpsGmailBatchReplyDraftsRequest,
+  CreateLifeOpsGmailReplyDraftRequest,
+  LifeOpsGmailBatchReplySendItem,
+  SendLifeOpsGmailBatchReplyRequest,
+  SendLifeOpsGmailReplyRequest,
+} from "@elizaos/app-lifeops/contracts";
 import type {
   Action,
   ActionExample,
@@ -13,24 +29,8 @@ import {
   parseJSONObjectFromText,
   parseKeyValueXml,
 } from "@elizaos/core";
-import type {
-  CreateLifeOpsGmailBatchReplyDraftsRequest,
-  CreateLifeOpsGmailReplyDraftRequest,
-  LifeOpsGmailBatchReplySendItem,
-  SendLifeOpsGmailBatchReplyRequest,
-  SendLifeOpsGmailReplyRequest,
-} from "@elizaos/shared/contracts/lifeops";
 import { resolveDefaultTimeZone } from "../lifeops/defaults.js";
 import { LifeOpsService, LifeOpsServiceError } from "../lifeops/service.js";
-import { hasContextSignalForKey } from "@elizaos/agent/actions";
-import {
-  extractActionResultsFromState,
-  extractRecentMessageEntriesFromState,
-  extractStateDataRecords,
-  renderGroundedActionReply,
-  summarizeActiveTrajectory,
-  summarizeRecentActionHistory,
-} from "@elizaos/agent/actions";
 import { recentConversationTexts as collectRecentConversationTexts } from "./life-recent-context.js";
 import {
   detailArray,
@@ -70,6 +70,8 @@ export type GmailLlmPlan = {
   replyNeededOnly?: boolean;
   response?: string;
   shouldAct?: boolean | null;
+  confirmed?: boolean;
+  holdForApproval?: boolean;
   to?: string[];
   cc?: string[];
   bcc?: string[];
@@ -117,6 +119,16 @@ type GmailMessageTargetContext = {
   query?: string;
 };
 
+type PendingGmailReplyApproval = {
+  messageId: string;
+  bodyText: string;
+  subject?: string;
+  to?: string[];
+  cc?: string[];
+  approvalTaskId?: string | null;
+  createdAt: string;
+};
+
 type GmailSearchFeed = Awaited<ReturnType<LifeOpsService["getGmailSearch"]>>;
 
 type GmailTargetResolution =
@@ -140,6 +152,7 @@ type GmailActionParams = {
   queries?: string[];
   messageId?: string;
   bodyText?: string;
+  confirmed?: boolean;
   details?: Record<string, unknown>;
 };
 
@@ -153,10 +166,20 @@ type GmailPlanningContext = {
   localNow: string;
 };
 
-type GmailIntentPlan = Pick<
-  GmailLlmPlan,
-  "subaction" | "shouldAct" | "response"
->;
+type GmailIntentPlan = {
+  subaction: GmailSubaction | null;
+  shouldAct?: boolean | null;
+  response?: string;
+  confirmed?: boolean;
+  holdForApproval?: boolean;
+  messageId?: string;
+  replyNeededOnly?: boolean;
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject?: string;
+  bodyText?: string;
+};
 
 type GmailPayloadPlan = Omit<
   GmailLlmPlan,
@@ -164,6 +187,7 @@ type GmailPayloadPlan = Omit<
 >;
 
 const GMAIL_CONTEXT_WINDOW = 12;
+const ACTION_NAME = "GMAIL_ACTION";
 const GMAIL_DETAIL_ALIASES = {
   forceSync: ["forcesync", "force_sync"],
   maxResults: ["maxresults", "max_results"],
@@ -209,6 +233,77 @@ async function buildGmailDraftGenerationContext(args: {
     actionHistory: summarizeRecentActionHistory(args.state, 4),
     trajectorySummary,
   };
+}
+
+function getPendingGmailReplyCacheKey(roomId: string): string {
+  return `lifeops:gmail:pending-reply:${roomId}`;
+}
+
+async function readPendingGmailReplyApproval(
+  runtime: IAgentRuntime,
+  roomId: string,
+): Promise<PendingGmailReplyApproval | null> {
+  return (
+    (await runtime.getCache<PendingGmailReplyApproval>(
+      getPendingGmailReplyCacheKey(roomId),
+    )) ?? null
+  );
+}
+
+async function writePendingGmailReplyApproval(
+  runtime: IAgentRuntime,
+  roomId: string,
+  approval: PendingGmailReplyApproval,
+): Promise<void> {
+  await runtime.setCache(getPendingGmailReplyCacheKey(roomId), approval);
+}
+
+async function clearPendingGmailReplyApproval(
+  runtime: IAgentRuntime,
+  roomId: string,
+): Promise<void> {
+  await runtime.deleteCache(getPendingGmailReplyCacheKey(roomId));
+}
+
+async function enqueueGmailReplyApprovalRequest(args: {
+  runtime: IAgentRuntime;
+  message: Memory;
+  draft: {
+    messageId: string;
+    bodyText: string;
+    subject?: string;
+    to?: string[];
+    cc?: string[];
+  };
+}): Promise<string | null> {
+  return await args.runtime.createTask({
+    name: `GMAIL_REPLY_APPROVAL_${Date.now()}`,
+    description: `Approve sending the Gmail reply${args.draft.subject ? ` (${args.draft.subject})` : ""}: ${args.draft.bodyText}`,
+    roomId: args.message.roomId,
+    entityId: args.message.entityId,
+    tags: ["AWAITING_CHOICE", "APPROVAL", ACTION_NAME],
+    metadata: {
+      options: [
+        { name: "confirm", description: "Send the drafted Gmail reply" },
+        { name: "cancel", description: "Keep the draft unsent" },
+      ],
+      approvalRequest: {
+        timeoutMs: 24 * 60 * 60 * 1000,
+        timeoutDefault: "cancel",
+        createdAt: Date.now(),
+        isAsync: true,
+      },
+      actionName: ACTION_NAME,
+      channel: "gmail",
+      payload: {
+        messageId: args.draft.messageId,
+        bodyText: args.draft.bodyText,
+        subject: args.draft.subject ?? null,
+        to: args.draft.to ?? [],
+        cc: args.draft.cc ?? [],
+      },
+    },
+  });
 }
 
 function normalizeGmailSubaction(value: unknown): GmailSubaction | null {
@@ -687,9 +782,9 @@ function latestGmailMessageTargetContext(
   return null;
 }
 
-function gmailComposeDraftFromMessageEntry(
-  entry: { content?: unknown },
-): GmailComposeDraft | null {
+function gmailComposeDraftFromMessageEntry(entry: {
+  content?: unknown;
+}): GmailComposeDraft | null {
   const content =
     entry.content && typeof entry.content === "object"
       ? (entry.content as Record<string, unknown>)
@@ -800,29 +895,31 @@ async function buildGmailPlanningContext(args: {
   message: Memory;
   state: State | undefined;
 }): Promise<GmailPlanningContext> {
-  const recentConversation = (
-    await collectGmailConversationContext(args)
-  ).join("\n");
+  const recentConversation = (await collectGmailConversationContext(args)).join(
+    "\n",
+  );
   const currentMessage = messageText(args.message).trim();
   const timeZone = resolveDefaultTimeZone();
   const now = new Date();
+  const nowIso = now.toISOString();
+  const localNow = new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(now);
   return {
     recentConversation,
     latestReplyDraft: latestGmailReplyDraftContext(args.state),
     latestMessageTarget: latestGmailMessageTargetContext(args.state),
     currentMessage,
     timeZone,
-    nowIso: now.toISOString(),
-    localNow: new Intl.DateTimeFormat(undefined, {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).format(now),
+    nowIso,
+    localNow,
   };
 }
 
@@ -868,7 +965,18 @@ function normalizeGmailIntentPlan(
   return {
     subaction: normalizeGmailSubaction(parsed.subaction),
     shouldAct: normalizeShouldAct(parsed.shouldAct),
-    response: normalizePlannerResponse(parsed.response),
+    confirmed: normalizeOptionalBoolean(parsed.confirmed),
+    holdForApproval: normalizeOptionalBoolean(parsed.holdForApproval),
+    messageId:
+      typeof parsed.messageId === "string" && parsed.messageId.trim().length > 0
+        ? parsed.messageId.trim()
+        : undefined,
+    replyNeededOnly: normalizeOptionalBoolean(parsed.replyNeededOnly),
+    to: normalizePlannerStringArray(parsed.to ?? parsed.recipients),
+    cc: normalizePlannerStringArray(parsed.cc),
+    bcc: normalizePlannerStringArray(parsed.bcc),
+    subject: normalizePlannerString(parsed.subject),
+    bodyText: normalizePlannerString(parsed.bodyText ?? parsed.body),
   };
 }
 
@@ -880,11 +988,10 @@ function normalizeGmailPayloadPlan(
   }
   return {
     queries: dedupeQueries(extractPlannerQueries(parsed)),
-    messageId:
-      typeof parsed.messageId === "string" && parsed.messageId.trim().length > 0
-        ? parsed.messageId.trim()
-        : undefined,
+    messageId: normalizePlannerString(parsed.messageId),
     replyNeededOnly: normalizeOptionalBoolean(parsed.replyNeededOnly),
+    confirmed: normalizeOptionalBoolean(parsed.confirmed),
+    holdForApproval: normalizeOptionalBoolean(parsed.holdForApproval),
     to: normalizePlannerStringArray(parsed.to ?? parsed.recipients),
     cc: normalizePlannerStringArray(parsed.cc),
     bcc: normalizePlannerStringArray(parsed.bcc),
@@ -907,7 +1014,8 @@ async function runGmailPlanningModel(args: {
     return null;
   }
   try {
-    const result = await args.runtime.useModel(args.modelType, {
+    const runModel = args.runtime.useModel.bind(args.runtime);
+    const result = await runModel(args.modelType, {
       prompt: args.prompt,
     });
     const rawResponse = typeof result === "string" ? result : "";
@@ -1240,7 +1348,8 @@ async function recoverSendMessagePlanWithLlm(args: {
 
   let rawResponse = "";
   try {
-    const result = await runtime.useModel(ModelType.TEXT_LARGE, { prompt });
+    const runModel = runtime.useModel.bind(runtime);
+    const result = await runModel(ModelType.TEXT_LARGE, { prompt });
     rawResponse = typeof result === "string" ? result : "";
   } catch (error) {
     runtime.logger?.warn?.(
@@ -1415,27 +1524,10 @@ function normalizeBatchSendItems(
   return normalized.length > 0 ? normalized : undefined;
 }
 
-// `suppressPostActionContinuation` is a local feature flag the runtime
-// reads via a wider Action shape than the npm `@elizaos/core@alpha`
-// dist-tag's exported type — the published type hasn't caught up yet
-// so tsc rejects the property when compiled against node_modules on CI
-// (local resolves via paths map to the newer eliza/ source and accepts
-// it natively).
-//
-// We used to end this declaration with
-// `} satisfies Action & { suppressPostActionContinuation?: boolean }`,
-// but `satisfies` keeps the inferred literal type on the `const`. When
-// the Docker CI Smoke build walks `packages/agent` with
-// `declaration: true`, TypeScript tries to emit a portable `.d.ts`
-// and fails with TS2742 because the inferred literal transitively
-// references `@bufbuild/protobuf` types that are not in this package's
-// direct dependency graph. An explicit type annotation on the binding
-// makes `gmailAction` widen to the declared type, so tsc only has to
-// emit the (portable) declared shape in the `.d.ts`.
 export const gmailAction: Action & {
   suppressPostActionContinuation?: boolean;
 } = {
-  name: "GMAIL_ACTION",
+  name: ACTION_NAME,
   similes: [
     "GMAIL",
     "CHECK_EMAIL",
@@ -1514,9 +1606,23 @@ export const gmailAction: Action & {
       intent,
       activeComposeDraft,
     );
+    const pendingReplyApproval = await readPendingGmailReplyApproval(
+      runtime,
+      message.roomId,
+    );
     const latestReplyDraft = latestGmailReplyDraftContext(state);
     const latestMessageTarget = latestGmailMessageTargetContext(state);
     const latestBatchReplyDraftItems = latestGmailBatchReplyDraftItems(state);
+    const sendConfirmed =
+      normalizeOptionalBoolean(params.confirmed) ??
+      detailBoolean(details, "confirmSend") ??
+      llmPlan.confirmed ??
+      false;
+    const holdReplyForApproval =
+      detailBoolean(details, "holdForApproval") ??
+      (detailBoolean(details, "confirmSend") === false ? true : undefined) ??
+      llmPlan.holdForApproval ??
+      false;
     const hasStructuredComposeSignal = Boolean(
       params.bodyText ||
         detailString(details, "bodyText") ||
@@ -1633,6 +1739,8 @@ export const gmailAction: Action & {
         detailToType: typeof details?.to,
         detailSubject:
           typeof details?.subject === "string" ? details.subject : undefined,
+        sendConfirmed,
+        holdReplyForApproval,
       },
       "gmail action dispatch",
     );
@@ -1647,7 +1755,7 @@ export const gmailAction: Action & {
       await callback?.({
         text: payload.text,
         source: "action",
-        action: "GMAIL_ACTION",
+        action: ACTION_NAME,
       });
       return payload;
     };
@@ -2036,6 +2144,49 @@ export const gmailAction: Action & {
           ...draftGenerationContext,
         } satisfies CreateLifeOpsGmailReplyDraftRequest);
         const fallback = formatGmailReplyDraft(draft);
+        if (holdReplyForApproval) {
+          if (pendingReplyApproval?.approvalTaskId) {
+            await runtime.deleteTask(
+              pendingReplyApproval.approvalTaskId as never,
+            );
+          }
+          const approvalTaskId = await enqueueGmailReplyApprovalRequest({
+            runtime,
+            message,
+            draft,
+          });
+          await writePendingGmailReplyApproval(runtime, message.roomId, {
+            messageId: draft.messageId,
+            bodyText: draft.bodyText,
+            subject: draft.subject,
+            to: draft.to,
+            cc: draft.cc,
+            approvalTaskId,
+            createdAt: new Date().toISOString(),
+          });
+          return respond({
+            success: true,
+            text: await renderReply(
+              "draft_reply",
+              `${fallback}\n\nI'll hold this Gmail reply until you approve sending it.`,
+              {
+                draft,
+                approvalRequired: true,
+              },
+            ),
+            data: toActionData({
+              ...draft,
+              gmailDraft: draft,
+              pendingApproval: true,
+            }),
+          });
+        }
+        if (pendingReplyApproval?.approvalTaskId) {
+          await runtime.deleteTask(
+            pendingReplyApproval.approvalTaskId as never,
+          );
+          await clearPendingGmailReplyApproval(runtime, message.roomId);
+        }
         return respond({
           success: true,
           text: await renderReply("draft_reply", fallback, {
@@ -2120,6 +2271,7 @@ export const gmailAction: Action & {
           params.messageId ??
           detailString(details, "messageId") ??
           llmPlan.messageId ??
+          pendingReplyApproval?.messageId ??
           latestReplyDraft?.messageId ??
           latestMessageTarget?.messageId;
         if (!messageId) {
@@ -2150,7 +2302,30 @@ export const gmailAction: Action & {
         const bodyText =
           params.bodyText ??
           detailString(details, "bodyText") ??
+          pendingReplyApproval?.bodyText ??
           latestReplyDraft?.bodyText;
+        if (pendingReplyApproval && !sendConfirmed) {
+          return respond({
+            success: true,
+            text: await renderReply(
+              "clarify_send_reply",
+              "The Gmail reply draft is ready. Confirm when you want me to send it.",
+              {
+                latestReplyDraft: pendingReplyApproval,
+              },
+            ),
+            data: toActionData({
+              gmailDraft: {
+                messageId: pendingReplyApproval.messageId,
+                bodyText: pendingReplyApproval.bodyText,
+                subject: pendingReplyApproval.subject,
+                to: pendingReplyApproval.to,
+                cc: pendingReplyApproval.cc,
+              },
+              pendingApproval: true,
+            }),
+          });
+        }
         if (!messageId || !bodyText) {
           return respond({
             success: false,
@@ -2179,11 +2354,25 @@ export const gmailAction: Action & {
           messageId,
           bodyText,
           subject:
-            detailString(details, "subject") ?? latestReplyDraft?.subject,
-          to: normalizeStringArray(details?.to) ?? latestReplyDraft?.to,
-          cc: normalizeStringArray(details?.cc) ?? latestReplyDraft?.cc,
-          confirmSend: detailBoolean(details, "confirmSend") ?? true,
+            detailString(details, "subject") ??
+            pendingReplyApproval?.subject ??
+            latestReplyDraft?.subject,
+          to:
+            normalizeStringArray(details?.to) ??
+            pendingReplyApproval?.to ??
+            latestReplyDraft?.to,
+          cc:
+            normalizeStringArray(details?.cc) ??
+            pendingReplyApproval?.cc ??
+            latestReplyDraft?.cc,
+          confirmSend: sendConfirmed || !pendingReplyApproval,
         } satisfies SendLifeOpsGmailReplyRequest);
+        if (pendingReplyApproval?.approvalTaskId) {
+          await runtime.deleteTask(
+            pendingReplyApproval.approvalTaskId as never,
+          );
+        }
+        await clearPendingGmailReplyApproval(runtime, message.roomId);
         const fallback = "Gmail reply sent.";
         return respond({
           success: true,
@@ -2381,9 +2570,16 @@ export const gmailAction: Action & {
       schema: { type: "string" as const },
     },
     {
+      name: "confirmed",
+      description:
+        "Set true only when the owner is explicitly approving a pending Gmail send right now.",
+      required: false,
+      schema: { type: "boolean" as const },
+    },
+    {
       name: "details",
       description:
-        "Structured Gmail arguments. Supported keys include mode, side, grantId, forceSync, maxResults, query, queries, replyNeededOnly, tone, includeQuotedOriginal, messageId, messageIds, draftIntent, subject, to, cc, bodyText, confirmSend, and items for batch send.",
+        "Structured Gmail arguments. Supported keys include mode, side, grantId, forceSync, maxResults, query, queries, replyNeededOnly, tone, includeQuotedOriginal, messageId, messageIds, draftIntent, subject, to, cc, bodyText, confirmSend, holdForApproval, and items for batch send.",
       required: false,
       schema: { type: "object" as const },
     },
@@ -2456,7 +2652,9 @@ export const gmailAction: Action & {
       },
       {
         name: "{{agentName}}",
-        content: { text: "Drafted reply to Sarah saying you will review it tomorrow." },
+        content: {
+          text: "Drafted reply to Sarah saying you will review it tomorrow.",
+        },
       },
     ],
     [
@@ -2480,7 +2678,9 @@ export const gmailAction: Action & {
       },
       {
         name: "{{agentName}}",
-        content: { text: "Sent the confirmed reply to the latest email from finance." },
+        content: {
+          text: "Sent the confirmed reply to the latest email from finance.",
+        },
       },
     ],
   ] as ActionExample[][],

@@ -8,86 +8,83 @@
 
 export { LifeOpsServiceError } from "./service-types.js";
 
-import { LifeOpsServiceBase } from "./service-mixin-core.js";
-import { withGoogle } from "./service-mixin-google.js";
-import { withCalendar } from "./service-mixin-calendar.js";
-import { withGmail } from "./service-mixin-gmail.js";
-import { withReminders } from "./service-mixin-reminders.js";
 import { withBrowser } from "./service-mixin-browser.js";
-import { withWorkflows } from "./service-mixin-workflows.js";
+import { withCalendar } from "./service-mixin-calendar.js";
+import { LifeOpsServiceBase } from "./service-mixin-core.js";
 import { withDefinitions } from "./service-mixin-definitions.js";
-import { withGoals } from "./service-mixin-goals.js";
-import { withX } from "./service-mixin-x.js";
-import { withXRead } from "./service-mixin-x-read.js";
-import { withTelegram } from "./service-mixin-telegram.js";
 import { withDiscord } from "./service-mixin-discord.js";
-import { withSignal } from "./service-mixin-signal.js";
+import { withDossier } from "./service-mixin-dossier.js";
+import { withDrive } from "./service-mixin-drive.js";
+import { withEmailUnsubscribe } from "./service-mixin-email-unsubscribe.js";
+import { withGmail } from "./service-mixin-gmail.js";
+import { withGoals } from "./service-mixin-goals.js";
+import { withGoogle } from "./service-mixin-google.js";
+import { withHealth } from "./service-mixin-health.js";
 import { withIMessage } from "./service-mixin-imessage.js";
 import { withRelationships } from "./service-mixin-relationships.js";
-import { withWhatsApp } from "./service-mixin-whatsapp.js";
-import { withScreenTime } from "./service-mixin-screentime.js";
+import { withReminders } from "./service-mixin-reminders.js";
 import { withScheduling } from "./service-mixin-scheduling.js";
-import { withDossier } from "./service-mixin-dossier.js";
-import { withHealth } from "./service-mixin-health.js";
-import { withDrive } from "./service-mixin-drive.js";
+import { withScreenTime } from "./service-mixin-screentime.js";
+import { withSignal } from "./service-mixin-signal.js";
+import type { Constructor } from "./service-mixin-core.js";
+import {
+  type StatusMixinDependencies,
+  withStatus,
+} from "./service-mixin-status.js";
 import { withSubscriptions } from "./service-mixin-subscriptions.js";
-import { withEmailUnsubscribe } from "./service-mixin-email-unsubscribe.js";
+import { withTelegram } from "./service-mixin-telegram.js";
 import { withTravel } from "./service-mixin-travel.js";
+import { withUnifiedInbox } from "./service-mixin-unified-inbox.js";
+import { withWhatsApp } from "./service-mixin-whatsapp.js";
+import { withWorkflows } from "./service-mixin-workflows.js";
+import { withX } from "./service-mixin-x.js";
+import { withXRead } from "./service-mixin-x-read.js";
 
 /**
- * Main LifeOps service — assembled from domain mixins layered on top of
- * {@link LifeOpsServiceBase}.
- *
  * Mixin order follows dependency direction: Google auth → data layers
  * (Calendar, Gmail, Drive) → business logic (Reminders, Browser, Workflows,
  * Definitions, Goals) → connectors (X, Telegram, Discord, Signal).
  */
-export class LifeOpsServiceComposedBase extends withHealth(
-  withDossier(
-  withScheduling(
-  withScreenTime(
-  withWhatsApp(
-  withRelationships(
-  withIMessage(
+const LIFEOPS_BASE = withGoogle(LifeOpsServiceBase);
+const LIFEOPS_WITH_DATA = withDrive(withGmail(withCalendar(LIFEOPS_BASE)));
+const LIFEOPS_WITH_BUSINESS = withGoals(
+  withDefinitions(
+    withWorkflows(withBrowser(withReminders(LIFEOPS_WITH_DATA))),
+  ),
+);
+const LIFEOPS_WITH_X = withX(LIFEOPS_WITH_BUSINESS);
+const LIFEOPS_WITH_RELATIONS = withDossier(
+  withRelationships(LIFEOPS_WITH_X),
+);
+const LIFEOPS_WITH_DOMAIN = withEmailUnsubscribe(
+  withHealth(LIFEOPS_WITH_RELATIONS),
+);
+const LIFEOPS_WITH_X_READ = withXRead(LIFEOPS_WITH_DOMAIN);
+const LIFEOPS_WITH_CONNECTORS = withWhatsApp(
   withSignal(
-    withDiscord(
-      withTelegram(
-        withXRead(
-          withX(
-            withGoals(
-            withDefinitions(
-              withWorkflows(
-                withSubscriptions(
-                  withEmailUnsubscribe(
-                  withBrowser(
-                  withReminders(
-                    withGmail(
-                      withDrive(
-                        withTravel(
-                          withCalendar(
-                            withGoogle(LifeOpsServiceBase),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    ),
+    withDiscord(withTelegram(withIMessage(LIFEOPS_WITH_X_READ))),
   ),
-  ),
-  ),
-  ),
-  ),
-  ),
-  ),
-  ),
-) {}
+);
+const LIFEOPS_WITH_TRAVEL = withTravel(LIFEOPS_WITH_CONNECTORS);
+const LIFEOPS_WITH_SCHEDULING = withScheduling(LIFEOPS_WITH_TRAVEL);
+const LIFEOPS_WITH_SUBS = withSubscriptions(LIFEOPS_WITH_SCHEDULING);
+// TypeScript loses track of constraint satisfaction past ~6 chained generic
+// mixins, so we cast explicitly. The runtime composition has every method
+// `withStatus` depends on (getScheduleMergedState from withScheduling,
+// getBrowserSettings/listBrowserCompanions from withBrowser,
+// getXConnectorStatus from withX, getHealthConnectorStatus from withHealth).
+type LifeOpsSubsCtor = typeof LIFEOPS_WITH_SUBS;
+const LIFEOPS_WITH_STATUS = withStatus(
+  LIFEOPS_WITH_SUBS as LifeOpsSubsCtor & Constructor<StatusMixinDependencies>,
+);
+const LIFEOPS_COMPOSED = withUnifiedInbox(
+  withScreenTime(LIFEOPS_WITH_STATUS),
+);
 
-export class LifeOpsService extends LifeOpsServiceComposedBase {}
+class LifeOpsServiceComposed extends LIFEOPS_COMPOSED {}
+
+/**
+ * Main LifeOps service — assembled from domain mixins layered on top of
+ * {@link LifeOpsServiceBase}.
+ */
+export class LifeOpsService extends LifeOpsServiceComposed {}

@@ -1,24 +1,5 @@
-/**
- * WS6 — Approval queue as first-class state. Type-only stub published by WS5
- * so background-job code can compile against the interface WS6 will
- * implement. NO runtime behavior lives in this file: WS6 owns the
- * implementation, persistence, state machine, and UI.
- *
- * State machine (strict — no fallback transitions, no implicit re-entry):
- *
- *   pending  ──approve──▶ approved ──markExecuting──▶ executing ──markDone──▶ done
- *      │                       │                            │
- *      │                       └────────reject──────────────┤
- *      │                                                    │
- *      └──reject──▶ rejected                                │
- *      │                                                    │
- *      └──markExpired/purgeExpired──▶ expired               │
- *
- * Invalid transitions throw `ApprovalStateTransitionError`. Callers MUST
- * handle it — there is no defensive fallback.
- */
+import type { TravelBookingPayloadFields } from "./travel-booking.types.js";
 
-/** Lifecycle states an approval request can occupy. */
 export type ApprovalRequestState =
   | "pending"
   | "approved"
@@ -27,7 +8,6 @@ export type ApprovalRequestState =
   | "rejected"
   | "expired";
 
-/** Closed enum of action kinds that can be queued for approval. */
 export type ApprovalAction =
   | "send_message"
   | "send_email"
@@ -39,7 +19,6 @@ export type ApprovalAction =
   | "execute_workflow"
   | "spend_money";
 
-/** Channel through which the underlying action will be carried out. */
 export type ApprovalChannel =
   | "telegram"
   | "discord"
@@ -52,7 +31,6 @@ export type ApprovalChannel =
   | "phone"
   | "internal";
 
-/** Action-specific payload. Discriminated by `ApprovalAction`. */
 export type ApprovalPayload =
   | {
       action: "send_message";
@@ -231,15 +209,11 @@ export class ApprovalNotFoundError extends Error {
 }
 
 /**
- * Queue interface. WS6 implementations MUST:
+ * Queue interface. Implementations must:
  *  - Reject invalid state transitions by throwing `ApprovalStateTransitionError`.
  *  - Reject unknown ids by throwing `ApprovalNotFoundError`.
  *  - Use the structured logger only (no `console.*`).
  *  - Treat `purgeExpired` as idempotent.
- *
- * WS5 callers use `enqueue` only. Convenience overload: `enqueue(req)` may
- * also be invoked as the minimal `Promise<id>` form called out in the task
- * spec — the `id` is read from the returned `ApprovalRequest`.
  */
 export interface ApprovalQueue {
   enqueue(input: ApprovalEnqueueInput): Promise<ApprovalRequest>;
@@ -252,4 +226,3 @@ export interface ApprovalQueue {
   markExpired(id: string): Promise<ApprovalRequest>;
   purgeExpired(now: Date): Promise<ReadonlyArray<string>>;
 }
-import type { TravelBookingPayloadFields } from "./travel-booking.types.js";

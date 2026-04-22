@@ -4,6 +4,7 @@ import type { ActionNotice } from "../../state/types";
 import { BugReportModal } from "./BugReportModal";
 import { CommandPalette } from "./CommandPalette";
 import { ComputerUseApprovalOverlay } from "./ComputerUseApprovalOverlay";
+
 import { RestartBanner } from "./RestartBanner";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 

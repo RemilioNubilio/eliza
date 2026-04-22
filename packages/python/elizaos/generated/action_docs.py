@@ -100,11 +100,9 @@ _CORE_ACTION_DOCS_JSON = """{
   "actions": [
     {
       "name": "REPLY",
-      "description": "Replies to the current conversation with the text from the generated message. Default if the agent is responding with a message and no other action. Use REPLY at the beginning of a chain of actions as an acknowledgement, and at the end of a chain of actions as a final response.",
+      "description": "Send a direct chat reply in the current conversation/thread. Default if the agent is responding with a message and no other action. Use REPLY at the beginning of a chain of actions as an acknowledgement, and at the end of a chain of actions as a final response. This is not an email reply, inbox workflow, or external-channel send — use the dedicated connector actions for those surfaces.",
       "similes": [
         "GREET",
-        "REPLY_TO_MESSAGE",
-        "SEND_REPLY",
         "RESPOND",
         "RESPONSE"
       ],
@@ -1471,11 +1469,9 @@ _ALL_ACTION_DOCS_JSON = """{
   "actions": [
     {
       "name": "REPLY",
-      "description": "Replies to the current conversation with the text from the generated message. Default if the agent is responding with a message and no other action. Use REPLY at the beginning of a chain of actions as an acknowledgement, and at the end of a chain of actions as a final response.",
+      "description": "Send a direct chat reply in the current conversation/thread. Default if the agent is responding with a message and no other action. Use REPLY at the beginning of a chain of actions as an acknowledgement, and at the end of a chain of actions as a final response. This is not an email reply, inbox workflow, or external-channel send — use the dedicated connector actions for those surfaces.",
       "similes": [
         "GREET",
-        "REPLY_TO_MESSAGE",
-        "SEND_REPLY",
         "RESPOND",
         "RESPONSE"
       ],
@@ -3213,12 +3209,14 @@ _ALL_ACTION_DOCS_JSON = """{
     },
     {
       "name": "MANAGE_WINDOW",
-      "description": "Manage desktop windows through the local runtime. This includes listing visible windows, focusing or switching windows, minimizing, maximizing, restoring, closing, and parity no-op arrange/move commands.\\n\\n",
+      "description": "Manage desktop windows — list all visible windows, bring a window to the front, ",
       "parameters": [],
       "similes": [
         "LIST_WINDOWS",
         "FOCUS_WINDOW",
         "SWITCH_WINDOW",
+        "ARRANGE_WINDOWS",
+        "MOVE_WINDOW",
         "MINIMIZE_WINDOW",
         "MAXIMIZE_WINDOW",
         "CLOSE_WINDOW",
@@ -3936,13 +3934,10 @@ _ALL_ACTION_DOCS_JSON = """{
         "MOVE_MOUSE",
         "DRAG",
         "MOUSE_CLICK",
+        "CLICK_WITH_MODIFIERS",
         "TAKE_SCREENSHOT",
         "CAPTURE_SCREEN",
-        "SCREEN_CAPTURE",
-        "GET_SCREENSHOT",
-        "SEE_SCREEN",
-        "LOOK_AT_SCREEN",
-        "VIEW_SCREEN"
+        "SEE_SCREEN"
       ]
     },
     {

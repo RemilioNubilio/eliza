@@ -1,13 +1,12 @@
 import { type IAgentRuntime, logger, type Service } from "@elizaos/core";
 import {
   ALL_FEATURE_KEYS,
-  BASE_FEATURE_DEFAULTS,
   type FeatureFlagChangeListener,
   type FeatureFlagService,
   type FeatureFlagSource,
   type FeatureFlagState,
-  type LifeOpsFeatureKey,
   isLifeOpsFeatureKey,
+  type LifeOpsFeatureKey,
   resolveFeatureDefaults,
 } from "./feature-flags.types.js";
 import {
@@ -23,18 +22,12 @@ import {
 /**
  * SQL-backed FeatureFlagService.
  *
- * Reads & writes the `lifeops_features` table. Schema ownership lives in the
- * app-lifeops plugin schema and is migrated up front via plugin-sql.
- *
- * Compile-time defaults (`BASE_FEATURE_DEFAULTS` resolved through
- * `resolveFeatureDefaults`) are the authority when no row exists. The
- * runtime never writes a row with `source = 'default'` — absence is the
- * canonical representation of an unmodified default (Commandment 7).
- *
- * Cloud-link awareness: when a `CLOUD_AUTH` runtime service reports the
- * user is signed into Eliza Cloud, travel features and the cloud-managed
- * travel-billing flag default to ON. The Cloud-side billing layer owns
- * pricing; the local code never recomputes that markup (Commandment 2).
+ * Reads & writes the `lifeops_features` table owned by `app-lifeops` and
+ * migrated via the plugin's `schema` export.
+ * Compile-time defaults (`FEATURE_DEFAULTS`) are the authority when no row
+ * exists. The runtime never writes a row with `source = 'default'` —
+ * absence is the canonical representation of an unmodified default
+ * (Commandment 7).
  */
 
 const SELECT_COLUMNS =
@@ -49,9 +42,26 @@ interface CloudAuthService extends Service {
   isAuthenticated(): boolean;
 }
 
+function isCloudAuthService(
+  service: Service | null,
+): service is Service & CloudAuthService {
+  return (
+    service !== null &&
+    typeof (service as Partial<CloudAuthService>).isAuthenticated === "function"
+  );
+}
+
 function readCloudLinked(runtime: IAgentRuntime): boolean {
-  const service = runtime.getService<CloudAuthService>("CLOUD_AUTH");
-  if (!service || typeof service.isAuthenticated !== "function") {
+  const getService = (
+    runtime as IAgentRuntime & {
+      getService?: (serviceType: string) => Service | null;
+    }
+  ).getService;
+  const service =
+    typeof getService === "function"
+      ? getService.call(runtime, "CLOUD_AUTH")
+      : null;
+  if (!isCloudAuthService(service)) {
     return false;
   }
   return service.isAuthenticated() === true;
@@ -179,7 +189,11 @@ class PgFeatureFlagService implements FeatureFlagService {
       const byKey = new Map<LifeOpsFeatureKey, FeatureFlagState>();
       for (const row of rows) {
         const text = toText(row.feature_key);
-        if (!isLifeOpsFeatureKey(text)) continue;
+        if (!isLifeOpsFeatureKey(text)) {
+          throw new Error(
+            `[FeatureFlags] unknown feature_key from db: ${text}`,
+          );
+        }
         byKey.set(text, rowToState(row, text, cloudLinked));
       }
       return ALL_FEATURE_KEYS.map(

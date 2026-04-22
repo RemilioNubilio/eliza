@@ -14,8 +14,8 @@ import type { PluginWidgetDeclaration, WidgetProps, WidgetSlot } from "./types";
 
 // -- Bundled widget component imports ----------------------------------------
 
-import { AGENT_ORCHESTRATOR_PLUGIN_WIDGETS } from "../components/chat/widgets/plugins/agent-orchestrator";
-import { TODO_PLUGIN_WIDGETS } from "../components/chat/widgets/plugins/todo";
+import { AGENT_ORCHESTRATOR_PLUGIN_WIDGETS } from "../components/chat/widgets/agent-orchestrator";
+import { TODO_PLUGIN_WIDGETS } from "../components/chat/widgets/todo";
 import type { ChatSidebarWidgetDefinition } from "../components/chat/widgets/types";
 
 // -- Static component registry -----------------------------------------------
@@ -108,16 +108,6 @@ export const BUILTIN_WIDGET_DECLARATIONS: PluginWidgetDeclaration[] = [
     label: "Apps",
     icon: "Activity",
     order: 150,
-    defaultEnabled: true,
-  },
-  // Agent Orchestrator — tasks
-  {
-    id: "agent-orchestrator.tasks",
-    pluginId: "agent-orchestrator",
-    slot: "chat-sidebar",
-    label: "Tasks",
-    icon: "ListTodo",
-    order: 200,
     defaultEnabled: true,
   },
   // Agent Orchestrator — activity

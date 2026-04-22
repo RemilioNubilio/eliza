@@ -35,12 +35,7 @@ const sidebarRootVariants = cva(
         variant: "default",
         collapsed: false,
         className:
-          "!w-[18.5rem] !min-w-[18.5rem] xl:!w-[20rem] xl:!min-w-[20rem]",
-      },
-      {
-        variant: "default",
-        collapsed: false,
-        className: "shadow-lg",
+          "!w-[18.5rem] !min-w-[18.5rem] xl:!w-[20rem] xl:!min-w-[20rem] shadow-lg",
       },
       {
         variant: "default",
@@ -422,6 +417,7 @@ export const Sidebar = React.forwardRef<HTMLElement, SidebarProps>(
       collapsedContent,
       collapsedRailAction,
       collapsedRailItems,
+      collapseButtonLeading,
       onMobileClose,
       mobileTitle,
       mobileMeta,
@@ -434,6 +430,7 @@ export const Sidebar = React.forwardRef<HTMLElement, SidebarProps>(
       headerClassName,
       footerClassName,
       collapsedContentClassName,
+      collapseButtonClassName,
       className,
       children,
       ...props
@@ -678,19 +675,19 @@ export const Sidebar = React.forwardRef<HTMLElement, SidebarProps>(
               collapsedContentClassName,
             )}
           >
-            {renderCollapsedInner()}
-            <div className="mt-auto flex w-full flex-col items-center pb-3 pt-2">
+            <div className="flex w-full flex-col items-center pb-2 pt-1">
               <Button
                 variant="surface"
                 size="icon"
                 data-testid={expandButtonTestId}
-                className={sidebarControlButtonClassName}
+                className={cn(sidebarControlButtonClassName, collapseButtonClassName)}
                 aria-label={expandButtonAriaLabel}
                 onClick={handleExpand}
               >
                 <PanelLeftOpen className="h-4 w-4" />
               </Button>
             </div>
+            {renderCollapsedInner()}
           </div>
         </div>
         {renderHiddenAutoRailSource ? (
@@ -718,6 +715,31 @@ export const Sidebar = React.forwardRef<HTMLElement, SidebarProps>(
           layerClassName,
         )}
       >
+        {supportsCollapsedRail ? (
+          <div
+            className={cn(
+              "relative z-10 flex shrink-0 items-center gap-2 px-3.5 pb-2 pt-3.5",
+              collapseButtonLeading ? "justify-between" : "justify-end",
+              headerClassName,
+            )}
+          >
+            {collapseButtonLeading ? (
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                {collapseButtonLeading}
+              </div>
+            ) : null}
+            <Button
+              variant="surface"
+              size="icon"
+              data-testid={collapseButtonTestId}
+              className={cn(sidebarControlButtonClassName, collapseButtonClassName)}
+              aria-label={collapseButtonAriaLabel}
+              onClick={handleCollapse}
+            >
+              <PanelLeftClose className="h-4 w-4" />
+            </Button>
+          </div>
+        ) : null}
         {header ? (
           <div
             className={cn(
@@ -740,20 +762,6 @@ export const Sidebar = React.forwardRef<HTMLElement, SidebarProps>(
         {footer ? (
           <div className={cn(sidebarFooterVariants(), footerClassName)}>
             {footer}
-          </div>
-        ) : null}
-        {supportsCollapsedRail ? (
-          <div className={cn(sidebarFooterVariants(), footerClassName)}>
-            <Button
-              variant="surface"
-              size="icon"
-              data-testid={collapseButtonTestId}
-              className={sidebarControlButtonClassName}
-              aria-label={collapseButtonAriaLabel}
-              onClick={handleCollapse}
-            >
-              <PanelLeftClose className="h-4 w-4" />
-            </Button>
           </div>
         ) : null}
       </div>

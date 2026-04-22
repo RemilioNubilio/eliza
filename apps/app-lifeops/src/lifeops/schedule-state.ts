@@ -6,6 +6,7 @@ import type {
   LifeOpsSchedulePhase,
 } from "@elizaos/shared/contracts/lifeops";
 import { asRecord } from "@elizaos/shared/type-guards";
+import { resolveLifeOpsRelativeTime } from "./relative-time.js";
 import type { LifeOpsScheduleInsightRecord } from "./repository.js";
 import type {
   LifeOpsScheduleDeviceKind,
@@ -110,7 +111,10 @@ function bucketIso(
   return bucketed.toISOString();
 }
 
-function inferPhaseFromClock(now: Date, timezone: string): LifeOpsSchedulePhase {
+function inferPhaseFromClock(
+  now: Date,
+  timezone: string,
+): LifeOpsSchedulePhase {
   const parts = getZonedDateParts(now, timezone);
   const hour = parts.hour + parts.minute / 60;
   if (hour < 5) {
@@ -128,6 +132,16 @@ function inferPhaseFromClock(now: Date, timezone: string): LifeOpsSchedulePhase 
   return "winding_down";
 }
 
+function awakeConfidence(snapshot: LifeOpsScheduleObservationSnapshot): number {
+  if (snapshot.firstActiveAt || snapshot.lastActiveAt) {
+    return 0.7;
+  }
+  if (snapshot.wakeAt) {
+    return 0.62;
+  }
+  return 0.55;
+}
+
 function toObservationSnapshot(
   insight: LifeOpsScheduleInsight,
 ): LifeOpsScheduleObservationSnapshot {
@@ -135,6 +149,7 @@ function toObservationSnapshot(
     effectiveDayKey: insight.effectiveDayKey,
     localDate: insight.localDate,
     phase: insight.phase,
+    relativeTime: insight.relativeTime,
     sleepStatus: insight.sleepStatus,
     isProbablySleeping: insight.isProbablySleeping,
     sleepConfidence: roundConfidence(insight.sleepConfidence),
@@ -161,6 +176,10 @@ function bucketSnapshot(
 ): LifeOpsScheduleObservationSnapshot {
   return {
     ...snapshot,
+    relativeTime: {
+      ...snapshot.relativeTime,
+      confidence: roundConfidence(snapshot.relativeTime.confidence),
+    },
     sleepConfidence: roundConfidence(snapshot.sleepConfidence),
     currentSleepStartedAt: bucketIso(
       snapshot.currentSleepStartedAt,
@@ -371,14 +390,15 @@ export function deriveLocalScheduleObservations(args: {
     pushObservation({
       state: "probably_awake",
       phase: snapshot.phase,
-      confidence: Math.max(snapshot.sleepConfidence, 0.55),
+      confidence: awakeConfidence(snapshot),
       windowStartAt:
         snapshot.wakeAt ??
         snapshot.firstActiveAt ??
         snapshot.lastActiveAt ??
         bucketIso(observedAt, args.timezone, "nearest"),
       windowEndAt:
-        snapshot.lastActiveAt ?? bucketIso(observedAt, args.timezone, "nearest"),
+        snapshot.lastActiveAt ??
+        bucketIso(observedAt, args.timezone, "nearest"),
     });
   }
 
@@ -387,7 +407,7 @@ export function deriveLocalScheduleObservations(args: {
     pushObservation({
       state: "woke_recently",
       phase: "waking",
-      confidence: Math.max(snapshot.sleepConfidence, 0.6),
+      confidence: snapshot.firstActiveAt ? 0.72 : 0.62,
       windowStartAt: snapshot.wakeAt,
       windowEndAt: bucketIso(
         new Date(wakeMs + WAKE_RECENT_WINDOW_MS).toISOString(),
@@ -405,7 +425,7 @@ export function deriveLocalScheduleObservations(args: {
     pushObservation({
       state: "active_recently",
       phase: snapshot.phase,
-      confidence: Math.max(snapshot.sleepConfidence, 0.55),
+      confidence: 0.7,
       windowStartAt: snapshot.lastActiveAt,
       windowEndAt: bucketIso(observedAt, args.timezone, "nearest"),
     });
@@ -415,7 +435,7 @@ export function deriveLocalScheduleObservations(args: {
     pushObservation({
       state: "winding_down",
       phase: "winding_down",
-      confidence: Math.max(snapshot.sleepConfidence, 0.45),
+      confidence: 0.5,
       windowStartAt:
         snapshot.lastActiveAt ??
         snapshot.lastSleepStartedAt ??
@@ -452,8 +472,7 @@ export function deriveLocalScheduleObservations(args: {
       confidence: snapshot.nextMealConfidence,
       windowStartAt: snapshot.nextMealWindowStartAt,
       windowEndAt:
-        snapshot.nextMealWindowEndAt ??
-        snapshot.nextMealWindowStartAt,
+        snapshot.nextMealWindowEndAt ?? snapshot.nextMealWindowStartAt,
     });
   }
 
@@ -478,20 +497,23 @@ function recordFromSyncInput(args: {
     args.timezone,
     "ceil",
   );
-  const isSleepingObservation = args.input.state === "probably_sleeping";
   const isWakeObservation = args.input.state === "woke_recently";
   const isActiveObservation = args.input.state === "active_recently";
   const isMealObservation = args.input.state === "meal_window_likely";
   const isAteObservation = args.input.state === "ate_recently";
-  const snapshot = {
+  const snapshotBase = {
     effectiveDayKey:
       typeof snapshotSource.effectiveDayKey === "string"
         ? snapshotSource.effectiveDayKey
-        : getLocalDateKey(getZonedDateParts(new Date(args.observedAt), args.timezone)),
+        : getLocalDateKey(
+            getZonedDateParts(new Date(args.observedAt), args.timezone),
+          ),
     localDate:
       typeof snapshotSource.localDate === "string"
         ? snapshotSource.localDate
-        : getLocalDateKey(getZonedDateParts(new Date(args.observedAt), args.timezone)),
+        : getLocalDateKey(
+            getZonedDateParts(new Date(args.observedAt), args.timezone),
+          ),
     phase:
       snapshotSource.phase ??
       args.input.phase ??
@@ -501,7 +523,9 @@ function recordFromSyncInput(args: {
       typeof snapshotSource.isProbablySleeping === "boolean"
         ? snapshotSource.isProbablySleeping
         : args.input.state === "probably_sleeping",
-    sleepConfidence: roundConfidence(snapshotSource.sleepConfidence ?? args.input.confidence),
+    sleepConfidence: roundConfidence(
+      snapshotSource.sleepConfidence ?? args.input.confidence,
+    ),
     currentSleepStartedAt:
       bucketIso(snapshotSource.currentSleepStartedAt, args.timezone, "floor") ??
       (args.input.state === "probably_sleeping"
@@ -544,7 +568,9 @@ function recordFromSyncInput(args: {
         : null),
     nextMealLabel:
       snapshotSource.nextMealLabel ??
-      (isMealObservation || isAteObservation ? args.input.mealLabel ?? null : null),
+      (isMealObservation || isAteObservation
+        ? (args.input.mealLabel ?? null)
+        : null),
     nextMealWindowStartAt:
       bucketIso(snapshotSource.nextMealWindowStartAt, args.timezone, "floor") ??
       (isMealObservation ? bucketedWindowStartAt : null),
@@ -555,7 +581,15 @@ function recordFromSyncInput(args: {
       snapshotSource.nextMealConfidence ??
         (isMealObservation ? args.input.confidence : 0),
     ),
-  } satisfies LifeOpsScheduleObservationSnapshot;
+  } satisfies Omit<LifeOpsScheduleObservationSnapshot, "relativeTime">;
+  const snapshot: LifeOpsScheduleObservationSnapshot = {
+    ...snapshotBase,
+    relativeTime: resolveLifeOpsRelativeTime({
+      nowMs: parseIsoMs(args.observedAt) ?? Date.now(),
+      timezone: args.timezone,
+      schedule: snapshotBase,
+    }),
+  };
 
   return buildObservationRecord({
     agentId: args.agentId,
@@ -639,6 +673,29 @@ function latestSnapshotValue<T>(
   return null;
 }
 
+function isFutureIsoAt(
+  value: string | null | undefined,
+  nowMs: number,
+): boolean {
+  const parsed = parseIsoMs(value);
+  return parsed !== null && parsed >= nowMs;
+}
+
+function pickFutureSnapshotValue(
+  observations: LifeOpsScheduleObservation[],
+  read: (snapshot: MergeObservationSnapshot) => string | null | undefined,
+  nowMs: number,
+): string | null {
+  for (const observation of observations) {
+    const snapshot = observationSnapshot(observation);
+    const value = snapshot ? read(snapshot) : null;
+    if (value && isFutureIsoAt(value, nowMs)) {
+      return value;
+    }
+  }
+  return null;
+}
+
 function median(values: number[]): number | null {
   if (values.length === 0) {
     return null;
@@ -677,14 +734,16 @@ function bestObservation(
   if (matches.length === 0) {
     return null;
   }
-  return matches.sort((left, right) => {
-    if (right.confidence !== left.confidence) {
-      return right.confidence - left.confidence;
-    }
-    const leftMs = parseIsoMs(left.observedAt) ?? 0;
-    const rightMs = parseIsoMs(right.observedAt) ?? 0;
-    return rightMs - leftMs;
-  })[0] ?? null;
+  return (
+    matches.sort((left, right) => {
+      if (right.confidence !== left.confidence) {
+        return right.confidence - left.confidence;
+      }
+      const leftMs = parseIsoMs(left.observedAt) ?? 0;
+      const rightMs = parseIsoMs(right.observedAt) ?? 0;
+      return rightMs - leftMs;
+    })[0] ?? null
+  );
 }
 
 function mergedMeals(
@@ -732,10 +791,11 @@ export function mergeScheduleObservations(args: {
     .filter((observation) => observation.state === "probably_sleeping")
     .reduce((total, observation) => total + observation.confidence, 0);
   const awakeScore = relevant
-    .filter((observation) =>
-      observation.state === "probably_awake" ||
-      observation.state === "active_recently" ||
-      observation.state === "woke_recently",
+    .filter(
+      (observation) =>
+        observation.state === "probably_awake" ||
+        observation.state === "active_recently" ||
+        observation.state === "woke_recently",
     )
     .reduce((total, observation) => total + observation.confidence, 0);
   const currentSleep = bestObservation(
@@ -755,7 +815,9 @@ export function mergeScheduleObservations(args: {
     (observation) => observation.state === "meal_window_likely",
   );
   const phase =
-    currentSleep && sleepingScore >= awakeScore && currentSleep.confidence >= 0.55
+    currentSleep &&
+    sleepingScore >= awakeScore &&
+    currentSleep.confidence >= 0.55
       ? "sleeping"
       : recentWake && recentWake.confidence >= 0.45
         ? "waking"
@@ -765,7 +827,10 @@ export function mergeScheduleObservations(args: {
             inferPhaseFromClock(now, args.timezone));
 
   const currentSleepStartedAt =
-    latestSnapshotValue(relevant, (snapshot) => snapshot.currentSleepStartedAt) ??
+    latestSnapshotValue(
+      relevant,
+      (snapshot) => snapshot.currentSleepStartedAt,
+    ) ??
     currentSleep?.windowStartAt ??
     null;
   const lastSleepStartedAt =
@@ -779,11 +844,14 @@ export function mergeScheduleObservations(args: {
     recentWake?.windowStartAt ??
     null;
   const firstActiveAt =
-    latestSnapshotValue(relevant, (snapshot) => snapshot.firstActiveAt) ?? wakeAt;
+    latestSnapshotValue(relevant, (snapshot) => snapshot.firstActiveAt) ??
+    wakeAt;
   const lastActiveAt =
     latestSnapshotValue(relevant, (snapshot) => snapshot.lastActiveAt) ??
-    bestObservation(relevant, (observation) => observation.state === "active_recently")
-      ?.windowStartAt ??
+    bestObservation(
+      relevant,
+      (observation) => observation.state === "active_recently",
+    )?.windowStartAt ??
     null;
   const sleepStatus =
     phase === "sleeping"
@@ -800,31 +868,109 @@ export function mergeScheduleObservations(args: {
   );
   const typicalWakeHourValues = relevant
     .map((observation) =>
-      latestSnapshotValue([observation], (snapshot) => snapshot.typicalWakeHour),
+      latestSnapshotValue(
+        [observation],
+        (snapshot) => snapshot.typicalWakeHour,
+      ),
     )
     .filter((value): value is number => typeof value === "number");
   const typicalSleepHourValues = relevant
     .map((observation) =>
-      latestSnapshotValue([observation], (snapshot) => snapshot.typicalSleepHour),
+      latestSnapshotValue(
+        [observation],
+        (snapshot) => snapshot.typicalSleepHour,
+      ),
     )
     .filter((value): value is number => typeof value === "number");
   const meals = mergedMeals(relevant);
-  const lastMealAt = meals.length > 0 ? meals[meals.length - 1]?.detectedAt ?? null : null;
+  const lastMealAt =
+    meals.length > 0 ? (meals[meals.length - 1]?.detectedAt ?? null) : null;
   const mergedAt = now.toISOString();
-  const effectiveDayKey = getLocalDateKey(getZonedDateParts(now, args.timezone));
+  const effectiveDayKey =
+    latestSnapshotValue(relevant, (snapshot) => snapshot.effectiveDayKey) ??
+    getLocalDateKey(getZonedDateParts(now, args.timezone));
+  const localDate =
+    latestSnapshotValue(relevant, (snapshot) => snapshot.localDate) ??
+    getLocalDateKey(getZonedDateParts(now, args.timezone));
   const contributingDeviceKinds = [
     ...new Set(relevant.map((observation) => observation.deviceKind)),
   ];
+  const typicalWakeHour = median(typicalWakeHourValues);
+  const typicalSleepHour = median(typicalSleepHourValues);
+  const relativeTime = resolveLifeOpsRelativeTime({
+    nowMs,
+    timezone: args.timezone,
+    schedule: {
+      phase,
+      isProbablySleeping: phase === "sleeping",
+      sleepConfidence,
+      currentSleepStartedAt,
+      lastSleepStartedAt,
+      lastSleepEndedAt,
+      typicalSleepHour,
+      wakeAt,
+      firstActiveAt,
+    },
+  });
+  const mealWindowStartFromObservation =
+    mealWindow && isFutureIsoAt(mealWindow.windowStartAt, nowMs)
+      ? mealWindow.windowStartAt
+      : null;
+  const mealWindowStartFromSnapshot =
+    mealWindowStartFromObservation === null
+      ? pickFutureSnapshotValue(
+          relevant,
+          (snapshot) => snapshot.nextMealWindowStartAt,
+          nowMs,
+        )
+      : null;
+  const mealWindowSource: "observation" | "snapshot" | null =
+    mealWindowStartFromObservation !== null
+      ? "observation"
+      : mealWindowStartFromSnapshot !== null
+        ? "snapshot"
+        : null;
+  const nextMealWindowStartAt =
+    mealWindowStartFromObservation ?? mealWindowStartFromSnapshot ?? null;
+  const nextMealLabel =
+    mealWindowSource === "observation"
+      ? (mealWindow?.mealLabel ?? null)
+      : mealWindowSource === "snapshot"
+        ? (latestSnapshotValue(
+            relevant,
+            (snapshot) => snapshot.nextMealLabel,
+          ) ?? null)
+        : null;
+  const nextMealWindowEndAt =
+    mealWindowSource === "observation"
+      ? (mealWindow?.windowEndAt ?? null)
+      : mealWindowSource === "snapshot"
+        ? (latestSnapshotValue(
+            relevant,
+            (snapshot) => snapshot.nextMealWindowEndAt,
+          ) ?? null)
+        : null;
+  const nextMealConfidence = roundConfidence(
+    mealWindowSource === "observation"
+      ? (mealWindow?.confidence ?? 0)
+      : mealWindowSource === "snapshot"
+        ? (latestSnapshotValue(
+            relevant,
+            (snapshot) => snapshot.nextMealConfidence,
+          ) ?? 0)
+        : 0,
+  );
   return {
     id: `lifeops-schedule-merged:${args.agentId}:${args.scope}:${args.timezone}`,
     agentId: args.agentId,
     scope: args.scope,
     mergedAt,
     effectiveDayKey,
-    localDate: effectiveDayKey,
+    localDate,
     timezone: args.timezone,
     inferredAt: mergedAt,
     phase,
+    relativeTime,
     sleepStatus,
     isProbablySleeping: phase === "sleeping",
     sleepConfidence,
@@ -836,38 +982,20 @@ export function mergeScheduleObservations(args: {
         relevant,
         (snapshot) => snapshot.lastSleepDurationMinutes,
       ) ?? null,
-    typicalWakeHour: median(typicalWakeHourValues),
-    typicalSleepHour: median(typicalSleepHourValues),
+    typicalWakeHour,
+    typicalSleepHour,
     wakeAt,
     firstActiveAt,
     lastActiveAt,
     meals,
     lastMealAt,
-    nextMealLabel:
-      mealWindow?.mealLabel ??
-      latestSnapshotValue(relevant, (snapshot) => snapshot.nextMealLabel) ??
-      null,
-    nextMealWindowStartAt:
-      mealWindow?.windowStartAt ??
-      latestSnapshotValue(
-        relevant,
-        (snapshot) => snapshot.nextMealWindowStartAt,
-      ) ??
-      null,
-    nextMealWindowEndAt:
-      mealWindow?.windowEndAt ??
-      latestSnapshotValue(
-        relevant,
-        (snapshot) => snapshot.nextMealWindowEndAt,
-      ) ??
-      null,
-    nextMealConfidence: roundConfidence(
-      mealWindow?.confidence ??
-        latestSnapshotValue(relevant, (snapshot) => snapshot.nextMealConfidence) ??
-        0,
-    ),
+    nextMealLabel,
+    nextMealWindowStartAt,
+    nextMealWindowEndAt,
+    nextMealConfidence,
     observationCount: relevant.length,
-    deviceCount: new Set(relevant.map((observation) => observation.deviceId)).size,
+    deviceCount: new Set(relevant.map((observation) => observation.deviceId))
+      .size,
     contributingDeviceKinds,
     metadata: {
       latestObservationAt: relevant[0]?.observedAt ?? mergedAt,
@@ -875,14 +1003,20 @@ export function mergeScheduleObservations(args: {
         sleeping: roundConfidence(Math.min(1, sleepingScore)),
         awake: roundConfidence(Math.min(1, awakeScore)),
       },
-      deviceIds: [...new Set(relevant.map((observation) => observation.deviceId))],
+      deviceIds: [
+        ...new Set(relevant.map((observation) => observation.deviceId)),
+      ],
+      relativeTime,
     },
     createdAt: mergedAt,
     updatedAt: mergedAt,
   };
 }
 
-function freshnessMs(state: LifeOpsScheduleMergedState, nowMs: number): number | null {
+function freshnessMs(
+  state: LifeOpsScheduleMergedState,
+  nowMs: number,
+): number | null {
   const updatedMs = parseIsoMs(state.updatedAt);
   if (updatedMs === null) {
     return null;

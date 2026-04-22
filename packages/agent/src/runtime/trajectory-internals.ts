@@ -19,6 +19,7 @@ import {
   ModelType,
 } from "@elizaos/core";
 import { asRecord } from "@elizaos/shared/type-guards";
+
 export { asRecord };
 
 import {
@@ -144,7 +145,6 @@ let cachedSqlRaw: ((query: string) => { queryChunks: object[] }) | null = null;
 // Module version - changes on each hot reload, ensuring schema checks run
 const SCHEMA_VERSION = Date.now();
 const schemaVersions = new WeakMap<object, number>();
-
 
 export function toText(value: unknown, fallback = ""): string {
   if (typeof value === "string") return value;
@@ -1339,7 +1339,9 @@ export async function loadTrajectoryById(
       readRecordValue(row, ["steps_json", "stepsJson", "steps"]),
     );
     const normalizedMetadata = normalizeTrajectoryMetadata(
-      parseMetadata(readRecordValue(row, ["metadata", "meta"])),
+      parseMetadata(
+        readRecordValue(row, ["metadata_json", "metadataJson", "metadata", "meta"]),
+      ),
       {
         scenarioId: readRecordValue(row, ["scenario_id", "scenarioId"]),
         batchId: readRecordValue(row, ["batch_id", "batchId"]),
@@ -1425,7 +1427,9 @@ export async function loadTrajectoryByStepId(
     const endTime =
       toOptionalNumber(readRecordValue(row, ["end_time", "endTime"])) ?? null;
     const normalizedMetadata = normalizeTrajectoryMetadata(
-      parseMetadata(readRecordValue(row, ["metadata", "meta"])),
+      parseMetadata(
+        readRecordValue(row, ["metadata_json", "metadataJson", "metadata", "meta"]),
+      ),
       {
         scenarioId: readRecordValue(row, ["scenario_id", "scenarioId"]),
         batchId: readRecordValue(row, ["batch_id", "batchId"]),

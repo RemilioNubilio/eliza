@@ -1,5 +1,5 @@
 /**
- * T8d — Activity tracker actions.
+ * Activity tracker actions.
  *
  * GET_ACTIVITY_REPORT — per-app time breakdown for the last N hours.
  * GET_TIME_ON_APP      — time spent on a specific app (by name or bundle id).
@@ -42,11 +42,46 @@ function resolveWindowMs(windowHours: number | undefined): number {
   return Math.round(clamped * 60 * 60 * 1000);
 }
 
-function getParams<T>(options: HandlerOptions | undefined): T {
-  const params = (options as HandlerOptions | undefined)?.parameters as
-    | T
-    | undefined;
-  return params ?? ({} as T);
+function getParameterRecord(
+  options: HandlerOptions | undefined,
+): Record<string, unknown> {
+  const parameters = options?.parameters;
+  return parameters && typeof parameters === "object" ? parameters : {};
+}
+
+function getActivityReportParams(
+  options: HandlerOptions | undefined,
+): ActivityReportParams {
+  const params = getParameterRecord(options);
+  return {
+    windowHours:
+      typeof params.windowHours === "number" ? params.windowHours : undefined,
+  };
+}
+
+function getTimeOnAppParams(
+  options: HandlerOptions | undefined,
+): TimeOnAppParams {
+  const params = getParameterRecord(options);
+  return {
+    appNameOrBundleId:
+      typeof params.appNameOrBundleId === "string"
+        ? params.appNameOrBundleId
+        : undefined,
+    windowHours:
+      typeof params.windowHours === "number" ? params.windowHours : undefined,
+  };
+}
+
+function getTimeOnSiteParams(
+  options: HandlerOptions | undefined,
+): TimeOnSiteParams {
+  const params = getParameterRecord(options);
+  return {
+    domain: typeof params.domain === "string" ? params.domain : undefined,
+    windowHours:
+      typeof params.windowHours === "number" ? params.windowHours : undefined,
+  };
 }
 
 function formatMinutes(totalMs: number): number {
@@ -82,7 +117,7 @@ export const getActivityReportAction: Action = {
   name: "GET_ACTIVITY_REPORT",
   similes: ["ACTIVITY_REPORT", "WHAT_DID_I_WORK_ON", "TIME_TRACKING_REPORT"],
   description:
-    "T8d — Per-app time breakdown for the last N hours (default 24h). Returns noDataReason='macos-only' on non-Darwin platforms.",
+    "Per-app time breakdown for the last N hours (default 24h). Returns noDataReason='macos-only' on non-Darwin platforms.",
   validate: async (runtime, message) => hasLifeOpsAccess(runtime, message),
   handler: async (
     runtime: IAgentRuntime,
@@ -96,13 +131,17 @@ export const getActivityReportAction: Action = {
       await callback?.({ text });
       return { text, success: false, data: { error: "PERMISSION_DENIED" } };
     }
-    const params = getParams<ActivityReportParams>(options);
+    const params = getActivityReportParams(options);
     const windowMs = resolveWindowMs(params.windowHours);
 
     if (!isSupportedPlatform()) {
       const text =
         "Activity tracking is macOS-only. No data available on this platform.";
-      await callback?.({ text, source: "action", action: "GET_ACTIVITY_REPORT" });
+      await callback?.({
+        text,
+        source: "action",
+        action: "GET_ACTIVITY_REPORT",
+      });
       return {
         text,
         success: true,
@@ -161,7 +200,7 @@ export const getTimeOnAppAction: Action = {
   name: "GET_TIME_ON_APP",
   similes: ["TIME_IN_APP", "HOW_LONG_IN_APP"],
   description:
-    "T8d — Time spent on a specific app (matched by app name or bundle id) over the last N hours.",
+    "Time spent on a specific app (matched by app name or bundle id) over the last N hours.",
   validate: async (runtime, message) => hasLifeOpsAccess(runtime, message),
   handler: async (
     runtime: IAgentRuntime,
@@ -175,7 +214,7 @@ export const getTimeOnAppAction: Action = {
       await callback?.({ text });
       return { text, success: false, data: { error: "PERMISSION_DENIED" } };
     }
-    const params = getParams<TimeOnAppParams>(options);
+    const params = getTimeOnAppParams(options);
     const target = (params.appNameOrBundleId ?? "").trim();
     if (!target) {
       const text = "Specify an app name or bundle id.";
@@ -227,7 +266,8 @@ export const getTimeOnAppAction: Action = {
   parameters: [
     {
       name: "appNameOrBundleId",
-      description: "App name (e.g. 'Safari') or bundle id (e.g. 'com.apple.Safari').",
+      description:
+        "App name (e.g. 'Safari') or bundle id (e.g. 'com.apple.Safari').",
       schema: { type: "string" as const },
     },
     {
@@ -257,7 +297,7 @@ export const getTimeOnSiteAction: Action = {
   name: "GET_TIME_ON_SITE",
   similes: ["TIME_ON_WEBSITE", "TIME_ON_DOMAIN"],
   description:
-    "T8d — Time on a specific site based on browser activity reports pushed into the runtime store.",
+    "Time on a specific site based on browser activity reports pushed into the runtime store.",
   validate: async (runtime, message) => hasLifeOpsAccess(runtime, message),
   handler: async (
     runtime: IAgentRuntime,
@@ -271,7 +311,7 @@ export const getTimeOnSiteAction: Action = {
       await callback?.({ text });
       return { text, success: false, data: { error: "PERMISSION_DENIED" } };
     }
-    const params = getParams<TimeOnSiteParams>(options);
+    const params = getTimeOnSiteParams(options);
     const rawDomain = (params.domain ?? "").trim();
     const domain = rawDomain ? normalizeDomain(rawDomain) : "";
     if (!domain) {

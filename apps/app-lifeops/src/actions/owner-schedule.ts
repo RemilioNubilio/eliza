@@ -42,8 +42,27 @@ function coerceSubaction(
 
 function formatScheduleSummary(inspection: LifeOpsScheduleInspection): string {
   const { insight } = inspection;
+  const bedtimeRelative =
+    insight.relativeTime.minutesUntilBedtimeTarget !== null
+      ? `in ${insight.relativeTime.minutesUntilBedtimeTarget} minutes`
+      : insight.relativeTime.minutesSinceBedtimeTarget !== null
+        ? `${insight.relativeTime.minutesSinceBedtimeTarget} minutes ago`
+        : "still calibrating";
   const lines = [
     `Schedule phase: ${insight.phase}.`,
+    insight.relativeTime.minutesSinceWake !== null
+      ? `Relative time: woke ${insight.relativeTime.minutesSinceWake} minutes ago; bedtime target ${
+          insight.relativeTime.bedtimeTargetAt ?? "unknown"
+        } ${bedtimeRelative}.`
+      : insight.relativeTime.minutesUntilBedtimeTarget !== null
+        ? `Relative time: bedtime target ${
+            insight.relativeTime.bedtimeTargetAt ?? "unknown"
+          } in ${insight.relativeTime.minutesUntilBedtimeTarget} minutes.`
+        : insight.relativeTime.minutesSinceBedtimeTarget !== null
+          ? `Relative time: bedtime target ${
+              insight.relativeTime.bedtimeTargetAt ?? "unknown"
+            } was ${insight.relativeTime.minutesSinceBedtimeTarget} minutes ago.`
+        : "Relative time: still calibrating wake and bedtime anchors.",
     insight.isProbablySleeping
       ? insight.currentSleepStartedAt
         ? `Likely asleep since ${insight.currentSleepStartedAt} (${Math.round(insight.sleepConfidence * 100)}% confidence).`

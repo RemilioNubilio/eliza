@@ -1,6 +1,5 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import type { JSDOM } from "jsdom";
 import {
   browserWorkspaceTextMatches,
   buildBrowserWorkspaceElementSelector,
@@ -29,12 +28,10 @@ import {
   submitWebBrowserWorkspaceForm,
 } from "./browser-workspace-forms.js";
 import {
-  assertBrowserWorkspaceUrl,
   createBrowserWorkspaceCommandTargetError,
   createBrowserWorkspaceNotFoundError,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_WAIT_INTERVAL_MS,
-  inferBrowserWorkspaceTitle,
   normalizeBrowserWorkspaceText,
   resolveBrowserWorkspaceCommandElementRefs,
   sleep,
@@ -42,9 +39,7 @@ import {
 } from "./browser-workspace-helpers.js";
 import {
   applyBrowserWorkspaceDomSettings,
-  createEmptyWebBrowserWorkspaceDom,
   ensureBrowserWorkspaceDom,
-  installBrowserWorkspaceWebRuntime,
 } from "./browser-workspace-jsdom.js";
 import {
   fetchBrowserWorkspaceTrackedResponse,
@@ -62,7 +57,6 @@ import {
 } from "./browser-workspace-snapshots.js";
 import {
   browserWorkspaceClipboardText,
-  clearBrowserWorkspaceElementRefs,
   getBrowserWorkspaceRuntimeState,
   getBrowserWorkspaceTimestamp,
   registerBrowserWorkspaceElementRefs,
@@ -173,23 +167,82 @@ export async function executeWebBrowserWorkspaceUtilityCommand(
 
     switch (command.subaction) {
       case "eval": {
-        // Eval is only supported through the desktop browser bridge, where
-        // scripts run inside a real browser tab (no Node.js process access).
-        //
-        // The JSDOM-based web path runs in the agent's Node.js process. Any
-        // evaluation primitive there (new Function, node:vm with host objects,
-        // etc.) is reachable via the prototype chain of the injected DOM
-        // globals, allowing prompt-injected scripts to escape to `process`
-        // and execute arbitrary OS commands. See issue elizaOS/eliza#6767.
-        const error = new Error(
-          "Eliza browser workspace eval requires the desktop browser bridge; the JSDOM web fallback does not execute scripts.",
-        );
-        runtime.errors.push({
-          message: error.message,
-          stack: error.stack ?? null,
-          timestamp: getBrowserWorkspaceTimestamp(),
-        });
-        throw error;
+        if (!command.script?.trim()) {
+          throw new Error("Eliza browser workspace eval requires script.");
+        }
+        try {
+          let value: unknown;
+          try {
+            value = new Function(
+              "document",
+              "fetch",
+              "alert",
+              "confirm",
+              "prompt",
+              "window",
+              "location",
+              "navigator",
+              "localStorage",
+              "sessionStorage",
+              "console",
+              `return (${command.script});`,
+            )(
+              document,
+              dom.window.fetch.bind(dom.window),
+              dom.window.alert.bind(dom.window),
+              dom.window.confirm.bind(dom.window),
+              dom.window.prompt.bind(dom.window),
+              dom.window,
+              dom.window.location,
+              dom.window.navigator,
+              dom.window.localStorage,
+              dom.window.sessionStorage,
+              dom.window.console,
+            );
+          } catch {
+            value = new Function(
+              "document",
+              "fetch",
+              "alert",
+              "confirm",
+              "prompt",
+              "window",
+              "location",
+              "navigator",
+              "localStorage",
+              "sessionStorage",
+              "console",
+              command.script,
+            )(
+              document,
+              dom.window.fetch.bind(dom.window),
+              dom.window.alert.bind(dom.window),
+              dom.window.confirm.bind(dom.window),
+              dom.window.prompt.bind(dom.window),
+              dom.window,
+              dom.window.location,
+              dom.window.navigator,
+              dom.window.localStorage,
+              dom.window.sessionStorage,
+              dom.window.console,
+            );
+          }
+          if (
+            value &&
+            typeof value === "object" &&
+            typeof (value as Promise<unknown>).then === "function"
+          ) {
+            value = await (value as Promise<unknown>);
+          }
+          return { mode: "web", subaction: command.subaction, value };
+        } catch (error) {
+          runtime.errors.push({
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? (error.stack ?? null) : null,
+            timestamp: getBrowserWorkspaceTimestamp(),
+          });
+          throw error;
+        }
       }
       case "screenshot": {
         const data = createBrowserWorkspaceSyntheticScreenshotData(

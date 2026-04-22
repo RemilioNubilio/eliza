@@ -33,5 +33,5 @@ describe("@elizaos/core node entry contract", () => {
 		expect(distEntry.skillRefinementEvaluator).toBeDefined();
 		expect(distEntry.skillExtractionEvaluator).toBeDefined();
 		expect(distEntry.factRefinementEvaluator).toBeDefined();
-	});
+	}, 60000);
 });

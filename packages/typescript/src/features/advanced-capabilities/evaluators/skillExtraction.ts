@@ -20,7 +20,6 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../../logger.ts";
-import { resolveStateDir } from "../../../utils/state-dir.ts";
 import type {
 	ActionResult,
 	EvaluationExample,
@@ -30,6 +29,7 @@ import type {
 } from "../../../types/index.ts";
 import { ModelType } from "../../../types/index.ts";
 import { MemoryType } from "../../../types/memory.ts";
+import { resolveStateDir } from "../../../utils/state-dir.ts";
 
 interface TrajectoryStep {
 	stepId?: string;
@@ -348,7 +348,7 @@ export const skillExtractionEvaluator: Evaluator = {
 		}
 
 		const draft = parseExtractionResponse(response);
-		if (!draft || !draft.extract) {
+		if (!draft?.extract) {
 			logger.debug(
 				{
 					src: "plugin:advanced-capabilities:evaluator:skill_extraction",

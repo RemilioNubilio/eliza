@@ -10,7 +10,11 @@ import { LayoutGrid, SquareArrowOutUpRight } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type AppRunSummary, client, type RegistryAppInfo } from "../../api";
 import { useApp } from "../../state";
-import { getAppEmoji, getAppShortName } from "../apps/helpers";
+import {
+  getAppEmoji,
+  getAppShortName,
+  isHiddenFromAppsView,
+} from "../apps/helpers";
 import {
   getInternalToolApps,
   getInternalToolAppTargetTab,
@@ -71,7 +75,9 @@ export function AppsSection() {
           (app, index, items) =>
             items.findIndex((c) => c.name === app.name) === index,
         );
-        if (!cancelled) setCatalogApps(all);
+        if (!cancelled) {
+          setCatalogApps(all.filter((app) => !isHiddenFromAppsView(app.name)));
+        }
       } catch {
         // Silently fail — the main apps view handles errors
       }
@@ -186,7 +192,7 @@ export function AppsSection() {
               type="button"
               title={displayName}
               aria-label={t("chatsidebar.launchApp", {
-                defaultValue: "Launch {{name}}",
+                defaultValue: `Launch ${displayName}`,
                 name: displayName,
               })}
               className={`flex h-9 w-9 items-center justify-center rounded-xl border border-border/35 bg-card/72 text-base transition-all hover:border-accent/30 hover:bg-bg-hover/70 hover:scale-110 ${ringClass}`}

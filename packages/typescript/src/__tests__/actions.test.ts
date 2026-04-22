@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { ACTION_BENCHMARK_CASES } from "../../../app-core/test/benchmarks/action-selection-cases.ts";
 import {
 	composeActionExamples,
 	formatActionNames,
 	formatActions,
 	parseActionParams,
+	validateActionParams,
 } from "../actions";
 import { allActionDocs } from "../generated/action-docs";
 import type { Action } from "../types";
-import { ACTION_BENCHMARK_CASES } from "../../../app-core/test/benchmarks/action-selection-cases.ts";
 
 describe("Actions", () => {
 	const mockActions: Action[] = [
@@ -308,7 +309,8 @@ describe("Actions", () => {
 			expect(casesById.has("cross-send-slack")).toBe(false);
 			expect(casesById.get("cross-send-signal")).toMatchObject({
 				expectedAction: "OWNER_SEND_MESSAGE",
-				userMessage: "send a Signal message to Priya saying thanks for the review",
+				userMessage:
+					"send a Signal message to Priya saying thanks for the review",
 			});
 
 			expect(casesById.has("computer-use-fill-form")).toBe(false);
@@ -318,17 +320,18 @@ describe("Actions", () => {
 			});
 
 			expect(casesById.has("intent-sync-send-to-mobile")).toBe(false);
-			expect(casesById.get("intent-sync-mobile-routine-reminder"))
-				.toMatchObject({
-					expectedAction: "INTENT_SYNC",
-					expectedParams: {
-						subaction: "broadcast",
-						kind: "routine_reminder",
-						target: "mobile",
-						title: "Stretch break",
-						body: "Get up and stretch for five minutes",
-					},
-				});
+			expect(
+				casesById.get("intent-sync-mobile-routine-reminder"),
+			).toMatchObject({
+				expectedAction: "INTENT_SYNC",
+				expectedParams: {
+					subaction: "broadcast",
+					kind: "routine_reminder",
+					target: "mobile",
+					title: "Stretch break",
+					body: "Get up and stretch for five minutes",
+				},
+			});
 
 			expect(casesById.has("calendly-list-slots")).toBe(false);
 			expect(casesById.get("calendly-check-availability")).toMatchObject({
@@ -360,6 +363,46 @@ describe("Actions", () => {
 				action: "create",
 				intent: "create a habit to brush teeth at 8am and 9pm daily",
 				title: "Brush Teeth",
+			});
+		});
+	});
+
+	describe("validateActionParams", () => {
+		it("coerces comma-separated strings into string arrays for array params", () => {
+			const action: Action = {
+				name: "BLOCK_WEBSITES",
+				description: "Block websites.",
+				parameters: [
+					{
+						name: "websites",
+						description: "Website hostnames to block.",
+						required: true,
+						schema: {
+							type: "array",
+							items: { type: "string" },
+						},
+					},
+				],
+				examples: [],
+				similes: [],
+				handler: async () => {
+					throw new Error("Not implemented");
+				},
+				validate: async () => {
+					throw new Error("Not implemented");
+				},
+			};
+
+			expect(
+				validateActionParams(action, {
+					websites: "x.com, twitter.com",
+				}),
+			).toEqual({
+				valid: true,
+				params: {
+					websites: ["x.com", "twitter.com"],
+				},
+				errors: [],
 			});
 		});
 	});

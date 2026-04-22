@@ -16,6 +16,7 @@ const REPO_TEST_PROCESS_MARKERS = [
   "bun run test",
   "bun run test:integration",
   "bun run test:e2e",
+  "bun run test:e2e:all",
   "bun run test:orchestrator:integration",
 ];
 
@@ -98,7 +99,7 @@ export function buildTestEnv(cwd) {
     }
   }
   env.NODE_NO_WARNINGS = env.NODE_NO_WARNINGS || "1";
-  env.ELIZA_LIVE_TEST = "0";
+  env.MILADY_LIVE_TEST = env.MILADY_LIVE_TEST || "0";
   env.ELIZA_LIVE_TEST = "0";
   env.PWD = path.resolve(cwd);
   if (!env.ELIZAOS_CLOUD_API_KEY) {

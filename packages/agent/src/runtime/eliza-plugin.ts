@@ -17,8 +17,8 @@ import {
 } from "../actions/entity-actions.js";
 import { extractPageAction } from "../actions/extract-page.js";
 import { manageTasksAction } from "../actions/manage-tasks.js";
-import { readMessagesAction } from "../actions/read-messages.js";
 import { readChannelAction } from "../actions/read-channel.js";
+import { readMessagesAction } from "../actions/read-messages.js";
 import { restartAction } from "../actions/restart.js";
 import { searchConversationsAction } from "../actions/search-conversations.js";
 import { sendAdminMessageAction } from "../actions/send-admin-message.js";
@@ -35,6 +35,7 @@ import { adminPanelProvider } from "../providers/admin-panel.js";
 import { adminTrustProvider } from "../providers/admin-trust.js";
 import { automationTerminalBridgeProvider } from "../providers/automation-terminal-bridge.js";
 import { escalationTriggerProvider } from "../providers/escalation-trigger.js";
+import { pageScopedContextProvider } from "../providers/page-scoped-context.js";
 import { recentConversationsProvider } from "../providers/recent-conversations.js";
 import { relevantConversationsProvider } from "../providers/relevant-conversations.js";
 import { roleBackfillProvider } from "../providers/role-backfill.js";
@@ -187,6 +188,7 @@ export function createElizaPlugin(config?: ElizaPluginConfig): Plugin {
       ...baseProviders,
 
       automationTerminalBridgeProvider,
+      pageScopedContextProvider,
       recentConversationsProvider,
       relevantConversationsProvider,
       rolodexProvider,

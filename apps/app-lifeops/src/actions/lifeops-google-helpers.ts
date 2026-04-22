@@ -12,10 +12,10 @@ import type {
   LifeOpsNextCalendarEventContext,
   LifeOpsOccurrenceView,
   LifeOpsOverview,
-} from "@elizaos/shared/contracts/lifeops";
+} from "@elizaos/app-lifeops/contracts";
 import type { LifeOpsService } from "../lifeops/service.js";
 import { getLocalDateKey, getZonedDateParts } from "../lifeops/time.js";
-import { hasPrivateAccess } from "@elizaos/agent/security";
+import { hasPrivateAccess } from "@elizaos/agent";
 
 export const INTERNAL_URL = new URL("http://127.0.0.1/");
 
@@ -576,6 +576,25 @@ export function formatOverview(overview: LifeOpsOverview): string {
         ? `Last wake ${schedule.lastSleepEndedAt}${schedule.lastSleepDurationMinutes ? ` after ${schedule.lastSleepDurationMinutes} minutes asleep` : ""}`
         : `Sleep status ${schedule.sleepStatus}`;
     lines.push(`- Schedule phase: ${schedule.phase}`);
+    if (schedule.relativeTime.minutesSinceWake !== null) {
+      const bedtimeClause =
+        schedule.relativeTime.minutesUntilBedtimeTarget !== null
+          ? `; bedtime in ${schedule.relativeTime.minutesUntilBedtimeTarget} minutes`
+          : schedule.relativeTime.minutesSinceBedtimeTarget !== null
+            ? `; bedtime was ${schedule.relativeTime.minutesSinceBedtimeTarget} minutes ago`
+            : "";
+      lines.push(
+        `- Relative time: woke ${schedule.relativeTime.minutesSinceWake} minutes ago${bedtimeClause}`,
+      );
+    } else if (schedule.relativeTime.minutesUntilBedtimeTarget !== null) {
+      lines.push(
+        `- Relative time: bedtime in ${schedule.relativeTime.minutesUntilBedtimeTarget} minutes`,
+      );
+    } else if (schedule.relativeTime.minutesSinceBedtimeTarget !== null) {
+      lines.push(
+        `- Relative time: bedtime was ${schedule.relativeTime.minutesSinceBedtimeTarget} minutes ago`,
+      );
+    }
     lines.push(`- ${sleepLine}`);
     if (schedule.nextMealLabel && schedule.nextMealWindowStartAt) {
       lines.push(

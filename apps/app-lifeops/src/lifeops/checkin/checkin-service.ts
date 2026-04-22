@@ -5,6 +5,7 @@ import {
   computeMissedOccurrenceStreak,
   computeOccurrenceStreaks,
 } from "../service-helpers-occurrence.js";
+import type { LifeOpsOccurrence } from "@elizaos/shared/contracts/lifeops";
 import type {
   CheckinKind,
   CheckinReport,
@@ -16,6 +17,10 @@ import type {
   RecordAcknowledgementRequest,
   RunCheckinRequest,
 } from "./types.js";
+import {
+  LIFEOPS_OCCURRENCE_STATES,
+  type LifeOpsOccurrenceState,
+} from "@elizaos/shared/contracts/lifeops";
 
 /**
  * Check-in engine (T9f). Assembles morning/night reports from existing LifeOps data
@@ -68,10 +73,21 @@ type HabitCollectorRow = {
 };
 
 type HabitOccurrence = {
-  state: string;
+  state: LifeOpsOccurrenceState;
   dueAtMs: number;
   updatedAtMs: number;
 };
+
+const LIFEOPS_OCCURRENCE_STATE_SET: ReadonlySet<string> = new Set(
+  LIFEOPS_OCCURRENCE_STATES,
+);
+
+function parseHabitOccurrenceState(value: unknown): LifeOpsOccurrenceState | null {
+  const state = toText(value);
+  return LIFEOPS_OCCURRENCE_STATE_SET.has(state)
+    ? (state as LifeOpsOccurrenceState)
+    : null;
+}
 
 function asFiniteMs(value: string | null | undefined): number | null {
   if (typeof value !== "string") {
@@ -118,7 +134,7 @@ function buildHabitSummary(args: {
       return left.updatedAtMs - right.updatedAtMs;
     });
   const streakInput = dueOccurrences.map((occurrence) => ({
-    state: occurrence.state,
+    state: occurrence.state as LifeOpsOccurrence["state"],
   }));
   const completedStreak = computeOccurrenceStreaks(streakInput);
   const missedStreak = computeMissedOccurrenceStreak(streakInput);
@@ -138,7 +154,7 @@ async function collectHabitSummaries(
   runtime: IAgentRuntime,
   now: Date,
 ): Promise<
-  CollectorResult<readonly HabitSummary[]> & { pausedDefinitionIds: Set<string> }
+  CollectorResult<HabitSummary> & { pausedDefinitionIds: Set<string> }
 > {
   const agentId = String(runtime.agentId);
   try {
@@ -175,12 +191,18 @@ async function collectHabitSummaries(
       const definitionId = toText(row.definition_id);
       const dueAtMs = asFiniteMs(toText(row.occurrence_due_at));
       const updatedAtMs = asFiniteMs(toText(row.occurrence_updated_at));
-      if (!definitionId || dueAtMs === null || updatedAtMs === null) {
+      const state = parseHabitOccurrenceState(row.occurrence_state);
+      if (
+        !definitionId ||
+        dueAtMs === null ||
+        updatedAtMs === null ||
+        state === null
+      ) {
         continue;
       }
       const current = occurrencesByDefinitionId.get(definitionId);
       const nextOccurrence: HabitOccurrence = {
-        state: toText(row.occurrence_state),
+        state,
         dueAtMs,
         updatedAtMs,
       };

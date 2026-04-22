@@ -120,18 +120,40 @@ export function AppsView() {
           serverAppsResult.reason,
         );
       }
-      const internalToolApps = getInternalToolApps();
+      // Internal tool apps are client-owned navigation surfaces. The registry
+      // augments them with curated apps, but it must not be able to hide them.
+      let catalogApps: RegistryAppInfo[];
+      try {
+        catalogApps = [
+          ...getInternalToolApps(),
+          ...(await client.listCatalogApps()),
+        ];
+      } catch (catalogErr) {
+        console.warn(
+          "[AppsView] Failed to load catalog apps; using internal tools:",
+          catalogErr,
+        );
+        catalogApps = getInternalToolApps();
+      }
       // Inject registered overlay apps (e.g. companion) if not already from server
       const overlayDescriptors = getAllOverlayApps()
         .filter((oa) => !serverApps.some((a) => a.name === oa.name))
+        .filter((oa) => !catalogApps.some((a) => a.name === oa.name))
         .map(overlayAppToRegistryInfo);
+      // Server-discovered apps win on conflicts — they have live runtime data.
+      // Catalog apps fill in known-but-not-installed entries (scape, vincent,
+      // hyperscape, etc.) so the page keeps showing them.
       const list = [
-        ...internalToolApps,
+        ...catalogApps,
         ...overlayDescriptors,
         ...serverApps,
       ].filter(
         (app, index, items) =>
-          items.findIndex((candidate) => candidate.name === app.name) === index,
+          !items
+            .slice(index + 1)
+            .some(
+              (candidate: RegistryAppInfo) => candidate.name === app.name,
+            ),
       );
       setApps(list);
     } catch (err) {
@@ -462,9 +484,6 @@ export function AppsView() {
   return (
     <div className="device-layout mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 lg:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold tracking-[-0.01em] text-txt">
-          Apps
-        </h1>
         {hasActiveRun ? (
           <button
             type="button"

@@ -1510,6 +1510,8 @@ export function CharacterEditor({
                 expandButtonTestId="character-editor-sidebar-expand-toggle"
                 collapseButtonAriaLabel="Collapse character editor"
                 expandButtonAriaLabel="Expand character editor"
+                headerClassName="!px-2 !pt-1.5 !pb-1.5"
+                collapseButtonClassName="!h-7 !w-7 !border-0 !bg-transparent !shadow-none hover:!bg-bg-muted/60"
               >
                 <SidebarScrollRegion className="!pt-0">
                   <SidebarPanel className="!px-0 !pt-3 !pb-0 !shadow-none">
@@ -1591,70 +1593,76 @@ export function CharacterEditor({
                 e.target.value = "";
               }}
             />
-            {standaloneContentHeader ? (
-              <div className="mb-3 shrink-0">{standaloneContentHeader}</div>
-            ) : null}
-            <div className="flex min-h-0 flex-1 min-w-0 flex-col">
-              {activePage === "personality" && (
-                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                  <CharacterIdentityPanel
-                    d={d}
-                    bioText={bioText}
-                    generating={generating}
-                    voiceSelectValue={voiceSelectValue}
-                    activeVoicePreset={activeVoicePreset}
-                    voiceTesting={voiceTesting}
-                    voiceLoading={voiceLoading}
-                    useElevenLabs={useElevenLabs}
-                    elevenLabsVoiceGroups={elevenLabsVoiceGroups}
-                    edgeVoiceGroups={edgeVoiceGroups}
-                    handleFieldEdit={handleFieldEdit}
-                    handleGenerate={handleGenerate}
-                    handleSelectPreset={handleSelectPreset}
-                    handleStopTest={handleStopTest}
-                    setVoiceTesting={setVoiceTesting}
-                    setVoiceTestAudio={setVoiceTestAudio}
-                    t={t}
-                  />
+            <div className="flex flex-row min-h-0 flex-1">
+              <div className="flex-1 min-w-0 overflow-auto flex flex-col">
+                {standaloneContentHeader ? (
+                  <div className="mb-3 shrink-0">{standaloneContentHeader}</div>
+                ) : null}
+                <div className="flex min-h-0 flex-1 min-w-0 flex-col">
+                  {activePage === "personality" && (
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                      <CharacterIdentityPanel
+                        d={d}
+                        bioText={bioText}
+                        generating={generating}
+                        voiceSelectValue={voiceSelectValue}
+                        activeVoicePreset={activeVoicePreset}
+                        voiceTesting={voiceTesting}
+                        voiceLoading={voiceLoading}
+                        useElevenLabs={useElevenLabs}
+                        elevenLabsVoiceGroups={elevenLabsVoiceGroups}
+                        edgeVoiceGroups={edgeVoiceGroups}
+                        handleFieldEdit={handleFieldEdit}
+                        handleGenerate={handleGenerate}
+                        handleSelectPreset={handleSelectPreset}
+                        handleStopTest={handleStopTest}
+                        setVoiceTesting={setVoiceTesting}
+                        setVoiceTestAudio={setVoiceTestAudio}
+                        t={t}
+                      />
+                    </div>
+                  )}
+                  {activePage === "style" && (
+                    <div className="flex flex-col gap-5">
+                      <CharacterStylePanel
+                        d={d}
+                        generating={generating}
+                        pendingStyleEntries={pendingStyleEntries}
+                        styleEntryDrafts={styleEntryDrafts}
+                        handleGenerate={handleGenerate}
+                        handlePendingStyleEntryChange={
+                          handlePendingStyleEntryChange
+                        }
+                        handleAddStyleEntry={handleAddStyleEntry}
+                        handleRemoveStyleEntry={handleRemoveStyleEntry}
+                        handleStyleEntryDraftChange={
+                          handleStyleEntryDraftChange
+                        }
+                        handleCommitStyleEntry={handleCommitStyleEntry}
+                        handleReorderStyleEntries={handleReorderStyleEntries}
+                        t={t}
+                      />
+                    </div>
+                  )}
+                  {activePage === "examples" && (
+                    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8 lg:items-start xl:gap-12">
+                      <CharacterExamplesPanel
+                        d={d}
+                        normalizedMessageExamples={normalizedMessageExamples}
+                        generating={generating}
+                        handleFieldEdit={handleFieldEdit}
+                        handleGenerate={handleGenerate}
+                        t={t}
+                      />
+                    </div>
+                  )}
+                  {activePage === "knowledge" && (
+                    <div className="flex flex-col flex-1 min-h-[60vh]">
+                      <KnowledgeView embedded />
+                    </div>
+                  )}
                 </div>
-              )}
-              {activePage === "style" && (
-                <div className="flex flex-col gap-5">
-                  <CharacterStylePanel
-                    d={d}
-                    generating={generating}
-                    pendingStyleEntries={pendingStyleEntries}
-                    styleEntryDrafts={styleEntryDrafts}
-                    handleGenerate={handleGenerate}
-                    handlePendingStyleEntryChange={
-                      handlePendingStyleEntryChange
-                    }
-                    handleAddStyleEntry={handleAddStyleEntry}
-                    handleRemoveStyleEntry={handleRemoveStyleEntry}
-                    handleStyleEntryDraftChange={handleStyleEntryDraftChange}
-                    handleCommitStyleEntry={handleCommitStyleEntry}
-                    handleReorderStyleEntries={handleReorderStyleEntries}
-                    t={t}
-                  />
-                </div>
-              )}
-              {activePage === "examples" && (
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8 lg:items-start xl:gap-12">
-                  <CharacterExamplesPanel
-                    d={d}
-                    normalizedMessageExamples={normalizedMessageExamples}
-                    generating={generating}
-                    handleFieldEdit={handleFieldEdit}
-                    handleGenerate={handleGenerate}
-                    t={t}
-                  />
-                </div>
-              )}
-              {activePage === "knowledge" && (
-                <div className="flex flex-col flex-1 min-h-[60vh]">
-                  <KnowledgeView embedded />
-                </div>
-              )}
+              </div>
             </div>
           </PageLayout>
         )}

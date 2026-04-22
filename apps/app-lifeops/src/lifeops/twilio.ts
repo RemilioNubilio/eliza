@@ -1,11 +1,42 @@
-import { calculateTwilioSmsBilling, type TwilioSmsBillingBreakdown } from "@elizaos/billing";
 import { logger } from "@elizaos/core";
-import { createIntegrationTelemetrySpan } from "@elizaos/agent/diagnostics";
+import { createIntegrationTelemetrySpan } from "@elizaos/agent";
 
 export interface TwilioCredentials {
   accountSid: string;
   authToken: string;
   fromPhoneNumber: string;
+}
+
+export interface TwilioSmsBillingBreakdown {
+  segments: number;
+  rawCost: number;
+  markup: number;
+  billedCost: number;
+  markupRate: number;
+  costPerSegment: number;
+}
+
+const TWILIO_SMS_MARKUP_RATE = 0.2;
+
+function roundCurrency(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function calculateTwilioSmsBilling(
+  body: string,
+  costPerSegmentUsd: number,
+): TwilioSmsBillingBreakdown {
+  const segments = Math.max(1, Math.ceil(body.length / 160));
+  const rawCost = roundCurrency(segments * costPerSegmentUsd);
+  const markup = roundCurrency(rawCost * TWILIO_SMS_MARKUP_RATE);
+  return {
+    segments,
+    rawCost,
+    markup,
+    billedCost: roundCurrency(rawCost + markup),
+    markupRate: TWILIO_SMS_MARKUP_RATE,
+    costPerSegment: costPerSegmentUsd,
+  };
 }
 
 export interface TwilioDeliveryResult {

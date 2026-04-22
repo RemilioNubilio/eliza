@@ -648,6 +648,7 @@ export function useChatCallbacks(deps: UseChatCallbacksDeps) {
   const send = useChatSend({
     t,
     uiLanguage,
+    tab,
     chatMode,
     conversations,
     activeConversationId,
@@ -759,6 +760,31 @@ export function useChatCallbacks(deps: UseChatCallbacksDeps) {
       const previousMessages = conversationMessagesRef.current;
       const previousCutoffTs = companionMessageCutoffTs;
 
+      if (!title && previousConversationId) {
+        const hasUserMessage = previousMessages.some(
+          (message) => message.role === "user",
+        );
+        if (!hasUserMessage) {
+          resetConversationDraftState();
+          void client
+            .cleanupEmptyConversations({ keepId: previousConversationId })
+            .then((result) => {
+              if (result.deleted.length === 0) return;
+              const deletedSet = new Set(result.deleted);
+              setConversations((prev) =>
+                prev.filter((conversation) => !deletedSet.has(conversation.id)),
+              );
+              setUnreadConversations((prev) => {
+                const next = new Set(prev);
+                for (const id of deletedSet) next.delete(id);
+                return next;
+              });
+            })
+            .catch(() => {});
+          return;
+        }
+      }
+
       send.interruptActiveChatPipeline();
       resetConversationDraftState();
 
@@ -816,6 +842,21 @@ export function useChatCallbacks(deps: UseChatCallbacksDeps) {
           type: "active-conversation",
           conversationId: conversation.id,
         });
+        void client
+          .cleanupEmptyConversations({ keepId: conversation.id })
+          .then((result) => {
+            if (result.deleted.length === 0) return;
+            const deletedSet = new Set(result.deleted);
+            setConversations((prev) =>
+              prev.filter((existing) => !deletedSet.has(existing.id)),
+            );
+            setUnreadConversations((prev) => {
+              const next = new Set(prev);
+              for (const id of deletedSet) next.delete(id);
+              return next;
+            });
+          })
+          .catch(() => {});
       } catch {
         setActiveConversationId(previousConversationId);
         activeConversationIdRef.current = previousConversationId;
@@ -844,6 +885,7 @@ export function useChatCallbacks(deps: UseChatCallbacksDeps) {
       setCompanionMessageCutoffTs,
       setConversationMessages,
       setConversations,
+      setUnreadConversations,
     ],
   );
 

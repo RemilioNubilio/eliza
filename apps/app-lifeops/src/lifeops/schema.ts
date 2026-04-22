@@ -1154,6 +1154,8 @@ export const lifeOpsSchema = {
   lifeBrowserTabs,
   lifeBrowserPageContexts,
   lifeEscalationStates,
+  lifeIntents,
+  lifeCheckinReports,
   lifeRelationships,
   lifeRelationshipInteractions,
   lifeFollowUps,
@@ -1172,7 +1174,5 @@ export const lifeOpsSchema = {
   lifeSchedulingProposals,
   lifeDossiers,
   lifeBlockRules,
-  lifeIntents,
-  lifeCheckinReports,
   lifeopsFeaturesTable,
 } as const;

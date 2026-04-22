@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SecretInfo } from "../../api";
 import { client } from "../../api";
 import { useApp } from "../../state";
+import type { TranslateFn } from "../../types";
 
 /* ── Constants ──────────────────────────────────────────────────────── */
 
@@ -40,10 +41,8 @@ type GroupedSecrets = {
   secrets: SecretInfo[];
 };
 
-const fallbackTranslate = (
-  key: string,
-  vars?: { defaultValue?: string },
-): string => vars?.defaultValue ?? key;
+const fallbackTranslate: TranslateFn = (key, vars) =>
+  typeof vars?.defaultValue === "string" ? vars.defaultValue : key;
 
 function groupSecretsByCategory(secrets: SecretInfo[]): GroupedSecrets[] {
   const grouped = new Map<string, SecretInfo[]>();

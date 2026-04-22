@@ -8,9 +8,9 @@ import type {
   LifeOpsWorkflowRecord,
   LifeOpsWorkflowRun,
   UpdateLifeOpsWorkflowRequest,
-} from "@elizaos/shared/contracts/lifeops";
-import { LIFEOPS_WORKFLOW_STATUSES } from "@elizaos/shared/contracts/lifeops";
-import { computeNextCronRunAtMs } from "@elizaos/agent/triggers";
+} from "@elizaos/app-lifeops/contracts";
+import { LIFEOPS_WORKFLOW_STATUSES } from "@elizaos/app-lifeops/contracts";
+import { computeNextCronRunAtMs } from "@elizaos/agent/triggers/scheduling";
 import {
   createLifeOpsWorkflowDefinition,
   createLifeOpsWorkflowRun,
@@ -36,18 +36,94 @@ import {
   requireRecord,
 } from "./service-helpers-misc.js";
 import {
-  summarizeWorkflowValue,
+  describeWorkflowValue,
   parseWorkflowSchedulerState,
 } from "./service-helpers-browser.js";
 import { addMinutes } from "./time.js";
 import type { LifeOpsWorkflowSchedulerState, ExecuteWorkflowResult } from "./service-types.js";
 import { LifeOpsServiceError } from "./service-types.js";
-import type { Constructor, LifeOpsServiceBase } from "./service-mixin-core.js";
+import type {
+  Constructor,
+  LifeOpsServiceBase,
+  MixinClass,
+} from "./service-mixin-core.js";
 
-/** @internal */
-export function withWorkflows<TBase extends Constructor<LifeOpsServiceBase>>(Base: TBase) {
-  class LifeOpsWorkflowsServiceMixin extends Base {
-    public readWorkflowSchedulerState(
+export interface LifeOpsWorkflowService {
+  listWorkflows(): Promise<LifeOpsWorkflowRecord[]>;
+  getWorkflow(workflowId: string): Promise<LifeOpsWorkflowRecord>;
+  createWorkflow(
+    request: CreateLifeOpsWorkflowRequest,
+  ): Promise<LifeOpsWorkflowRecord>;
+  updateWorkflow(
+    workflowId: string,
+    request: UpdateLifeOpsWorkflowRequest,
+  ): Promise<LifeOpsWorkflowRecord>;
+  runWorkflow(
+    workflowId: string,
+    request?: { now?: string; confirmBrowserActions?: boolean },
+  ): Promise<LifeOpsWorkflowRun>;
+}
+
+export function matchesCalendarEventEndedFilters(
+  event: LifeOpsCalendarEvent,
+  filters: LifeOpsCalendarEventEndedFilters | undefined,
+): boolean {
+  if (!filters) return true;
+  if (
+    filters.calendarIds &&
+    filters.calendarIds.length > 0 &&
+    !filters.calendarIds.includes(event.calendarId)
+  ) {
+    return false;
+  }
+  if (filters.titleIncludesAny && filters.titleIncludesAny.length > 0) {
+    const title = event.title.toLowerCase();
+    if (
+      !filters.titleIncludesAny.some((needle) =>
+        title.includes(needle.toLowerCase()),
+      )
+    ) {
+      return false;
+    }
+  }
+  if (typeof filters.minDurationMinutes === "number") {
+    const durationMinutes =
+      (Date.parse(event.endAt) - Date.parse(event.startAt)) / 60_000;
+    if (
+      !Number.isFinite(durationMinutes) ||
+      durationMinutes < filters.minDurationMinutes
+    ) {
+      return false;
+    }
+  }
+  if (
+    filters.attendeeEmailIncludesAny &&
+    filters.attendeeEmailIncludesAny.length > 0
+  ) {
+    const attendees = Array.isArray(event.attendees) ? event.attendees : [];
+    const emails = attendees
+      .map((attendee) =>
+        attendee && typeof attendee === "object" && "email" in attendee
+          ? String((attendee as { email?: unknown }).email ?? "").toLowerCase()
+          : "",
+      )
+      .filter(Boolean);
+    if (
+      !filters.attendeeEmailIncludesAny.some((needle) =>
+        emails.some((email) => email.includes(needle.toLowerCase())),
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function withWorkflows<TBase extends Constructor<LifeOpsServiceBase>>(
+  Base: TBase,
+): MixinClass<TBase, LifeOpsWorkflowService> {
+  return class extends Base {
+    protected readWorkflowSchedulerState(
       workflow: LifeOpsWorkflowDefinition,
     ): LifeOpsWorkflowSchedulerState | null {
       return parseWorkflowSchedulerState(
@@ -574,7 +650,7 @@ export function withWorkflows<TBase extends Constructor<LifeOpsServiceBase>>(Bas
               (step.sourceKey ? outputs[step.sourceKey] : steps.at(-1)?.value) ??
               null;
             value = {
-              text: summarizeWorkflowValue(sourceValue, step.prompt),
+              text: describeWorkflowValue(sourceValue, step.prompt),
             };
           } else {
             if (!definition.permissionPolicy.allowBrowserActions) {
@@ -736,64 +812,5 @@ export function withWorkflows<TBase extends Constructor<LifeOpsServiceBase>>(Bas
       }
       return result.run;
     }
-  }
-
-  return LifeOpsWorkflowsServiceMixin;
-}
-
-export function matchesCalendarEventEndedFilters(
-  event: LifeOpsCalendarEvent,
-  filters: LifeOpsCalendarEventEndedFilters | undefined,
-): boolean {
-  if (!filters) {
-    return true;
-  }
-  if (filters.calendarIds && filters.calendarIds.length > 0) {
-    if (!filters.calendarIds.includes(event.calendarId)) {
-      return false;
-    }
-  }
-  if (filters.titleIncludesAny && filters.titleIncludesAny.length > 0) {
-    const title = (event.title ?? "").toLowerCase();
-    const matched = filters.titleIncludesAny.some((needle) =>
-      title.includes(needle.toLowerCase()),
-    );
-    if (!matched) {
-      return false;
-    }
-  }
-  if (typeof filters.minDurationMinutes === "number") {
-    const startMs = Date.parse(event.startAt);
-    const endMs = Date.parse(event.endAt);
-    if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
-      const minutes = (endMs - startMs) / 60_000;
-      if (minutes < filters.minDurationMinutes) {
-        return false;
-      }
-    }
-  }
-  if (
-    filters.attendeeEmailIncludesAny &&
-    filters.attendeeEmailIncludesAny.length > 0
-  ) {
-    const attendees = Array.isArray(event.attendees) ? event.attendees : [];
-    const matched = attendees.some((attendee) => {
-      const email =
-        typeof attendee === "object" && attendee !== null
-          ? String(
-              (attendee as { email?: unknown }).email ?? "",
-            ).toLowerCase()
-          : "";
-      if (!email) {
-        return false;
-      }
-      return filters.attendeeEmailIncludesAny!.some((needle) =>
-        email.includes(needle.toLowerCase()),
-      );
-    });
-    if (!matched) {
-      return false;
-    }
-  }
-  return true;
+  } as MixinClass<TBase, LifeOpsWorkflowService>;
 }

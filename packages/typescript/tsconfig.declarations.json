@@ -4,16 +4,17 @@
 		"outDir": "./dist",
 		"rootDir": "./src",
 		"moduleResolution": "bundler",
-		"ignoreDeprecations": "5.0",
-		"types": ["node", "bun-types"],
+		"ignoreDeprecations": "6.0",
+		"baseUrl": "./src",
+		"types": ["node", "bun"],
 		"noEmit": false,
 		"emitDeclarationOnly": true,
 		"composite": false,
 		"incremental": false,
 		"skipLibCheck": true,
 		"paths": {
-			"@elizaos/core": ["./index.node.ts"],
-			"@elizaos/core/*": ["./*"],
+			"@elizaos/core": ["./src/index.node.ts"],
+			"@elizaos/core/*": ["./src/*"],
 			"@elizaos/shared": ["../../shared/src/index.ts"],
 			"@elizaos/shared/*": ["../../shared/src/*"]
 		}

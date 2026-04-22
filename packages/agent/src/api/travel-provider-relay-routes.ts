@@ -43,20 +43,16 @@
  */
 
 import type http from "node:http";
-import type { Service } from "@elizaos/core";
+import type { IAgentRuntime, Service } from "@elizaos/core";
 import { normalizeCloudSiteUrl } from "../cloud/base-url.js";
 import { validateCloudBaseUrl } from "../cloud/validate-url.js";
 import type { CloudProxyConfigLike } from "../types/config-like.js";
 import { sendJson, sendJsonError } from "./http-helpers.js";
 import { resolveCloudApiKey } from "./wallet-rpc.js";
 
-interface TravelProviderRelayRuntime {
-  getService<TService = unknown>(serviceType: string): TService | null;
-}
-
 export interface TravelProviderRelayRouteState {
   config: CloudProxyConfigLike;
-  runtime?: TravelProviderRelayRuntime | null;
+  runtime?: IAgentRuntime | null;
 }
 
 const PROXY_TIMEOUT_MS = 30_000;
@@ -78,7 +74,9 @@ function normalizeCloudApiKey(value: string | null | undefined): string | null {
   return trimmed;
 }
 
-function resolveProxyApiKey(state: TravelProviderRelayRouteState): string | null {
+function resolveProxyApiKey(
+  state: TravelProviderRelayRouteState,
+): string | null {
   const cloudAuth = state.runtime
     ? state.runtime.getService<Service & CloudAuthApiKeyService>("CLOUD_AUTH")
     : null;
@@ -175,7 +173,8 @@ function matchRoute(method: string, pathname: string): boolean {
     return false;
   }
   return TRAVEL_PROVIDER_RELAY_ROUTES.some(
-    (route) => route.method === method && route.pattern.test(parsed.providerPath),
+    (route) =>
+      route.method === method && route.pattern.test(parsed.providerPath),
   );
 }
 

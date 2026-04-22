@@ -519,7 +519,6 @@ export function analyzeMessages(
       : [];
   const windowStart = currentTime.getTime() - windowDays * 24 * 60 * 60 * 1000;
 
-  // Filter to owner messages within window
   const ownerMessages = messages.filter(
     (m) =>
       m.entityId === ownerEntityId &&
@@ -535,7 +534,6 @@ export function analyzeMessages(
     .map((signal) => parseHealthSnapshot(signal))
     .filter((snapshot): snapshot is HealthSnapshot => snapshot !== null);
 
-  // Group by platform
   const platformMap = new Map<
     string,
     {
@@ -582,7 +580,6 @@ export function analyzeMessages(
     aggregateBuckets[bucket]++;
   }
 
-  // Build sorted platform list
   const platforms: PlatformActivity[] = Array.from(platformMap.entries())
     .map(([source, data]) => ({
       source,
@@ -593,7 +590,6 @@ export function analyzeMessages(
     }))
     .sort((a, b) => b.messageCount - a.messageCount);
 
-  // Derive typical active hours from aggregate histogram
   const totalMessages = ownerMessages.length;
   const activityPointCount = totalMessages + activeSignals.length;
   const threshold =
@@ -606,9 +602,9 @@ export function analyzeMessages(
 
   // Walk buckets in chronological clock order so LATE_NIGHT (00:00–05:00) is
   // treated as the earliest part of the day, not the latest. ALL_TIME_BUCKETS
-  // lists LATE_NIGHT last for legacy reasons; iterating in that order would
-  // make a single 3 AM message overwrite typicalLastActiveHour to 3, which in
-  // turn lands GN scheduling in the past and causes it to spam every tick.
+  // lists LATE_NIGHT last; iterating in that order would make a single 3 AM
+  // message overwrite typicalLastActiveHour to 3, landing GN scheduling in
+  // the past and causing it to spam every tick.
   for (const bucket of CLOCK_ORDERED_TIME_BUCKETS) {
     if (aggregateBuckets[bucket] >= threshold) {
       const midHour = bucketMidpointHour(bucket);
@@ -672,7 +668,6 @@ export function analyzeMessages(
       .filter((snapshot) => !snapshot.isSleeping)
       .sort((left, right) => right.observedAt - left.observedAt)[0] ?? null;
 
-  // Current state
   const latestInteraction = resolveLatestInteractionSnapshot(
     messages,
     ownerEntityId,

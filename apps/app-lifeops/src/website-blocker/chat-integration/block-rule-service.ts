@@ -1,12 +1,13 @@
 import crypto from "node:crypto";
-import type { IAgentRuntime } from "@elizaos/core";
-import { logger } from "@elizaos/core";
+import type {
+  ChannelType,
+  IAgentRuntime,
+  Memory,
+  UUID,
+} from "@elizaos/core";
+import { createUniqueUuid, logger, stringToUuid } from "@elizaos/core";
+import { blockWebsitesAction } from "../../actions/website-blocker.js";
 import { executeRawSql, sqlQuote, sqlText } from "../../lifeops/sql.js";
-import {
-  startSelfControlBlock,
-  stopSelfControlBlock,
-} from "../../website-blocker/engine.ts";
-import { syncWebsiteBlockerExpiryTask } from "../../website-blocker/service.ts";
 import {
   BLOCK_RULES_TABLE,
   type BlockRule,
@@ -79,7 +80,71 @@ function assertCreateInput(input: CreateBlockRuleInput): void {
   }
 }
 
-function computeDurationMinutesForCreate(
+function makeSyntheticMessage(
+  runtime: IAgentRuntime,
+  websites: readonly string[],
+): Memory {
+  const roomId = stringToUuid(`block-rule-service-room-${String(runtime.agentId)}`);
+  return {
+    id: createUniqueUuid(runtime, `block-rule-${Date.now()}`),
+    entityId: runtime.agentId as UUID,
+    agentId: runtime.agentId as UUID,
+    roomId,
+    content: {
+      text: `Block ${websites.join(", ")}.`,
+      source: "agent",
+    },
+  } as Memory;
+}
+
+async function ensureSyntheticMessageContext(
+  runtime: IAgentRuntime,
+  message: Memory,
+): Promise<void> {
+  if (
+    typeof runtime.ensureWorldExists !== "function" ||
+    typeof runtime.ensureConnection !== "function" ||
+    typeof runtime.ensureParticipantInRoom !== "function"
+  ) {
+    return;
+  }
+
+  const worldId = stringToUuid(`block-rule-service-world-${String(runtime.agentId)}`);
+  const metadata = {
+    ownership: {
+      ownerId: runtime.agentId,
+    },
+    roles: {
+      [runtime.agentId]: "OWNER",
+    },
+  } as const;
+
+  await runtime.ensureWorldExists({
+    id: worldId,
+    name: "Block Rule Service",
+    agentId: runtime.agentId,
+    messageServerId: worldId,
+    metadata,
+  } as Parameters<typeof runtime.ensureWorldExists>[0]);
+
+  await runtime.ensureConnection({
+    entityId: runtime.agentId,
+    roomId: message.roomId,
+    worldId,
+    worldName: "Block Rule Service",
+    userName: "BlockRuleWriter",
+    name: "BlockRuleWriter",
+    source: "agent",
+    channelId: message.roomId,
+    type: "DM" as ChannelType,
+    messageServerId: worldId,
+    metadata,
+  } as Parameters<typeof runtime.ensureConnection>[0]);
+
+  await runtime.ensureParticipantInRoom(runtime.agentId, message.roomId);
+}
+
+function computeHandlerOptionsForCreate(
   input: CreateBlockRuleInput,
 ): number | null {
   if (input.gateType === "fixed_duration") {
@@ -114,7 +179,7 @@ export class BlockRuleWriter {
          ${sqlQuote(id)},
          ${sqlQuote(agentId)},
          ${sqlQuote(input.profile)},
-         ${sqlJsonArray(input.websites)}::jsonb,
+         ${sqlJsonArray(input.websites)},
          ${sqlQuote(input.gateType)},
          ${sqlText(input.gateTodoId ?? null)},
          ${sqlBigint(input.gateUntilMs ?? null)},
@@ -127,37 +192,31 @@ export class BlockRuleWriter {
        )`,
     );
 
-    const durationMinutes = computeDurationMinutesForCreate(input);
-    const activationResult = await startSelfControlBlock({
-      websites: [...input.websites],
-      durationMinutes,
-      scheduledByAgentId: agentId,
-    });
+    const message = makeSyntheticMessage(this.runtime, input.websites);
+    await ensureSyntheticMessageContext(this.runtime, message);
+    const durationMinutes = computeHandlerOptionsForCreate(input);
+    const result = await blockWebsitesAction.handler(
+      this.runtime,
+      message,
+      undefined,
+      {
+        parameters: {
+          websites: input.websites,
+          durationMinutes,
+          confirmed: true,
+        },
+      },
+    );
 
-    if (activationResult.success === false) {
+    if (result?.success === false) {
       // The rule is the source of truth. Activation failures
       // (missing admin permission, unsupported platform, no helper binary)
       // are logged but do not tear down the rule — the reconciler keeps
       // the lifecycle and a retry on rule creation will re-attempt
       // activation.
       logger.warn(
-        `[BlockRuleWriter] SelfControl activation did not complete for rule ${id}: ${activationResult.error}`,
+        `[BlockRuleWriter] SelfControl activation did not complete for rule ${id}: ${result.text ?? "unknown error"}`,
       );
-    } else if (durationMinutes !== null) {
-      try {
-        const taskId = await syncWebsiteBlockerExpiryTask(this.runtime);
-        if (!taskId) {
-          await stopSelfControlBlock();
-          logger.warn(
-            `[BlockRuleWriter] SelfControl activation for rule ${id} rolled back because no automatic unblock task could be scheduled`,
-          );
-        }
-      } catch (error) {
-        await stopSelfControlBlock();
-        logger.warn(
-          `[BlockRuleWriter] SelfControl activation for rule ${id} rolled back because the automatic unblock task failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
     }
 
     logger.info(

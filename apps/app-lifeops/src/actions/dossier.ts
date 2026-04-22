@@ -7,7 +7,7 @@ import type {
   Memory,
   State,
 } from "@elizaos/core";
-import { hasAdminAccess } from "@elizaos/agent/security";
+import { hasAdminAccess } from "@elizaos/agent";
 import { LifeOpsService } from "../lifeops/service.js";
 
 const ACTION_NAME = "DOSSIER";
@@ -47,6 +47,11 @@ export const dossierAction: Action & {
   name: ACTION_NAME,
   similes: [
     "GENERATE_DOSSIER",
+    "LOOKUP_DOSSIER",
+    "FETCH_DOSSIER",
+    "GET_DOSSIER",
+    "RETRIEVE_DOSSIER",
+    "DOSSIER_LOOKUP",
     "PREMEETING_BRIEFING",
     "MEETING_BRIEFING",
     "PREPARE_FOR_MEETING",

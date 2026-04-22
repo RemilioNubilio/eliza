@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { runPluginMigrations, type IAgentRuntime } from "@elizaos/core";
+import type { IAgentRuntime } from "@elizaos/core";
 import type {
   LifeOpsActivitySignal,
   LifeOpsAuditEvent,
@@ -16,42 +16,38 @@ import type {
   LifeOpsCrossChannelDraft,
   LifeOpsDossier,
   LifeOpsFollowUp,
-  LifeOpsMessageChannel,
-  LifeOpsRelationship,
-  LifeOpsRelationshipInteraction,
-  LifeOpsScheduleInsight,
-  LifeOpsScheduleMealInsight,
-  LifeOpsScreenTimeDaily,
-  LifeOpsScreenTimeSession,
   LifeOpsGmailMessageSummary,
   LifeOpsGoalDefinition,
   LifeOpsGoalLink,
   LifeOpsHealthSignal,
+  LifeOpsMessageChannel,
+  LifeOpsNegotiationState,
   LifeOpsOccurrence,
   LifeOpsOccurrenceView,
+  LifeOpsProposalProposer,
+  LifeOpsProposalStatus,
+  LifeOpsRelationship,
+  LifeOpsRelationshipInteraction,
   LifeOpsReminderAttempt,
   LifeOpsReminderPlan,
+  LifeOpsScheduleInsight,
+  LifeOpsScheduleMealInsight,
+  LifeOpsSchedulingNegotiation,
+  LifeOpsSchedulingProposal,
+  LifeOpsScreenTimeDaily,
+  LifeOpsScreenTimeSession,
   LifeOpsTaskDefinition,
   LifeOpsWorkflowDefinition,
   LifeOpsWorkflowRun,
-  LifeOpsXDm,
-  LifeOpsXFeedItem,
-  LifeOpsXFeedType,
-  LifeOpsXSyncState,
-  LifeOpsSchedulingNegotiation,
-  LifeOpsSchedulingProposal,
-  LifeOpsNegotiationState,
-  LifeOpsProposalStatus,
-  LifeOpsProposalProposer,
-} from "@elizaos/shared/contracts/lifeops";
+} from "@elizaos/app-lifeops/contracts";
 import {
   executeRawSql,
   parseJsonArray,
   parseJsonRecord,
   sqlBoolean,
   sqlInteger,
-  sqlNumber,
   sqlJson,
+  sqlNumber,
   sqlQuote,
   sqlText,
   toBoolean,
@@ -60,18 +56,26 @@ import {
 } from "./sql.js";
 import type {
   LifeOpsSubscriptionAudit,
-  LifeOpsSubscriptionCandidate,
   LifeOpsSubscriptionCancellation,
+  LifeOpsSubscriptionCandidate,
 } from "./subscriptions-types.js";
-import type {
-  LifeOpsScheduleMergedState,
-  LifeOpsScheduleObservation,
-} from "./schedule-sync-contracts.js";
 import type {
   EmailUnsubscribeMethod,
   EmailUnsubscribeRecord,
   EmailUnsubscribeStatus,
 } from "./email-unsubscribe-types.js";
+import type {
+  LifeOpsScheduleMergedState,
+  LifeOpsScheduleObservation,
+} from "./schedule-sync-contracts.js";
+import type {
+  LifeOpsXDm,
+  LifeOpsXFeedItem,
+  LifeOpsXFeedType,
+  LifeOpsXSyncState,
+} from "@elizaos/shared/contracts/lifeops-extensions";
+import { lifeOpsSchema } from "./schema.js";
+import { refreshLifeOpsRelativeTime } from "./relative-time.js";
 
 type BrowserCompanionCredential = {
   companion: LifeOpsBrowserCompanionStatus;
@@ -344,7 +348,9 @@ function parseRelationship(row: Record<string, unknown>): LifeOpsRelationship {
     notes: toText(row.notes, ""),
     tags: parseJsonArray(row.tags_json) as string[],
     relationshipType: toText(row.relationship_type),
-    lastContactedAt: row.last_contacted_at ? toText(row.last_contacted_at) : null,
+    lastContactedAt: row.last_contacted_at
+      ? toText(row.last_contacted_at)
+      : null,
     metadata: parseJsonRecord(row.metadata_json),
     createdAt: toText(row.created_at),
     updatedAt: toText(row.updated_at),
@@ -464,10 +470,7 @@ function parseSubscriptionAudit(
   return {
     id: toText(row.id),
     agentId: toText(row.agent_id),
-    source: toText(
-      row.source,
-      "gmail",
-    ) as LifeOpsSubscriptionAudit["source"],
+    source: toText(row.source, "gmail") as LifeOpsSubscriptionAudit["source"],
     queryWindowDays: toNumber(row.query_window_days, 180),
     status: toText(
       row.status,
@@ -542,9 +545,7 @@ function parseSubscriptionCancellation(
     browserSessionId: row.browser_session_id
       ? toText(row.browser_session_id)
       : null,
-    evidenceSummary: row.evidence_summary
-      ? toText(row.evidence_summary)
-      : null,
+    evidenceSummary: row.evidence_summary ? toText(row.evidence_summary) : null,
     artifactCount: toNumber(row.artifact_count, 0),
     managementUrl: row.management_url ? toText(row.management_url) : null,
     error: row.error ? toText(row.error) : null,
@@ -565,10 +566,7 @@ function parseEmailUnsubscribe(
     senderDisplay: toText(row.sender_display),
     senderDomain: row.sender_domain ? toText(row.sender_domain) : null,
     listId: row.list_id ? toText(row.list_id) : null,
-    method: toText(
-      row.method,
-      "manual_only",
-    ) as EmailUnsubscribeMethod,
+    method: toText(row.method, "manual_only") as EmailUnsubscribeMethod,
     status: toText(row.status, "failed") as EmailUnsubscribeStatus,
     httpStatusCode:
       row.http_status_code === null || row.http_status_code === undefined
@@ -1116,7 +1114,6 @@ function parseEscalationStateRow(
   };
 }
 
-
 function parseXDm(row: Record<string, unknown>): LifeOpsXDm {
   return {
     id: toText(row.id),
@@ -1219,7 +1216,9 @@ function parseScheduleObservation(
       ? (toText(row.phase) as LifeOpsScheduleObservationRecord["phase"])
       : null,
     mealLabel: row.meal_label
-      ? (toText(row.meal_label) as LifeOpsScheduleObservationRecord["mealLabel"])
+      ? (toText(
+          row.meal_label,
+        ) as LifeOpsScheduleObservationRecord["mealLabel"])
       : null,
     confidence: toNumber(row.confidence, 0),
     metadata: parseJsonRecord(row.metadata_json),
@@ -1231,72 +1230,77 @@ function parseScheduleObservation(
 function parseScheduleMergedState(
   row: Record<string, unknown>,
 ): LifeOpsScheduleMergedStateRecord {
-  return {
-    id: toText(row.id),
-    agentId: toText(row.agent_id),
-    scope: toText(row.scope) as LifeOpsScheduleMergedStateRecord["scope"],
-    mergedAt: toText(row.merged_at),
-    effectiveDayKey: toText(row.effective_day_key),
-    localDate: toText(row.local_date),
-    timezone: toText(row.timezone, "UTC"),
-    inferredAt: toText(row.inferred_at),
-    phase: toText(row.phase) as LifeOpsScheduleMergedStateRecord["phase"],
-    sleepStatus: toText(
-      row.sleep_status,
-    ) as LifeOpsScheduleMergedStateRecord["sleepStatus"],
-    isProbablySleeping: toBoolean(row.is_probably_sleeping),
-    sleepConfidence: toNumber(row.sleep_confidence, 0),
-    currentSleepStartedAt: row.current_sleep_started_at
-      ? toText(row.current_sleep_started_at)
-      : null,
-    lastSleepStartedAt: row.last_sleep_started_at
-      ? toText(row.last_sleep_started_at)
-      : null,
-    lastSleepEndedAt: row.last_sleep_ended_at
-      ? toText(row.last_sleep_ended_at)
-      : null,
-    lastSleepDurationMinutes:
-      row.last_sleep_duration_minutes !== null &&
-      row.last_sleep_duration_minutes !== undefined &&
-      row.last_sleep_duration_minutes !== ""
-      ? toNumber(row.last_sleep_duration_minutes, 0)
-      : null,
-    typicalWakeHour:
-      row.typical_wake_hour !== null &&
-      row.typical_wake_hour !== undefined &&
-      row.typical_wake_hour !== ""
-      ? toNumber(row.typical_wake_hour, 0)
-      : null,
-    typicalSleepHour:
-      row.typical_sleep_hour !== null &&
-      row.typical_sleep_hour !== undefined &&
-      row.typical_sleep_hour !== ""
-      ? toNumber(row.typical_sleep_hour, 0)
-      : null,
-    wakeAt: row.wake_at ? toText(row.wake_at) : null,
-    firstActiveAt: row.first_active_at ? toText(row.first_active_at) : null,
-    lastActiveAt: row.last_active_at ? toText(row.last_active_at) : null,
-    meals: parseJsonArray<LifeOpsScheduleMealInsight>(row.meals_json),
-    lastMealAt: row.last_meal_at ? toText(row.last_meal_at) : null,
-    nextMealLabel: row.next_meal_label
-      ? (toText(row.next_meal_label) as LifeOpsScheduleMergedStateRecord["nextMealLabel"])
-      : null,
-    nextMealWindowStartAt: row.next_meal_window_start_at
-      ? toText(row.next_meal_window_start_at)
-      : null,
-    nextMealWindowEndAt: row.next_meal_window_end_at
-      ? toText(row.next_meal_window_end_at)
-      : null,
-    nextMealConfidence: toNumber(row.next_meal_confidence, 0),
-    observationCount: toNumber(row.observation_count, 0),
-    deviceCount: toNumber(row.device_count, 0),
-    contributingDeviceKinds: parseJsonArray<
-      LifeOpsScheduleMergedStateRecord["contributingDeviceKinds"][number]
-    >(row.contributing_device_kinds_json),
-    metadata: parseJsonRecord(row.metadata_json),
-    createdAt: toText(row.created_at),
-    updatedAt: toText(row.updated_at),
-  };
+  return refreshLifeOpsRelativeTime(
+    {
+      id: toText(row.id),
+      agentId: toText(row.agent_id),
+      scope: toText(row.scope) as LifeOpsScheduleMergedStateRecord["scope"],
+      mergedAt: toText(row.merged_at),
+      effectiveDayKey: toText(row.effective_day_key),
+      localDate: toText(row.local_date),
+      timezone: toText(row.timezone, "UTC"),
+      inferredAt: toText(row.inferred_at),
+      phase: toText(row.phase) as LifeOpsScheduleMergedStateRecord["phase"],
+      sleepStatus: toText(
+        row.sleep_status,
+      ) as LifeOpsScheduleMergedStateRecord["sleepStatus"],
+      isProbablySleeping: toBoolean(row.is_probably_sleeping),
+      sleepConfidence: toNumber(row.sleep_confidence, 0),
+      currentSleepStartedAt: row.current_sleep_started_at
+        ? toText(row.current_sleep_started_at)
+        : null,
+      lastSleepStartedAt: row.last_sleep_started_at
+        ? toText(row.last_sleep_started_at)
+        : null,
+      lastSleepEndedAt: row.last_sleep_ended_at
+        ? toText(row.last_sleep_ended_at)
+        : null,
+      lastSleepDurationMinutes:
+        row.last_sleep_duration_minutes !== null &&
+        row.last_sleep_duration_minutes !== undefined &&
+        row.last_sleep_duration_minutes !== ""
+          ? toNumber(row.last_sleep_duration_minutes, 0)
+          : null,
+      typicalWakeHour:
+        row.typical_wake_hour !== null &&
+        row.typical_wake_hour !== undefined &&
+        row.typical_wake_hour !== ""
+          ? toNumber(row.typical_wake_hour, 0)
+          : null,
+      typicalSleepHour:
+        row.typical_sleep_hour !== null &&
+        row.typical_sleep_hour !== undefined &&
+        row.typical_sleep_hour !== ""
+          ? toNumber(row.typical_sleep_hour, 0)
+          : null,
+      wakeAt: row.wake_at ? toText(row.wake_at) : null,
+      firstActiveAt: row.first_active_at ? toText(row.first_active_at) : null,
+      lastActiveAt: row.last_active_at ? toText(row.last_active_at) : null,
+      meals: parseJsonArray<LifeOpsScheduleMealInsight>(row.meals_json),
+      lastMealAt: row.last_meal_at ? toText(row.last_meal_at) : null,
+      nextMealLabel: row.next_meal_label
+        ? (toText(
+            row.next_meal_label,
+          ) as LifeOpsScheduleMergedStateRecord["nextMealLabel"])
+        : null,
+      nextMealWindowStartAt: row.next_meal_window_start_at
+        ? toText(row.next_meal_window_start_at)
+        : null,
+      nextMealWindowEndAt: row.next_meal_window_end_at
+        ? toText(row.next_meal_window_end_at)
+        : null,
+      nextMealConfidence: toNumber(row.next_meal_confidence, 0),
+      observationCount: toNumber(row.observation_count, 0),
+      deviceCount: toNumber(row.device_count, 0),
+      contributingDeviceKinds: parseJsonArray<
+        LifeOpsScheduleMergedStateRecord["contributingDeviceKinds"][number]
+      >(row.contributing_device_kinds_json),
+      metadata: parseJsonRecord(row.metadata_json),
+      createdAt: toText(row.created_at),
+      updatedAt: toText(row.updated_at),
+    },
+    new Date(toText(row.inferred_at, toText(row.updated_at))),
+  );
 }
 
 function parseSchedulingNegotiation(
@@ -1371,7 +1375,8 @@ export class LifeOpsRepository {
   /**
    * Ensure the LifeOps plugin schema has been migrated for this runtime.
    * Legacy callers still use this entrypoint in tests and seed helpers, but
-   * schema ownership now lives entirely in the plugin migration system.
+   * those callers do not always construct a runtime with the LifeOps plugin
+   * registered. Run this plugin's schema directly so the contract is stable.
    */
   static async bootstrapSchema(runtime: IAgentRuntime): Promise<void> {
     const adapter = runtime.adapter;
@@ -1381,18 +1386,23 @@ export class LifeOpsRepository {
     if (typeof adapter.isReady === "function" && !(await adapter.isReady())) {
       return;
     }
-    const runtimeWithPluginMigrations = runtime as IAgentRuntime & {
-      runPluginMigrations?: () => Promise<void>;
-    };
-    if (typeof runtimeWithPluginMigrations.runPluginMigrations === "function") {
-      await runtimeWithPluginMigrations.runPluginMigrations();
-      return;
-    }
-    await runPluginMigrations(runtime);
+    await adapter.runPluginMigrations(
+      [
+        {
+          name: "@elizaos/app-lifeops",
+          schema: lifeOpsSchema,
+        },
+      ],
+      {
+        verbose: process.env.NODE_ENV !== "production",
+        force: process.env.ELIZA_ALLOW_DESTRUCTIVE_MIGRATIONS === "true",
+        dryRun: false,
+      },
+    );
+
   }
 
   async createDefinition(definition: LifeOpsTaskDefinition): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_task_definitions (
@@ -1435,7 +1445,6 @@ export class LifeOpsRepository {
   }
 
   async updateDefinition(definition: LifeOpsTaskDefinition): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `UPDATE life_task_definitions
@@ -1472,7 +1481,6 @@ export class LifeOpsRepository {
     agentId: string,
     definitionId: string,
   ): Promise<LifeOpsTaskDefinition | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -1486,7 +1494,6 @@ export class LifeOpsRepository {
   }
 
   async listDefinitions(agentId: string): Promise<LifeOpsTaskDefinition[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -1500,7 +1507,6 @@ export class LifeOpsRepository {
   async listActiveDefinitions(
     agentId: string,
   ): Promise<LifeOpsTaskDefinition[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -1513,7 +1519,6 @@ export class LifeOpsRepository {
   }
 
   async deleteDefinition(agentId: string, definitionId: string): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `DELETE FROM life_reminder_plans
@@ -1543,7 +1548,6 @@ export class LifeOpsRepository {
   }
 
   async upsertOccurrence(occurrence: LifeOpsOccurrence): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_task_occurrences (
@@ -1599,7 +1603,6 @@ export class LifeOpsRepository {
     agentId: string,
     definitionId: string,
   ): Promise<LifeOpsOccurrence[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -1615,7 +1618,6 @@ export class LifeOpsRepository {
     agentId: string,
     definitionIds: string[],
   ): Promise<LifeOpsOccurrence[]> {
-
     if (definitionIds.length === 0) {
       return [];
     }
@@ -1637,7 +1639,6 @@ export class LifeOpsRepository {
     agentId: string,
     occurrenceId: string,
   ): Promise<LifeOpsOccurrence | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -1654,7 +1655,6 @@ export class LifeOpsRepository {
     agentId: string,
     occurrenceId: string,
   ): Promise<LifeOpsOccurrenceView | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT occurrence.*,
@@ -1683,7 +1683,6 @@ export class LifeOpsRepository {
     agentId: string,
     horizonIso: string,
   ): Promise<LifeOpsOccurrenceView[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT occurrence.*,
@@ -1715,7 +1714,6 @@ export class LifeOpsRepository {
   }
 
   async updateOccurrence(occurrence: LifeOpsOccurrence): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `UPDATE life_task_occurrences
@@ -1745,7 +1743,6 @@ export class LifeOpsRepository {
     definitionId: string,
     keepOccurrenceKeys: string[],
   ): Promise<void> {
-
     const keepClause =
       keepOccurrenceKeys.length > 0
         ? `AND occurrence_key NOT IN (${keepOccurrenceKeys
@@ -1763,7 +1760,6 @@ export class LifeOpsRepository {
   }
 
   async createGoal(goal: LifeOpsGoalDefinition): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_goal_definitions (
@@ -1794,7 +1790,6 @@ export class LifeOpsRepository {
   }
 
   async updateGoal(goal: LifeOpsGoalDefinition): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `UPDATE life_goal_definitions
@@ -1821,7 +1816,6 @@ export class LifeOpsRepository {
     agentId: string,
     goalId: string,
   ): Promise<LifeOpsGoalDefinition | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -1835,7 +1829,6 @@ export class LifeOpsRepository {
   }
 
   async listGoals(agentId: string): Promise<LifeOpsGoalDefinition[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -1847,7 +1840,6 @@ export class LifeOpsRepository {
   }
 
   async deleteGoal(agentId: string, goalId: string): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `DELETE FROM life_goal_links
@@ -1870,7 +1862,6 @@ export class LifeOpsRepository {
   }
 
   async upsertGoalLink(link: LifeOpsGoalLink): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_goal_links (
@@ -1892,7 +1883,6 @@ export class LifeOpsRepository {
     linkedType: LifeOpsGoalLink["linkedType"],
     linkedId: string,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `DELETE FROM life_goal_links
@@ -1906,7 +1896,6 @@ export class LifeOpsRepository {
     agentId: string,
     goalId: string,
   ): Promise<LifeOpsGoalLink[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -1919,7 +1908,6 @@ export class LifeOpsRepository {
   }
 
   async createReminderPlan(plan: LifeOpsReminderPlan): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_reminder_plans (
@@ -1940,7 +1928,6 @@ export class LifeOpsRepository {
   }
 
   async updateReminderPlan(plan: LifeOpsReminderPlan): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `UPDATE life_reminder_plans
@@ -1954,7 +1941,6 @@ export class LifeOpsRepository {
   }
 
   async deleteReminderPlan(agentId: string, planId: string): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `DELETE FROM life_reminder_plans
@@ -1967,7 +1953,6 @@ export class LifeOpsRepository {
     agentId: string,
     planId: string,
   ): Promise<LifeOpsReminderPlan | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -1985,7 +1970,6 @@ export class LifeOpsRepository {
     ownerType: string,
     ownerIds: string[],
   ): Promise<LifeOpsReminderPlan[]> {
-
     if (ownerIds.length === 0) return [];
     const ownerList = ownerIds.map((ownerId) => sqlQuote(ownerId)).join(", ");
     const rows = await executeRawSql(
@@ -2000,7 +1984,6 @@ export class LifeOpsRepository {
   }
 
   async createAuditEvent(event: LifeOpsAuditEvent): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_audit_events (
@@ -2026,7 +2009,6 @@ export class LifeOpsRepository {
     ownerType: string,
     ownerId: string,
   ): Promise<LifeOpsAuditEvent[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -2042,7 +2024,6 @@ export class LifeOpsRepository {
   async createSubscriptionAudit(
     audit: LifeOpsSubscriptionAudit,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_subscription_audits (
@@ -2070,7 +2051,6 @@ export class LifeOpsRepository {
   async updateSubscriptionAudit(
     audit: LifeOpsSubscriptionAudit,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `UPDATE life_subscription_audits
@@ -2093,7 +2073,6 @@ export class LifeOpsRepository {
     agentId: string,
     auditId: string,
   ): Promise<LifeOpsSubscriptionAudit | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -2109,7 +2088,6 @@ export class LifeOpsRepository {
   async getLatestSubscriptionAudit(
     agentId: string,
   ): Promise<LifeOpsSubscriptionAudit | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -2125,7 +2103,6 @@ export class LifeOpsRepository {
   async createSubscriptionCandidate(
     candidate: LifeOpsSubscriptionCandidate,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_subscription_candidates (
@@ -2169,7 +2146,6 @@ export class LifeOpsRepository {
     agentId: string,
     auditId: string,
   ): Promise<LifeOpsSubscriptionCandidate[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -2185,7 +2161,6 @@ export class LifeOpsRepository {
     agentId: string,
     candidateId: string,
   ): Promise<LifeOpsSubscriptionCandidate | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -2201,7 +2176,6 @@ export class LifeOpsRepository {
   async createSubscriptionCancellation(
     cancellation: LifeOpsSubscriptionCancellation,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_subscription_cancellations (
@@ -2236,7 +2210,6 @@ export class LifeOpsRepository {
   async updateSubscriptionCancellation(
     cancellation: LifeOpsSubscriptionCancellation,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `UPDATE life_subscription_cancellations
@@ -2265,7 +2238,6 @@ export class LifeOpsRepository {
     agentId: string,
     cancellationId: string,
   ): Promise<LifeOpsSubscriptionCancellation | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -2282,7 +2254,6 @@ export class LifeOpsRepository {
     agentId: string,
     serviceSlug?: string,
   ): Promise<LifeOpsSubscriptionCancellation | null> {
-
     const serviceClause = serviceSlug
       ? `AND service_slug = ${sqlQuote(serviceSlug)}`
       : "";
@@ -2299,9 +2270,7 @@ export class LifeOpsRepository {
     return row ? parseSubscriptionCancellation(row) : null;
   }
 
-  async createEmailUnsubscribe(
-    record: EmailUnsubscribeRecord,
-  ): Promise<void> {
+  async createEmailUnsubscribe(record: EmailUnsubscribeRecord): Promise<void> {
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_email_unsubscribes (
@@ -2381,7 +2350,6 @@ export class LifeOpsRepository {
   }
 
   async createActivitySignal(signal: LifeOpsActivitySignal): Promise<void> {
-
     const metadata =
       signal.health !== null && signal.health !== undefined
         ? { ...signal.metadata, health: signal.health }
@@ -2415,7 +2383,6 @@ export class LifeOpsRepository {
       states?: LifeOpsActivitySignal["state"][] | null;
     } = {},
   ): Promise<LifeOpsActivitySignal[]> {
-
     const clauses = [`agent_id = ${sqlQuote(agentId)}`];
     if (args.sinceAt) {
       clauses.push(`observed_at >= ${sqlQuote(args.sinceAt)}`);
@@ -2440,7 +2407,6 @@ export class LifeOpsRepository {
   }
 
   async upsertChannelPolicy(policy: LifeOpsChannelPolicy): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_channel_policies (
@@ -2473,7 +2439,6 @@ export class LifeOpsRepository {
   }
 
   async listChannelPolicies(agentId: string): Promise<LifeOpsChannelPolicy[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -2489,7 +2454,6 @@ export class LifeOpsRepository {
     channelType: LifeOpsChannelPolicy["channelType"],
     channelRef: string,
   ): Promise<LifeOpsChannelPolicy | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -2506,7 +2470,6 @@ export class LifeOpsRepository {
   async upsertWebsiteAccessGrant(
     grant: LifeOpsWebsiteAccessGrant,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_website_access_grants (
@@ -2536,7 +2499,6 @@ export class LifeOpsRepository {
   async listWebsiteAccessGrants(
     agentId: string,
   ): Promise<LifeOpsWebsiteAccessGrant[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -2555,7 +2517,6 @@ export class LifeOpsRepository {
       revokedAt: string;
     },
   ): Promise<void> {
-
     const clauses = [`agent_id = ${sqlQuote(agentId)}`, "revoked_at IS NULL"];
     if (args.groupKey) {
       clauses.push(`group_key = ${sqlQuote(args.groupKey)}`);
@@ -2573,7 +2534,6 @@ export class LifeOpsRepository {
   }
 
   async upsertConnectorGrant(grant: LifeOpsConnectorGrant): Promise<void> {
-
     const identityEmail = deriveConnectorIdentityEmail(grant.identity);
     await executeRawSql(
       this.runtime,
@@ -2620,7 +2580,6 @@ export class LifeOpsRepository {
   }
 
   async listConnectorGrants(agentId: string): Promise<LifeOpsConnectorGrant[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -2637,7 +2596,6 @@ export class LifeOpsRepository {
     mode: LifeOpsConnectorGrant["mode"],
     side: LifeOpsConnectorSide = "owner",
   ): Promise<LifeOpsConnectorGrant | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -2658,7 +2616,6 @@ export class LifeOpsRepository {
     mode?: LifeOpsConnectorGrant["mode"],
     side?: LifeOpsConnectorSide,
   ): Promise<void> {
-
     const modeClause = mode ? `AND mode = ${sqlQuote(mode)}` : "";
     const sideClause = side ? `AND side = ${sqlQuote(side)}` : "";
     await executeRawSql(
@@ -2675,7 +2632,6 @@ export class LifeOpsRepository {
     event: LifeOpsCalendarEvent,
     side: LifeOpsConnectorSide = event.side,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_calendar_events (
@@ -2731,7 +2687,6 @@ export class LifeOpsRepository {
     calendarId?: string,
     side?: LifeOpsConnectorSide,
   ): Promise<void> {
-
     const calendarClause = calendarId
       ? `AND calendar_id = ${sqlQuote(calendarId)}`
       : "";
@@ -2753,7 +2708,6 @@ export class LifeOpsRepository {
     externalEventId: string,
     side?: LifeOpsConnectorSide,
   ): Promise<void> {
-
     const sideClause = side ? `AND side = ${sqlQuote(side)}` : "";
     await executeRawSql(
       this.runtime,
@@ -2775,7 +2729,6 @@ export class LifeOpsRepository {
     keepExternalIds: readonly string[],
     side: LifeOpsConnectorSide = "owner",
   ): Promise<void> {
-
     const keepClause =
       keepExternalIds.length > 0
         ? `AND external_event_id NOT IN (${keepExternalIds
@@ -2802,7 +2755,6 @@ export class LifeOpsRepository {
     timeMax?: string,
     side?: LifeOpsConnectorSide,
   ): Promise<LifeOpsCalendarEvent[]> {
-
     const timeMinClause = timeMin ? `AND end_at > ${sqlQuote(timeMin)}` : "";
     const timeMaxClause = timeMax ? `AND start_at < ${sqlQuote(timeMax)}` : "";
     const sideClause = side ? `AND side = ${sqlQuote(side)}` : "";
@@ -2860,7 +2812,6 @@ export class LifeOpsRepository {
   async upsertCalendarSyncState(
     state: LifeOpsCalendarSyncState,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_calendar_sync_states (
@@ -2891,7 +2842,6 @@ export class LifeOpsRepository {
     calendarId: string,
     side?: LifeOpsConnectorSide,
   ): Promise<LifeOpsCalendarSyncState | null> {
-
     const sideClause = side ? `AND side = ${sqlQuote(side)}` : "";
     const rows = await executeRawSql(
       this.runtime,
@@ -2913,7 +2863,6 @@ export class LifeOpsRepository {
     calendarId?: string,
     side?: LifeOpsConnectorSide,
   ): Promise<void> {
-
     const calendarClause = calendarId
       ? `AND calendar_id = ${sqlQuote(calendarId)}`
       : "";
@@ -2932,7 +2881,6 @@ export class LifeOpsRepository {
     message: LifeOpsGmailMessageSummary,
     side: LifeOpsConnectorSide = message.side,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_gmail_messages (
@@ -2996,7 +2944,6 @@ export class LifeOpsRepository {
     keepExternalIds: readonly string[],
     side?: LifeOpsConnectorSide,
   ): Promise<void> {
-
     const keepClause =
       keepExternalIds.length > 0
         ? `AND external_message_id NOT IN (${keepExternalIds
@@ -3024,7 +2971,6 @@ export class LifeOpsRepository {
     },
     side?: LifeOpsConnectorSide,
   ): Promise<LifeOpsGmailMessageSummary[]> {
-
     const DEFAULT_GMAIL_LIST_LIMIT = 200;
     const limit =
       options?.maxResults !== undefined && Number.isFinite(options.maxResults)
@@ -3059,7 +3005,6 @@ export class LifeOpsRepository {
     messageId: string,
     side?: LifeOpsConnectorSide,
   ): Promise<LifeOpsGmailMessageSummary | null> {
-
     const sideClause = side ? `AND side = ${sqlQuote(side)}` : "";
     const rows = await executeRawSql(
       this.runtime,
@@ -3080,7 +3025,6 @@ export class LifeOpsRepository {
     provider: LifeOpsConnectorGrant["provider"],
     side?: LifeOpsConnectorSide,
   ): Promise<void> {
-
     const sideClause = side ? `AND side = ${sqlQuote(side)}` : "";
     await executeRawSql(
       this.runtime,
@@ -3092,7 +3036,6 @@ export class LifeOpsRepository {
   }
 
   async upsertGmailSyncState(state: LifeOpsGmailSyncState): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_gmail_sync_states (
@@ -3120,7 +3063,6 @@ export class LifeOpsRepository {
     mailbox: string,
     side?: LifeOpsConnectorSide,
   ): Promise<LifeOpsGmailSyncState | null> {
-
     const sideClause = side ? `AND side = ${sqlQuote(side)}` : "";
     const rows = await executeRawSql(
       this.runtime,
@@ -3142,7 +3084,6 @@ export class LifeOpsRepository {
     mailbox?: string,
     side?: LifeOpsConnectorSide,
   ): Promise<void> {
-
     const mailboxClause = mailbox ? `AND mailbox = ${sqlQuote(mailbox)}` : "";
     const sideClause = side ? `AND side = ${sqlQuote(side)}` : "";
     await executeRawSql(
@@ -3156,7 +3097,6 @@ export class LifeOpsRepository {
   }
 
   async createWorkflow(definition: LifeOpsWorkflowDefinition): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_workflow_definitions (
@@ -3187,7 +3127,6 @@ export class LifeOpsRepository {
   }
 
   async updateWorkflow(definition: LifeOpsWorkflowDefinition): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `UPDATE life_workflow_definitions
@@ -3210,7 +3149,6 @@ export class LifeOpsRepository {
   }
 
   async listWorkflows(agentId: string): Promise<LifeOpsWorkflowDefinition[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3222,7 +3160,6 @@ export class LifeOpsRepository {
   }
 
   async deleteWorkflow(agentId: string, workflowId: string): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `DELETE FROM life_workflow_runs
@@ -3248,7 +3185,6 @@ export class LifeOpsRepository {
     agentId: string,
     workflowId: string,
   ): Promise<LifeOpsWorkflowDefinition | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3262,7 +3198,6 @@ export class LifeOpsRepository {
   }
 
   async createWorkflowRun(run: LifeOpsWorkflowRun): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_workflow_runs (
@@ -3285,7 +3220,6 @@ export class LifeOpsRepository {
     agentId: string,
     workflowId: string,
   ): Promise<LifeOpsWorkflowRun[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3298,7 +3232,6 @@ export class LifeOpsRepository {
   }
 
   async createReminderAttempt(attempt: LifeOpsReminderAttempt): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_reminder_attempts (
@@ -3331,7 +3264,6 @@ export class LifeOpsRepository {
       planId?: string;
     },
   ): Promise<LifeOpsReminderAttempt[]> {
-
     const ownerTypeClause = options?.ownerType
       ? `AND owner_type = ${sqlQuote(options.ownerType)}`
       : "";
@@ -3359,7 +3291,6 @@ export class LifeOpsRepository {
     outcome: string,
     metadata?: Record<string, unknown>,
   ): Promise<void> {
-
     if (metadata && Object.keys(metadata).length > 0) {
       await executeRawSql(
         this.runtime,
@@ -3379,7 +3310,6 @@ export class LifeOpsRepository {
   }
 
   async createBrowserSession(session: LifeOpsBrowserSession): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_browser_sessions (
@@ -3417,7 +3347,6 @@ export class LifeOpsRepository {
   }
 
   async updateBrowserSession(session: LifeOpsBrowserSession): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `UPDATE life_browser_sessions
@@ -3450,7 +3379,6 @@ export class LifeOpsRepository {
     agentId: string,
     sessionId: string,
   ): Promise<LifeOpsBrowserSession | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3464,7 +3392,6 @@ export class LifeOpsRepository {
   }
 
   async listBrowserSessions(agentId: string): Promise<LifeOpsBrowserSession[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3478,7 +3405,6 @@ export class LifeOpsRepository {
   async getBrowserSettings(
     agentId: string,
   ): Promise<LifeOpsBrowserSettings | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3494,7 +3420,6 @@ export class LifeOpsRepository {
     agentId: string,
     settings: LifeOpsBrowserSettings,
   ): Promise<void> {
-
     const createdAt = settings.updatedAt ?? isoNow();
     await executeRawSql(
       this.runtime,
@@ -3540,7 +3465,6 @@ export class LifeOpsRepository {
     browser: LifeOpsBrowserCompanionStatus["browser"],
     profileId: string,
   ): Promise<LifeOpsBrowserCompanionStatus | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3558,7 +3482,6 @@ export class LifeOpsRepository {
     agentId: string,
     companionId: string,
   ): Promise<BrowserCompanionCredential | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3574,7 +3497,6 @@ export class LifeOpsRepository {
   async upsertBrowserCompanion(
     companion: LifeOpsBrowserCompanionStatus,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_browser_companions (
@@ -3617,7 +3539,6 @@ export class LifeOpsRepository {
     pairedAt: string,
     updatedAt: string,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `UPDATE life_browser_companions
@@ -3636,7 +3557,6 @@ export class LifeOpsRepository {
     pendingPairingTokenHashes: string[],
     updatedAt: string,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `UPDATE life_browser_companions
@@ -3655,7 +3575,6 @@ export class LifeOpsRepository {
     pairedAt: string,
     updatedAt: string,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `UPDATE life_browser_companions
@@ -3671,7 +3590,6 @@ export class LifeOpsRepository {
   async listBrowserCompanions(
     agentId: string,
   ): Promise<LifeOpsBrowserCompanionStatus[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3683,7 +3601,6 @@ export class LifeOpsRepository {
   }
 
   async upsertBrowserTab(tab: LifeOpsBrowserTabSummary): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_browser_tabs (
@@ -3729,7 +3646,6 @@ export class LifeOpsRepository {
   }
 
   async listBrowserTabs(agentId: string): Promise<LifeOpsBrowserTabSummary[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3744,7 +3660,6 @@ export class LifeOpsRepository {
   }
 
   async deleteBrowserTabsByIds(agentId: string, ids: string[]): Promise<void> {
-
     if (ids.length === 0) return;
     const values = ids.map((id) => sqlQuote(id)).join(", ");
     await executeRawSql(
@@ -3756,7 +3671,6 @@ export class LifeOpsRepository {
   }
 
   async deleteAllBrowserTabs(agentId: string): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `DELETE FROM life_browser_tabs
@@ -3767,7 +3681,6 @@ export class LifeOpsRepository {
   async upsertBrowserPageContext(
     context: LifeOpsBrowserPageContext,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_browser_page_contexts (
@@ -3807,7 +3720,6 @@ export class LifeOpsRepository {
   async listBrowserPageContexts(
     agentId: string,
   ): Promise<LifeOpsBrowserPageContext[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3822,7 +3734,6 @@ export class LifeOpsRepository {
     agentId: string,
     ids: string[],
   ): Promise<void> {
-
     if (ids.length === 0) return;
     const values = ids.map((id) => sqlQuote(id)).join(", ");
     await executeRawSql(
@@ -3834,7 +3745,6 @@ export class LifeOpsRepository {
   }
 
   async deleteAllBrowserPageContexts(agentId: string): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `DELETE FROM life_browser_page_contexts
@@ -3846,7 +3756,6 @@ export class LifeOpsRepository {
     agentId: string,
     sessionId: string,
   ): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `DELETE FROM life_browser_sessions
@@ -3872,7 +3781,6 @@ export class LifeOpsRepository {
     resolvedAt?: string | null;
     metadata?: Record<string, unknown>;
   }): Promise<void> {
-
     const now = isoNow();
     await executeRawSql(
       this.runtime,
@@ -3912,7 +3820,6 @@ export class LifeOpsRepository {
   async getActiveEscalationState(
     agentId: string,
   ): Promise<LifeOpsEscalationStateRow | null> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3927,7 +3834,6 @@ export class LifeOpsRepository {
   }
 
   async resolveEscalationState(id: string, resolvedAt: string): Promise<void> {
-
     const now = isoNow();
     await executeRawSql(
       this.runtime,
@@ -3943,7 +3849,6 @@ export class LifeOpsRepository {
     agentId: string,
     limit = 10,
   ): Promise<LifeOpsEscalationStateRow[]> {
-
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -3956,7 +3861,6 @@ export class LifeOpsRepository {
   }
 
   async deleteAllEscalationStates(agentId: string): Promise<void> {
-
     await executeRawSql(
       this.runtime,
       `DELETE FROM life_escalation_states
@@ -4031,9 +3935,7 @@ export class LifeOpsRepository {
       clauses.push(`primary_channel = ${sqlQuote(opts.primaryChannel)}`);
     }
     const limitClause =
-      typeof opts?.limit === "number"
-        ? `LIMIT ${sqlInteger(opts.limit)}`
-        : "";
+      typeof opts?.limit === "number" ? `LIMIT ${sqlInteger(opts.limit)}` : "";
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -4073,9 +3975,7 @@ export class LifeOpsRepository {
     opts?: { limit?: number },
   ): Promise<LifeOpsRelationshipInteraction[]> {
     const limitClause =
-      typeof opts?.limit === "number"
-        ? `LIMIT ${sqlInteger(opts.limit)}`
-        : "";
+      typeof opts?.limit === "number" ? `LIMIT ${sqlInteger(opts.limit)}` : "";
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -4165,9 +4065,7 @@ export class LifeOpsRepository {
       clauses.push(`due_at <= ${sqlQuote(opts.dueOnOrBefore)}`);
     }
     const limitClause =
-      typeof opts?.limit === "number"
-        ? `LIMIT ${sqlInteger(opts.limit)}`
-        : "";
+      typeof opts?.limit === "number" ? `LIMIT ${sqlInteger(opts.limit)}` : "";
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -4459,9 +4357,7 @@ export class LifeOpsRepository {
       clauses.push(`source = ${sqlQuote(opts.source)}`);
     }
     const limitClause =
-      typeof opts?.limit === "number"
-        ? `LIMIT ${sqlInteger(opts.limit)}`
-        : "";
+      typeof opts?.limit === "number" ? `LIMIT ${sqlInteger(opts.limit)}` : "";
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -4488,9 +4384,7 @@ export class LifeOpsRepository {
       clauses.push(`source = ${sqlQuote(opts.source)}`);
     }
     const limitClause =
-      typeof opts?.limit === "number"
-        ? `LIMIT ${sqlInteger(opts.limit)}`
-        : "";
+      typeof opts?.limit === "number" ? `LIMIT ${sqlInteger(opts.limit)}` : "";
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -4657,9 +4551,7 @@ export class LifeOpsRepository {
       clauses.push(`device_id = ${sqlQuote(opts.deviceId)}`);
     }
     const limitClause =
-      typeof opts?.limit === "number"
-        ? `LIMIT ${sqlInteger(opts.limit)}`
-        : "";
+      typeof opts?.limit === "number" ? `LIMIT ${sqlInteger(opts.limit)}` : "";
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -4783,9 +4675,7 @@ export class LifeOpsRepository {
       clauses.push(`source = ${sqlQuote(opts.source)}`);
     }
     const limitClause =
-      typeof opts?.limit === "number"
-        ? `LIMIT ${sqlInteger(opts.limit)}`
-        : "";
+      typeof opts?.limit === "number" ? `LIMIT ${sqlInteger(opts.limit)}` : "";
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -4906,9 +4796,7 @@ export class LifeOpsRepository {
       clauses.push(`state = ${sqlQuote(opts.state)}`);
     }
     const limitClause =
-      typeof opts?.limit === "number"
-        ? `LIMIT ${sqlInteger(opts.limit)}`
-        : "";
+      typeof opts?.limit === "number" ? `LIMIT ${sqlInteger(opts.limit)}` : "";
     const rows = await executeRawSql(
       this.runtime,
       `SELECT *
@@ -4941,9 +4829,7 @@ export class LifeOpsRepository {
     );
   }
 
-  async upsertSchedulingProposal(
-    p: LifeOpsSchedulingProposal,
-  ): Promise<void> {
+  async upsertSchedulingProposal(p: LifeOpsSchedulingProposal): Promise<void> {
     await executeRawSql(
       this.runtime,
       `INSERT INTO life_scheduling_proposals (
@@ -5187,10 +5073,7 @@ export function createLifeOpsSubscriptionAudit(
 }
 
 export function createLifeOpsSubscriptionCandidate(
-  params: Omit<
-    LifeOpsSubscriptionCandidate,
-    "id" | "createdAt" | "updatedAt"
-  >,
+  params: Omit<LifeOpsSubscriptionCandidate, "id" | "createdAt" | "updatedAt">,
 ): LifeOpsSubscriptionCandidate {
   const timestamp = isoNow();
   return {

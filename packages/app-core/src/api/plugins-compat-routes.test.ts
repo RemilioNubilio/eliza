@@ -64,16 +64,20 @@ describe("analyzePluginStateDrift", () => {
     const report = analyzePluginStateDrift(
       [
         {
-          id: "pdf",
-          npmName: "@elizaos/plugin-pdf",
-          category: "other",
+          id: "discord",
+          npmName: "@elizaos/plugin-discord",
+          category: "connector",
           enabled: false,
           isActive: false,
         },
       ] as any[],
-      {},
       {
-        pdf: { enabled: true },
+        connectors: {
+          discord: { enabled: false },
+        },
+      },
+      {
+        discord: { enabled: true },
       },
       new Set<string>(),
     );
@@ -83,15 +87,15 @@ describe("analyzePluginStateDrift", () => {
     expect(report.plugins[0]?.drift_flags).toContain("entries_vs_allowlist");
   });
 
-  it("skips entries_vs_allowlist for connector plugins (they load from config.connectors)", () => {
+  it("skips entries_vs_allowlist when allow list is unconfigured (null)", () => {
     const report = analyzePluginStateDrift(
       [
         {
           id: "discord",
           npmName: "@elizaos/plugin-discord",
           category: "connector",
-          enabled: false,
-          isActive: false,
+          enabled: true,
+          isActive: true,
         },
       ] as any[],
       {
@@ -102,13 +106,12 @@ describe("analyzePluginStateDrift", () => {
       {
         discord: { enabled: true },
       },
-      new Set<string>(),
+      null,
     );
 
+    expect(report.summary.withDrift).toBe(0);
     expect(report.summary.byFlag.entries_vs_allowlist).toBe(0);
-    expect(report.plugins[0]?.drift_flags).not.toContain(
-      "entries_vs_allowlist",
-    );
+    expect(report.plugins[0]?.enabled_allowlist).toBeNull();
   });
 
   it("flags active_but_disabled when runtime is active but UI model disabled", () => {

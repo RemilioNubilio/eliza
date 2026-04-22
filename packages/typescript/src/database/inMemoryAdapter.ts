@@ -687,6 +687,16 @@ export class InMemoryDatabaseAdapter extends DatabaseAdapter<
 			});
 		}
 
+		// Match plugin-sql ordering: newest first, then id desc as tiebreaker.
+		// Without this, `count: N` returns the N oldest instead of the N newest,
+		// which silently diverges from plugin-sql once a room exceeds N memories.
+		all = all.slice().sort((a, b) => {
+			const ta = a.createdAt ?? 0;
+			const tb = b.createdAt ?? 0;
+			if (ta !== tb) return tb - ta;
+			return String(b.id ?? "").localeCompare(String(a.id ?? ""));
+		});
+
 		const offset = params.offset ?? 0;
 		return all.slice(
 			offset,

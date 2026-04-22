@@ -1,37 +1,37 @@
 import type { IAgentRuntime } from "@elizaos/core";
 import type {
   LifeOpsActivitySignal,
-  LifeOpsHealthSignal,
+  LifeOpsDayBoundary,
   LifeOpsScheduleInsight,
   LifeOpsScheduleMealInsight,
   LifeOpsScheduleMealLabel,
+  LifeOpsSleepCycle,
 } from "@elizaos/shared/contracts/lifeops";
 import { listActivityEvents } from "../activity-profile/activity-tracker-repo.js";
-import type { LifeOpsRepository, LifeOpsScheduleInsightRecord } from "./repository.js";
-import { getLocalDateKey, getZonedDateParts } from "./time.js";
+import type {
+  LifeOpsRepository,
+  LifeOpsScheduleInsightRecord,
+} from "./repository.js";
+import {
+  resolveLifeOpsDayBoundary,
+  resolveLifeOpsSleepCycle,
+  type LifeOpsActivityWindow,
+  type LifeOpsSleepEpisode,
+} from "./sleep-cycle.js";
+import { resolveLifeOpsRelativeTime } from "./relative-time.js";
+import { getZonedDateParts } from "./time.js";
 
 const LOOKBACK_MS = 72 * 60 * 60 * 1_000;
 const SIGNAL_ACTIVITY_PAD_MS = 3 * 60 * 1_000;
 const MERGE_ACTIVITY_GAP_MS = 5 * 60 * 1_000;
 const COMPLETED_SLEEP_GAP_MIN_MS = 3 * 60 * 60 * 1_000;
-const CURRENT_SLEEP_GAP_MIN_MS = 2 * 60 * 60 * 1_000;
-const MIN_SLEEP_CONFIDENCE = 0.45;
 const MEAL_GAP_MIN_MS = 15 * 60 * 1_000;
 const MEAL_GAP_MAX_MS = 90 * 60 * 1_000;
-
-type ActivityWindow = {
-  startMs: number;
-  endMs: number;
-  source: "app" | "website" | "signal";
-};
-
-type SleepEpisode = {
-  startMs: number;
-  endMs: number | null;
-  current: boolean;
-  confidence: number;
-  source: "health" | "activity_gap";
-};
+// An activate event with no follow-up event within this window is treated as
+// an implicit deactivate. This stops a single lingering frontmost app from
+// masking hours of system sleep — macOS does not fire NSWorkspace deactivate
+// on sleep, lock, or screen off, so we bound the window explicitly.
+const ACTIVITY_EVENT_MAX_WINDOW_MS = 20 * 60 * 1_000;
 
 type MealCandidate = {
   label: LifeOpsScheduleMealLabel;
@@ -44,7 +44,7 @@ export type LifeOpsScheduleActivityWindowInspection = {
   startAt: string;
   endAt: string;
   durationMinutes: number;
-  source: ActivityWindow["source"];
+  source: LifeOpsActivityWindow["source"];
 };
 
 export type LifeOpsScheduleSleepEpisodeInspection = {
@@ -53,13 +53,15 @@ export type LifeOpsScheduleSleepEpisodeInspection = {
   durationMinutes: number;
   current: boolean;
   confidence: number;
-  source: SleepEpisode["source"];
+  source: LifeOpsSleepEpisode["source"];
 };
 
 export type LifeOpsScheduleInspection = {
   insight: LifeOpsScheduleInsightRecord;
   windows: LifeOpsScheduleActivityWindowInspection[];
   sleepEpisodes: LifeOpsScheduleSleepEpisodeInspection[];
+  sleepCycle: LifeOpsSleepCycle;
+  dayBoundary: LifeOpsDayBoundary;
   mealCandidates: LifeOpsScheduleMealInsight[];
   counts: {
     mergedWindowCount: number;
@@ -92,12 +94,9 @@ function toDurationMinutes(startMs: number, endMs: number | null, nowMs: number)
   return Math.round(intervalDurationMs(startMs, endMs, nowMs) / 60_000);
 }
 
-function localDateKey(ms: number, timezone: string): string {
-  return getLocalDateKey(getZonedDateParts(new Date(ms), timezone));
-}
-
 function localHour(ms: number, timezone: string): number {
-  return getZonedDateParts(new Date(ms), timezone).hour;
+  const parts = getZonedDateParts(new Date(ms), timezone);
+  return parts.hour + parts.minute / 60;
 }
 
 function normalizeSleepHour(hour: number): number {
@@ -126,76 +125,38 @@ function intervalDurationMs(startMs: number, endMs: number | null, nowMs: number
   return Math.max(0, safeEndMs - startMs);
 }
 
-function resolveHealthSignal(signal: LifeOpsActivitySignal): LifeOpsHealthSignal | null {
-  if (signal.health) {
-    return signal.health;
+function firstActiveAfterWake(
+  windows: LifeOpsActivityWindow[],
+  wakeAtMs: number | null,
+): number | null {
+  if (windows.length === 0) {
+    return null;
   }
-  const metadataHealth = isRecord(signal.metadata.health)
-    ? (signal.metadata.health as unknown as LifeOpsHealthSignal)
-    : null;
-  return metadataHealth ?? null;
-}
-
-function parseHealthSleepEpisodes(
-  signals: LifeOpsActivitySignal[],
-): SleepEpisode[] {
-  const deduped = new Map<string, SleepEpisode>();
-  for (const signal of signals) {
-    const health = resolveHealthSignal(signal);
-    const sleep = health && isRecord(health.sleep) ? health.sleep : null;
-    if (!sleep) {
-      continue;
-    }
-    const asleepAt =
-      typeof sleep.asleepAt === "string" ? Date.parse(sleep.asleepAt) : Number.NaN;
-    const awakeAt =
-      typeof sleep.awakeAt === "string" ? Date.parse(sleep.awakeAt) : Number.NaN;
-    const observedAt = Date.parse(signal.observedAt);
-
-    if (sleep.isSleeping === true && Number.isFinite(asleepAt)) {
-      deduped.set(`health-current:${asleepAt}`, {
-        startMs: asleepAt,
-        endMs: null,
-        current: true,
-        confidence: 0.96,
-        source: "health",
-      });
-      continue;
-    }
-
-    if (Number.isFinite(asleepAt) && Number.isFinite(awakeAt) && awakeAt > asleepAt) {
-      deduped.set(`health:${asleepAt}:${awakeAt}`, {
-        startMs: asleepAt,
-        endMs: awakeAt,
-        current: false,
-        confidence: 0.93,
-        source: "health",
-      });
-      continue;
-    }
-
-    if (sleep.isSleeping === true && Number.isFinite(observedAt)) {
-      deduped.set(`health-observed:${observedAt}`, {
-        startMs: observedAt,
-        endMs: null,
-        current: true,
-        confidence: 0.88,
-        source: "health",
-      });
-    }
+  if (wakeAtMs === null) {
+    return windows[0]?.startMs ?? null;
   }
-  return [...deduped.values()].sort((left, right) => left.startMs - right.startMs);
+  const startedAfterWake = windows.find((window) => window.startMs >= wakeAtMs);
+  if (startedAfterWake) {
+    return startedAfterWake.startMs;
+  }
+  // A window spanning the wake time should report the wake itself as the first
+  // active moment — the window's startMs may fall inside the preceding sleep
+  // (e.g. a frontmost app that was never deactivated).
+  const spansWake = windows.find(
+    (window) => window.startMs < wakeAtMs && window.endMs > wakeAtMs,
+  );
+  return spansWake ? wakeAtMs : null;
 }
 
 function windowsFromActivityEvents(
   events: Awaited<ReturnType<typeof listActivityEvents>>,
   nowMs: number,
-): ActivityWindow[] {
+): LifeOpsActivityWindow[] {
   if (events.length === 0) {
     return [];
   }
   const timestamps = events.map((event) => Date.parse(event.observedAt));
-  const windows: ActivityWindow[] = [];
+  const windows: LifeOpsActivityWindow[] = [];
   for (let index = 0; index < events.length; index += 1) {
     const current = events[index];
     if (!current || current.eventKind !== "activate") {
@@ -205,11 +166,14 @@ function windowsFromActivityEvents(
     if (!Number.isFinite(startMs)) {
       continue;
     }
-    const nextMs =
+    const nextTimestamp = timestamps[index + 1];
+    const hasNext =
       index + 1 < timestamps.length &&
-      Number.isFinite(timestamps[index + 1] ?? Number.NaN)
-        ? (timestamps[index + 1] as number)
-        : nowMs;
+      typeof nextTimestamp === "number" &&
+      Number.isFinite(nextTimestamp);
+    const rawNextMs = hasNext ? (nextTimestamp as number) : nowMs;
+    const cap = startMs + ACTIVITY_EVENT_MAX_WINDOW_MS;
+    const nextMs = rawNextMs > cap ? cap : rawNextMs;
     if (nextMs <= startMs) {
       continue;
     }
@@ -225,8 +189,8 @@ function windowsFromActivityEvents(
 function windowsFromScreenTimeSessions(
   sessions: Awaited<ReturnType<LifeOpsRepository["listScreenTimeSessionsOverlapping"]>>,
   nowMs: number,
-): ActivityWindow[] {
-  const windows: ActivityWindow[] = [];
+): LifeOpsActivityWindow[] {
+  const windows: LifeOpsActivityWindow[] = [];
   for (const session of sessions) {
     const startMs = Date.parse(session.startAt);
     const endMs =
@@ -248,8 +212,8 @@ function windowsFromScreenTimeSessions(
 function windowsFromSignals(
   signals: LifeOpsActivitySignal[],
   nowMs: number,
-): ActivityWindow[] {
-  const windows: ActivityWindow[] = [];
+): LifeOpsActivityWindow[] {
+  const windows: LifeOpsActivityWindow[] = [];
   for (const signal of signals) {
     if (signal.state !== "active") {
       continue;
@@ -272,12 +236,12 @@ function windowsFromSignals(
   return windows;
 }
 
-function mergeActivityWindows(windows: ActivityWindow[]): ActivityWindow[] {
+function mergeActivityWindows(windows: LifeOpsActivityWindow[]): LifeOpsActivityWindow[] {
   if (windows.length === 0) {
     return [];
   }
   const sorted = [...windows].sort((left, right) => left.startMs - right.startMs);
-  const merged: ActivityWindow[] = [];
+  const merged: LifeOpsActivityWindow[] = [];
   for (const window of sorted) {
     const previous = merged[merged.length - 1];
     if (!previous) {
@@ -296,129 +260,8 @@ function mergeActivityWindows(windows: ActivityWindow[]): ActivityWindow[] {
   return merged;
 }
 
-function hasSignalNear(
-  signals: LifeOpsActivitySignal[],
-  targetMs: number,
-  windowMs: number,
-  predicate: (signal: LifeOpsActivitySignal) => boolean,
-): boolean {
-  for (const signal of signals) {
-    const observedAt = Date.parse(signal.observedAt);
-    if (!Number.isFinite(observedAt)) {
-      continue;
-    }
-    if (Math.abs(observedAt - targetMs) <= windowMs && predicate(signal)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function buildGapSleepEpisodes(args: {
-  windows: ActivityWindow[];
-  signals: LifeOpsActivitySignal[];
-  nowMs: number;
-  timezone: string;
-}): SleepEpisode[] {
-  const episodes: SleepEpisode[] = [];
-  if (args.windows.length === 0) {
-    return episodes;
-  }
-
-  for (let index = 0; index < args.windows.length; index += 1) {
-    const current = args.windows[index];
-    if (!current) {
-      continue;
-    }
-    const next = args.windows[index + 1] ?? null;
-    const gapStartMs = current.endMs;
-    const gapEndMs = next ? next.startMs : args.nowMs;
-    const gapMs = Math.max(0, gapEndMs - gapStartMs);
-    const currentGap = next === null;
-    const minDurationMs = currentGap
-      ? CURRENT_SLEEP_GAP_MIN_MS
-      : COMPLETED_SLEEP_GAP_MIN_MS;
-    if (gapMs < minDurationMs) {
-      continue;
-    }
-
-    const startHour = localHour(gapStartMs, args.timezone);
-    const endHour = localHour(gapEndMs, args.timezone);
-    const durationFactor = clamp(gapMs / (8 * 60 * 60 * 1_000), 0, 1);
-    let score = 0.3 + durationFactor * 0.35;
-
-    if (startHour >= 20 || startHour < 4) {
-      score += 0.15;
-    }
-    if (endHour >= 4 && endHour < 13) {
-      score += 0.15;
-    }
-    if (
-      hasSignalNear(args.signals, gapStartMs, 90 * 60 * 1_000, (signal) => signal.onBattery === false)
-    ) {
-      score += 0.1;
-    }
-    if (
-      hasSignalNear(
-        args.signals,
-        gapStartMs,
-        45 * 60 * 1_000,
-        (signal) =>
-          signal.state === "locked" ||
-          signal.state === "background" ||
-          signal.state === "idle" ||
-          signal.state === "sleeping",
-      )
-    ) {
-      score += 0.1;
-    }
-    if (gapMs < 4 * 60 * 60 * 1_000) {
-      score -= 0.1;
-    }
-    score = roundConfidence(score);
-    if (score < MIN_SLEEP_CONFIDENCE) {
-      continue;
-    }
-    episodes.push({
-      startMs: gapStartMs,
-      endMs: currentGap ? null : gapEndMs,
-      current: currentGap,
-      confidence: score,
-      source: "activity_gap",
-    });
-  }
-
-  return episodes;
-}
-
-function selectLatestCompletedSleep(
-  episodes: SleepEpisode[],
-  nowMs: number,
-): SleepEpisode | null {
-  return (
-    [...episodes]
-      .filter((episode) => episode.endMs !== null && episode.endMs <= nowMs)
-      .sort((left, right) => {
-        const leftEnd = left.endMs ?? 0;
-        const rightEnd = right.endMs ?? 0;
-        if (rightEnd !== leftEnd) {
-          return rightEnd - leftEnd;
-        }
-        return right.confidence - left.confidence;
-      })[0] ?? null
-  );
-}
-
-function selectCurrentSleep(episodes: SleepEpisode[]): SleepEpisode | null {
-  return (
-    [...episodes]
-      .filter((episode) => episode.current)
-      .sort((left, right) => right.confidence - left.confidence)[0] ?? null
-  );
-}
-
 function inferMealCandidates(args: {
-  windows: ActivityWindow[];
+  windows: LifeOpsActivityWindow[];
   wakeAtMs: number | null;
   timezone: string;
 }): LifeOpsScheduleMealInsight[] {
@@ -584,7 +427,7 @@ function predictNextMeal(args: {
 export function inferLifeOpsScheduleInsight(args: {
   nowMs: number;
   timezone: string;
-  windows: ActivityWindow[];
+  windows: LifeOpsActivityWindow[];
   signals: LifeOpsActivitySignal[];
 }): LifeOpsScheduleInsight {
   return analyzeLifeOpsScheduleInsight(args).insight;
@@ -593,30 +436,34 @@ export function inferLifeOpsScheduleInsight(args: {
 function analyzeLifeOpsScheduleInsight(args: {
   nowMs: number;
   timezone: string;
-  windows: ActivityWindow[];
+  windows: LifeOpsActivityWindow[];
   signals: LifeOpsActivitySignal[];
 }): {
   insight: LifeOpsScheduleInsight;
-  mergedWindows: ActivityWindow[];
-  episodes: SleepEpisode[];
+  mergedWindows: LifeOpsActivityWindow[];
+  sleepCycle: LifeOpsSleepCycle;
+  dayBoundary: LifeOpsDayBoundary;
+  sleepEpisodes: LifeOpsSleepEpisode[];
   meals: LifeOpsScheduleMealInsight[];
 } {
   const mergedWindows = mergeActivityWindows(args.windows);
-  const healthEpisodes = parseHealthSleepEpisodes(args.signals);
-  const gapEpisodes = buildGapSleepEpisodes({
-    windows: mergedWindows,
-    signals: args.signals,
+  const sleepResolution = resolveLifeOpsSleepCycle({
     nowMs: args.nowMs,
     timezone: args.timezone,
+    windows: mergedWindows,
+    signals: args.signals,
   });
-  const episodes = [...healthEpisodes, ...gapEpisodes];
-  const currentSleep = selectCurrentSleep(episodes);
-  const lastCompletedSleep = selectLatestCompletedSleep(episodes, args.nowMs);
-  const wakeAtMs = lastCompletedSleep?.endMs ?? null;
-  const firstActiveAtMs =
-    wakeAtMs !== null
-      ? (mergedWindows.find((window) => window.endMs > wakeAtMs)?.startMs ?? null)
-      : (mergedWindows[0]?.startMs ?? null);
+  const sleepCycle = sleepResolution.sleepCycle;
+  const dayBoundary = resolveLifeOpsDayBoundary({
+    nowMs: args.nowMs,
+    timezone: args.timezone,
+    sleepCycle,
+  });
+  const wakeAtMs =
+    sleepCycle.lastSleepEndedAt !== null
+      ? Date.parse(sleepCycle.lastSleepEndedAt)
+      : null;
+  const firstActiveAtMs = firstActiveAfterWake(mergedWindows, wakeAtMs);
   const lastActiveAtMs =
     mergedWindows.length > 0 ? mergedWindows[mergedWindows.length - 1]!.endMs : null;
   const meals = inferMealCandidates({
@@ -631,16 +478,16 @@ function analyzeLifeOpsScheduleInsight(args: {
     timezone: args.timezone,
   });
 
-  const candidateSleepStarts = episodes
+  const candidateSleepStarts = sleepResolution.sleepEpisodes
     .filter((episode) => intervalDurationMs(episode.startMs, episode.endMs, args.nowMs) >= COMPLETED_SLEEP_GAP_MIN_MS)
     .map((episode) => normalizeSleepHour(localHour(episode.startMs, args.timezone)));
-  const candidateWakeHours = episodes
-    .filter((episode): episode is SleepEpisode & { endMs: number } => episode.endMs !== null)
+  const candidateWakeHours = sleepResolution.sleepEpisodes
+    .filter((episode): episode is LifeOpsSleepEpisode & { endMs: number } => episode.endMs !== null)
     .map((episode) => localHour(episode.endMs, args.timezone));
   const typicalSleepHour = median(candidateSleepStarts);
 
   const phase = (() => {
-    if (currentSleep?.confidence !== undefined && currentSleep.confidence >= 0.55) {
+    if (sleepCycle.isProbablySleeping) {
       return "sleeping" as const;
     }
     if (wakeAtMs !== null && args.nowMs - wakeAtMs <= 90 * 60 * 1_000) {
@@ -662,52 +509,44 @@ function analyzeLifeOpsScheduleInsight(args: {
     return "evening" as const;
   })();
 
-  const sleepStatus = (() => {
-    if (currentSleep?.confidence !== undefined && currentSleep.confidence >= 0.55) {
-      return "sleeping_now" as const;
-    }
-    if (lastCompletedSleep?.endMs && args.nowMs - lastCompletedSleep.endMs <= 30 * 60 * 60 * 1_000) {
-      return "slept" as const;
-    }
-    if (lastCompletedSleep?.endMs && args.nowMs - lastCompletedSleep.endMs >= 20 * 60 * 60 * 1_000) {
-      return "likely_missed" as const;
-    }
-    return "unknown" as const;
-  })();
-
-  const effectiveDayKey =
-    wakeAtMs !== null
-      ? localDateKey(wakeAtMs, args.timezone)
-      : currentSleep?.startMs
-        ? localDateKey(currentSleep.startMs, args.timezone)
-        : localDateKey(args.nowMs, args.timezone);
+  const sleepStatus = sleepCycle.sleepStatus;
+  const effectiveDayKey = dayBoundary.effectiveDayKey;
+  const wakeAt = sleepCycle.lastSleepEndedAt;
+  const relativeTime = resolveLifeOpsRelativeTime({
+    nowMs: args.nowMs,
+    timezone: args.timezone,
+    dayBoundary,
+    schedule: {
+      phase,
+      isProbablySleeping: sleepCycle.isProbablySleeping,
+      sleepConfidence: sleepCycle.sleepConfidence,
+      currentSleepStartedAt: sleepCycle.currentSleepStartedAt,
+      lastSleepStartedAt: sleepCycle.lastSleepStartedAt,
+      lastSleepEndedAt: sleepCycle.lastSleepEndedAt,
+      typicalSleepHour,
+      wakeAt,
+      firstActiveAt: toIso(firstActiveAtMs),
+    },
+  });
 
   return {
     insight: {
       effectiveDayKey,
-      localDate: localDateKey(args.nowMs, args.timezone),
+      localDate: dayBoundary.localDate,
       timezone: args.timezone,
       inferredAt: new Date(args.nowMs).toISOString(),
       phase,
+      relativeTime,
       sleepStatus,
-      isProbablySleeping:
-        currentSleep?.confidence !== undefined && currentSleep.confidence >= 0.55,
-      sleepConfidence: roundConfidence(
-        currentSleep?.confidence ?? lastCompletedSleep?.confidence ?? 0,
-      ),
-      currentSleepStartedAt: toIso(currentSleep?.startMs ?? null),
-      lastSleepStartedAt: toIso((currentSleep ?? lastCompletedSleep)?.startMs ?? null),
-      lastSleepEndedAt: toIso(lastCompletedSleep?.endMs ?? null),
-      lastSleepDurationMinutes: (() => {
-        const target = currentSleep ?? lastCompletedSleep;
-        if (!target) {
-          return null;
-        }
-        return toDurationMinutes(target.startMs, target.endMs, args.nowMs);
-      })(),
+      isProbablySleeping: sleepCycle.isProbablySleeping,
+      sleepConfidence: sleepCycle.sleepConfidence,
+      currentSleepStartedAt: sleepCycle.currentSleepStartedAt,
+      lastSleepStartedAt: sleepCycle.lastSleepStartedAt,
+      lastSleepEndedAt: sleepCycle.lastSleepEndedAt,
+      lastSleepDurationMinutes: sleepCycle.lastSleepDurationMinutes,
       typicalWakeHour: median(candidateWakeHours),
       typicalSleepHour,
-      wakeAt: toIso(wakeAtMs),
+      wakeAt,
       firstActiveAt: toIso(firstActiveAtMs),
       lastActiveAt: toIso(lastActiveAtMs),
       meals,
@@ -718,7 +557,9 @@ function analyzeLifeOpsScheduleInsight(args: {
       nextMealConfidence: nextMeal.nextMealConfidence,
     },
     mergedWindows,
-    episodes,
+    sleepCycle,
+    dayBoundary,
+    sleepEpisodes: sleepResolution.sleepEpisodes,
     meals,
   };
 }
@@ -767,6 +608,9 @@ export async function inspectLifeOpsSchedule(args: {
       activitySignalCount: signals.length,
       screenTimeSessionCount: sessions.length,
       activityEventCount: activityEvents.length,
+      sleepCycle: analysis.sleepCycle,
+      dayBoundary: analysis.dayBoundary,
+      relativeTime: analysis.insight.relativeTime,
     },
     createdAt: untilAt,
     updatedAt: untilAt,
@@ -781,7 +625,7 @@ export async function inspectLifeOpsSchedule(args: {
       durationMinutes: toDurationMinutes(window.startMs, window.endMs, nowMs),
       source: window.source,
     })),
-    sleepEpisodes: analysis.episodes.map((episode) => ({
+    sleepEpisodes: analysis.sleepEpisodes.map((episode) => ({
       startAt: new Date(episode.startMs).toISOString(),
       endAt: toIso(episode.endMs),
       durationMinutes: toDurationMinutes(episode.startMs, episode.endMs, nowMs),
@@ -789,6 +633,8 @@ export async function inspectLifeOpsSchedule(args: {
       confidence: episode.confidence,
       source: episode.source,
     })),
+    sleepCycle: analysis.sleepCycle,
+    dayBoundary: analysis.dayBoundary,
     mealCandidates: analysis.meals,
     counts: {
       mergedWindowCount: analysis.mergedWindows.length,
@@ -798,6 +644,12 @@ export async function inspectLifeOpsSchedule(args: {
     },
   };
 }
+
+export const __internal = {
+  windowsFromActivityEvents,
+  firstActiveAfterWake,
+  ACTIVITY_EVENT_MAX_WINDOW_MS,
+};
 
 export async function refreshLifeOpsScheduleInsight(args: {
   runtime: IAgentRuntime;

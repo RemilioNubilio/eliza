@@ -74,6 +74,95 @@ export interface MobileSignalsSnapshot {
   metadata: Record<string, unknown>;
 }
 
+export type MobileSignalsSettingsTarget =
+  | "app"
+  | "health"
+  | "healthConnect"
+  | "screenTime"
+  | "usageAccess"
+  | "notification"
+  | "batteryOptimization"
+  | "localNetwork"
+  | "deviceSettings";
+
+export interface MobileSignalsSetupAction {
+  id:
+    | "health_permissions"
+    | "screen_time_authorization"
+    | "android_usage_access"
+    | "app_settings"
+    | "notification_settings"
+    | "battery_optimization"
+    | "local_network";
+  label: string;
+  status: "ready" | "needs-action" | "unavailable";
+  canRequest: boolean;
+  canOpenSettings: boolean;
+  settingsTarget: MobileSignalsSettingsTarget | null;
+  reason: string | null;
+}
+
+export interface MobileSignalsOpenSettingsResult {
+  opened: boolean;
+  target: MobileSignalsSettingsTarget;
+  actualTarget: MobileSignalsSettingsTarget;
+  reason: string | null;
+}
+
+export interface MobileSignalsPermissionStatus {
+  status: "granted" | "denied" | "not-determined" | "not-applicable";
+  canRequest: boolean;
+  reason?: string;
+  screenTime: MobileSignalsScreenTimeStatus;
+  setupActions: MobileSignalsSetupAction[];
+  permissions: {
+    sleep: boolean;
+    biometrics: boolean;
+  };
+}
+
+export interface MobileSignalsScreenTimeStatus {
+  supported: boolean;
+  requirements: {
+    entitlements: {
+      familyControls: string;
+      appAndWebsiteUsage: string;
+    };
+    frameworks: string[];
+    deviceActivityReportExtension: boolean;
+    deviceActivityMonitorExtension: boolean;
+    android?: {
+      usageStatsPermission: string;
+      usageAccessSettingsAction: string;
+    };
+  };
+  entitlements: {
+    familyControls: boolean;
+    appAndWebsiteUsage: boolean;
+  };
+  provisioning: {
+    satisfied: boolean;
+    inspected: "code-signature" | "not-inspectable";
+    reason: string | null;
+  };
+  authorization: {
+    status: "approved" | "denied" | "not-determined" | "unavailable";
+    canRequest: boolean;
+  };
+  reportAvailable: boolean;
+  coarseSummaryAvailable: boolean;
+  thresholdEventsAvailable: boolean;
+  rawUsageExportAvailable: false;
+  android?: {
+    usageAccessGranted: boolean;
+    packageUsageStatsPermissionDeclared: boolean;
+    canOpenUsageAccessSettings: boolean;
+    foregroundEventsAvailable: boolean;
+    totalTimeForegroundMs: number | null;
+  };
+  reason: string | null;
+}
+
 export interface MobileSignalsHealthSnapshot {
   source: "mobile_health";
   platform: "ios" | "android" | "web";
@@ -83,6 +172,7 @@ export interface MobileSignalsHealthSnapshot {
   idleTimeSeconds: number | null;
   onBattery: boolean | null;
   healthSource: "healthkit" | "health_connect";
+  screenTime: MobileSignalsScreenTimeStatus;
   permissions: {
     sleep: boolean;
     biometrics: boolean;
@@ -110,6 +200,18 @@ export interface MobileSignalsHealthSnapshot {
 export type MobileSignalsSignal =
   | MobileSignalsSnapshot
   | MobileSignalsHealthSnapshot;
+
+export interface MobileSignalsBackgroundRefreshResult {
+  scheduled: boolean;
+  identifier?: string;
+  earliestBeginInSeconds?: number;
+  reason?: string;
+}
+
+export interface MobileSignalsCancelBackgroundRefreshResult {
+  cancelled: boolean;
+  reason?: string;
+}
 
 export type AppBlockerPermissionStatus =
   | "granted"
@@ -175,24 +277,11 @@ export interface AppBlockerPluginLike extends NativePlugin {
 }
 
 export interface MobileSignalsPluginLike extends NativePlugin {
-  checkPermissions(): Promise<{
-    status: "granted" | "denied" | "not-determined" | "not-applicable";
-    canRequest: boolean;
-    reason?: string;
-    permissions: {
-      sleep: boolean;
-      biometrics: boolean;
-    };
-  }>;
-  requestPermissions(): Promise<{
-    status: "granted" | "denied" | "not-determined" | "not-applicable";
-    canRequest: boolean;
-    reason?: string;
-    permissions: {
-      sleep: boolean;
-      biometrics: boolean;
-    };
-  }>;
+  checkPermissions(): Promise<MobileSignalsPermissionStatus>;
+  requestPermissions(): Promise<MobileSignalsPermissionStatus>;
+  openSettings(options?: {
+    target?: MobileSignalsSettingsTarget;
+  }): Promise<MobileSignalsOpenSettingsResult>;
   startMonitoring(options?: { emitInitial?: boolean }): Promise<{
     enabled: boolean;
     supported: boolean;
@@ -206,6 +295,8 @@ export interface MobileSignalsPluginLike extends NativePlugin {
     snapshot: MobileSignalsSnapshot | null;
     healthSnapshot: MobileSignalsHealthSnapshot | null;
   }>;
+  scheduleBackgroundRefresh?: () => Promise<MobileSignalsBackgroundRefreshResult>;
+  cancelBackgroundRefresh?: () => Promise<MobileSignalsCancelBackgroundRefreshResult>;
   addListener(
     eventName: "signal",
     listenerFunc: (event: MobileSignalsSignal) => void,
@@ -220,6 +311,24 @@ export interface TalkModePermissionStatus {
 export interface WebsiteBlockerPermissionResult {
   status: "granted" | "denied" | "not-determined" | "not-applicable";
   canRequest: boolean;
+  reason?: string;
+}
+
+export interface AppBlockerInstalledApp {
+  packageName: string;
+  displayName: string;
+  tokenData?: string;
+}
+
+export interface AppBlockerStatusResult {
+  available: boolean;
+  active: boolean;
+  platform: string;
+  engine: "family-controls" | "usage-stats-overlay" | "none";
+  blockedCount: number;
+  blockedPackageNames: string[];
+  endsAt: string | null;
+  permissionStatus: AppBlockerPermissionResult["status"];
   reason?: string;
 }
 

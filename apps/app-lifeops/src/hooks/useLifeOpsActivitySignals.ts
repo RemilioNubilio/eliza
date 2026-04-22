@@ -1,40 +1,84 @@
-import { useEffect, useRef } from "react";
 import type {
   CaptureLifeOpsActivitySignalRequest,
   LifeOpsActivitySignal,
-} from "@elizaos/shared/contracts/lifeops";
+} from "@elizaos/app-lifeops/contracts";
 import { client } from "@elizaos/app-core/api";
 import { isApiError } from "@elizaos/app-core/api/client-types-core";
 import { isElectrobunRuntime } from "@elizaos/app-core/bridge/electrobun-runtime";
-import { APP_PAUSE_EVENT, APP_RESUME_EVENT } from "@elizaos/app-core/events";
-import { isNative } from "@elizaos/app-core/platform";
-import { loadDesktopWorkspaceSnapshot } from "@elizaos/app-core/utils/desktop-workspace";
+import { Capacitor } from "@capacitor/core";
 import {
   getMobileSignalsPlugin,
-  type MobileSignalsSnapshot,
   type MobileSignalsHealthSnapshot,
   type MobileSignalsSignal,
+  type MobileSignalsSnapshot,
 } from "@elizaos/app-core/bridge/native-plugins";
+import { loadDesktopWorkspaceSnapshot } from "@elizaos/app-core/utils/desktop-workspace";
+import {
+  APP_PAUSE_EVENT,
+  APP_RESUME_EVENT,
+} from "@elizaos/app-core/events";
+import { useEffect, useRef } from "react";
+import { dispatchLifeOpsActivitySignalsStatus } from "../events/index.js";
 
 const APP_SIGNAL_DEDUP_WINDOW_MS = 5_000;
 const RUNTIME_READY_POLL_MS = 5_000;
 const PAGE_HEARTBEAT_MS = 60_000;
 const DESKTOP_POWER_POLL_MS = 60_000;
-const MOBILE_HEALTH_POLL_MS = 30 * 60_000;
+// Health sleep data drives wake detection; five-minute polling keeps morning
+// anchors timely without running while mobile monitoring is stopped.
+const MOBILE_HEALTH_POLL_MS = 5 * 60_000;
 
 type SignalFingerprint = {
   fingerprint: string;
   sentAtMs: number;
 };
 
+interface CapacitorRuntime {
+  getPlatform?: () => string;
+  isNativePlatform?: () => boolean;
+}
+
+interface WindowWithCapacitor extends Window {
+  Capacitor?: CapacitorRuntime;
+}
+
+function getWindowCapacitor(): CapacitorRuntime | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+  return (window as WindowWithCapacitor).Capacitor;
+}
+
+function resolveCapacitorPlatform(): string {
+  const importedPlatform = Capacitor.getPlatform();
+  if (importedPlatform !== "web") {
+    return importedPlatform;
+  }
+  return getWindowCapacitor()?.getPlatform?.() ?? importedPlatform;
+}
+
+function isNativeCapacitorRuntime(): boolean {
+  return (
+    Capacitor.isNativePlatform() ||
+    getWindowCapacitor()?.isNativePlatform?.() === true ||
+    ["ios", "android"].includes(resolveCapacitorPlatform())
+  );
+}
+
 function resolveActivityPlatform(): string {
   if (isElectrobunRuntime()) {
     return "desktop_app";
   }
-  if (isNative) {
+  if (isNativeCapacitorRuntime()) {
     return "mobile_app";
   }
   return "web_app";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error && error.message.trim().length > 0
+    ? error.message.trim()
+    : String(error);
 }
 
 function fingerprintSignal(
@@ -118,6 +162,10 @@ export function useLifeOpsActivitySignals(enabled = true): void {
       error.path === "/api/lifeops/activity-signals";
 
     const reportCaptureError = (error: unknown): void => {
+      if (isRuntimeUnavailableError(error)) {
+        runtimeReadyRef.current = false;
+        return;
+      }
       if (
         isApiError(error) &&
         (error.kind === "network" ||
@@ -127,11 +175,10 @@ export function useLifeOpsActivitySignals(enabled = true): void {
       ) {
         return;
       }
-      if (isRuntimeUnavailableError(error)) {
-        runtimeReadyRef.current = false;
-        return;
-      }
-      console.warn("[lifeops] failed to capture activity signal", error);
+      dispatchLifeOpsActivitySignalsStatus({
+        status: "capture_error",
+        message: errorMessage(error),
+      });
     };
 
     const refreshRuntimeReady = async (): Promise<boolean> => {
@@ -285,7 +332,9 @@ export function useLifeOpsActivitySignals(enabled = true): void {
     };
 
     const mobileSignals =
-      isNative && !isElectrobunRuntime() ? getMobileSignalsPlugin() : null;
+      isNativeCapacitorRuntime() && !isElectrobunRuntime()
+        ? getMobileSignalsPlugin()
+        : null;
     let mobileSignalsHandle: { remove: () => Promise<void> } | null = null;
     let mobileSignalsStarted = false;
     let mobileHealthPoller: number | null = null;
@@ -300,7 +349,10 @@ export function useLifeOpsActivitySignals(enabled = true): void {
       if (snapshot.supported) {
         await sendSnapshotResult(snapshot);
       } else {
-        console.warn("[lifeops] mobile signals snapshot unavailable", reason);
+        dispatchLifeOpsActivitySignalsStatus({
+          status: "snapshot_unavailable",
+          reason,
+        });
       }
     };
 
@@ -336,6 +388,19 @@ export function useLifeOpsActivitySignals(enabled = true): void {
       mobileSignalsStarted = initial.enabled;
       await sendSnapshotResult(initial);
       await refreshMobileHealthSnapshot("start");
+      if (typeof mobileSignals.scheduleBackgroundRefresh === "function") {
+        try {
+          const result = await mobileSignals.scheduleBackgroundRefresh();
+          if (!result.scheduled && result.reason) {
+            dispatchLifeOpsActivitySignalsStatus({
+              status: "background_refresh_unavailable",
+              reason: result.reason,
+            });
+          }
+        } catch (error) {
+          reportCaptureError(error);
+        }
+      }
       mobileHealthPoller = window.setInterval(() => {
         void refreshMobileHealthSnapshot("poll").catch(reportCaptureError);
       }, MOBILE_HEALTH_POLL_MS);
@@ -355,7 +420,7 @@ export function useLifeOpsActivitySignals(enabled = true): void {
           void startMobileSignals().catch(reportCaptureError);
         }
       })
-      .catch(() => {});
+      .catch(reportCaptureError);
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     document.addEventListener(APP_RESUME_EVENT, handleResume);
@@ -373,7 +438,7 @@ export function useLifeOpsActivitySignals(enabled = true): void {
           emitCurrentState("runtime-ready");
           void startMobileSignals().catch(reportCaptureError);
         })
-        .catch(() => {});
+        .catch(reportCaptureError);
     }, RUNTIME_READY_POLL_MS);
     const pageHeartbeat = window.setInterval(() => {
       if (document.visibilityState === "visible") {

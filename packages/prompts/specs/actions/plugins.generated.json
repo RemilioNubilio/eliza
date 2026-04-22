@@ -333,12 +333,14 @@
     },
     {
       "name": "MANAGE_WINDOW",
-      "description": "Manage desktop windows through the local runtime. This includes listing visible windows, focusing or switching windows, minimizing, maximizing, restoring, closing, and parity no-op arrange/move commands.\n\n",
+      "description": "Manage desktop windows — list all visible windows, bring a window to the front, ",
       "parameters": [],
       "similes": [
         "LIST_WINDOWS",
         "FOCUS_WINDOW",
         "SWITCH_WINDOW",
+        "ARRANGE_WINDOWS",
+        "MOVE_WINDOW",
         "MINIMIZE_WINDOW",
         "MAXIMIZE_WINDOW",
         "CLOSE_WINDOW",
@@ -958,13 +960,10 @@
         "MOVE_MOUSE",
         "DRAG",
         "MOUSE_CLICK",
+        "CLICK_WITH_MODIFIERS",
         "TAKE_SCREENSHOT",
         "CAPTURE_SCREEN",
-        "SCREEN_CAPTURE",
-        "GET_SCREENSHOT",
-        "SEE_SCREEN",
-        "LOOK_AT_SCREEN",
-        "VIEW_SCREEN"
+        "SEE_SCREEN"
       ]
     },
     {

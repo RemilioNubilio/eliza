@@ -20,15 +20,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../../logger.ts";
-import { resolveStateDir } from "../../../utils/state-dir.ts";
 import type {
 	ActionResult,
 	EvaluationExample,
 	Evaluator,
 	IAgentRuntime,
-	Memory,
 } from "../../../types/index.ts";
 import { ModelType } from "../../../types/index.ts";
+import { resolveStateDir } from "../../../utils/state-dir.ts";
 
 interface TrajectoryStep {
 	timestamp: number;
@@ -391,7 +390,7 @@ export const skillRefinementEvaluator: Evaluator = {
 			const response = await runtime.useModel(ModelType.TEXT_LARGE, { prompt });
 			if (!response || typeof response !== "string") continue;
 			const draft = parseRefinementResponse(response);
-			if (!draft || !draft.refine || !draft.newBody) continue;
+			if (!draft?.refine || !draft.newBody) continue;
 			if (draft.newBody.includes("---")) {
 				logger.warn(
 					{
@@ -658,10 +657,9 @@ interface OptimizerModule {
 }
 
 async function loadOptimizerModule(): Promise<OptimizerModule | null> {
-	const dynamicImport = new Function(
-		"name",
-		"return import(name);",
-	) as (name: string) => Promise<unknown>;
+	const dynamicImport = new Function("name", "return import(name);") as (
+		name: string,
+	) => Promise<unknown>;
 	const mod = (await dynamicImport("@elizaos/app-training/optimizers").catch(
 		() => null,
 	)) as OptimizerModule | null;

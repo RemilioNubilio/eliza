@@ -2,7 +2,8 @@
  * @elizaos/plugin-computeruse
  *
  * Desktop automation plugin for elizaOS agents — screenshots, mouse/keyboard
- * control, browser CDP automation, and window management.
+ * control, browser CDP automation, terminal access, file operations, and
+ * window management.
  *
  * Deeply ported from coasty-ai/open-computer-use (Apache 2.0).
  *
@@ -20,11 +21,11 @@
  */
 
 import type { Plugin } from "@elizaos/core";
-import { useComputerAction } from "./actions/use-computer.js";
 import { browserAction } from "./actions/browser-action.js";
-import { manageWindowAction } from "./actions/manage-window.js";
 import { fileAction } from "./actions/file-action.js";
+import { manageWindowAction } from "./actions/manage-window.js";
 import { terminalAction } from "./actions/terminal-action.js";
+import { useComputerAction } from "./actions/use-computer.js";
 import { computerStateProvider } from "./providers/computer-state.js";
 import { ComputerUseService } from "./services/computer-use-service.js";
 
@@ -32,8 +33,7 @@ export const computerUsePlugin: Plugin = {
   name: "@elizaos/plugin-computeruse",
   description:
     "Desktop automation — take screenshots, control mouse and keyboard, " +
-    "automate web browsers via CDP, manage desktop windows, read/write files, " +
-    "and execute terminal commands. " +
+    "automate web browsers via CDP, manage desktop windows, read/write files, and use a local terminal. " +
     "Ported from open-computer-use (Apache 2.0).",
 
   // biome-ignore lint/suspicious/noExplicitAny: ElizaOS Plugin type expects Service[] but our class uses static start()
@@ -60,30 +60,39 @@ export const computerusePlugin = computerUsePlugin;
 
 export default computerUsePlugin;
 
+export { ComputerUseService } from "./services/computer-use-service.js";
 // Re-export types for consumers
 export type {
-  DesktopActionType,
-  DesktopActionParams,
-  BrowserActionType,
-  BrowserActionParams,
-  WindowActionType,
-  WindowActionParams,
-  ComputerActionResult,
-  BrowserActionResult,
-  WindowActionResult,
-  WindowInfo,
-  ScreenRegion,
-  ScreenSize,
-  PlatformCapabilities,
   ActionHistoryEntry,
   ApprovalMode,
   ApprovalResolution,
   ApprovalSnapshot,
-  ComputerUseConfig,
+  BrowserActionParams,
+  BrowserActionResult,
+  BrowserActionType,
+  BrowserInfo,
   BrowserState,
-  ClickableElement,
   BrowserTab,
+  ClickableElement,
+  ComputerActionResult,
+  ComputerUseConfig,
+  ComputerUseResult,
+  DesktopActionParams,
+  DesktopActionType,
+  FileActionParams,
+  FileActionResult,
+  FileActionType,
+  FileEntry,
   PendingApproval,
+  PermissionType,
+  PlatformCapabilities,
+  ScreenRegion,
+  ScreenSize,
+  TerminalActionParams,
+  TerminalActionResult,
+  TerminalActionType,
+  WindowActionParams,
+  WindowActionResult,
+  WindowActionType,
+  WindowInfo,
 } from "./types.js";
-
-export { ComputerUseService } from "./services/computer-use-service.js";

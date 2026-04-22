@@ -17,7 +17,7 @@ import {
   CORE_PLUGINS,
   OPTIONAL_CORE_PLUGINS,
 } from "../runtime/core-plugins.js";
-import type { ResolvedPlugin } from "../runtime/eliza.js";
+import type { ResolvedPlugin } from "../runtime/plugin-types.js";
 import type {
   CoreManagerLike,
   InstallProgressLike,
@@ -102,6 +102,29 @@ interface PluginEntry {
   widgets?: PluginWidgetDeclarationServer[];
 }
 
+type PluginHealthProbeResult = {
+  ok?: boolean;
+  message?: string;
+};
+
+function getPluginHealthProbe(
+  plugin: unknown,
+): (() => PluginHealthProbeResult | Promise<PluginHealthProbeResult>) | null {
+  if (!plugin || typeof plugin !== "object") {
+    return null;
+  }
+  const record = plugin as Record<string, unknown>;
+  for (const key of ["health", "healthCheck", "testConnection", "test"]) {
+    const candidate = record[key];
+    if (typeof candidate === "function") {
+      return candidate as () =>
+        | PluginHealthProbeResult
+        | Promise<PluginHealthProbeResult>;
+    }
+  }
+  return null;
+}
+
 interface SecretEntry {
   key: string;
   description: string;
@@ -123,9 +146,6 @@ interface CoreToggleDriftDiagnostic {
   enabled_compat: boolean | null;
   drift_flags: CoreToggleDriftFlag[];
 }
-
-type PluginHealthResult = { ok: boolean; message?: string };
-type PluginHealthProbe = () => Promise<PluginHealthResult>;
 
 export interface PluginRouteContext {
   req: http.IncomingMessage;
@@ -189,18 +209,6 @@ const pluginsListInFlight = new WeakMap<
   Promise<PluginEntry[]>
 >();
 
-function getPluginHealthProbe(plugin: object): PluginHealthProbe | null {
-  const testConnection = Reflect.get(plugin, "testConnection");
-  if (typeof testConnection === "function") {
-    return testConnection as PluginHealthProbe;
-  }
-
-  const healthCheck = Reflect.get(plugin, "healthCheck");
-  return typeof healthCheck === "function"
-    ? (healthCheck as PluginHealthProbe)
-    : null;
-}
-
 function readCompatEnabledFromConfig(
   config: ElizaConfig,
   pluginId: string,
@@ -212,11 +220,9 @@ function readCompatEnabledFromConfig(
     return value as Record<string, unknown>;
   };
 
-  const legacyStreaming = asRecord(
-    (config as Record<string, unknown>).streaming,
-  );
   const container =
-    asRecord(config.connectors)?.[pluginId] ?? legacyStreaming?.[pluginId];
+    asRecord(config.connectors)?.[pluginId] ??
+    asRecord(config.streaming)?.[pluginId];
   const value = asRecord(container)?.enabled;
   return typeof value === "boolean" ? value : null;
 }

@@ -65,6 +65,7 @@ declare module "./client-base" {
     clearLocalInferenceActive(): Promise<ActiveModelState>;
     uninstallLocalInferenceModel(id: string): Promise<{ removed: boolean }>;
     getLocalInferenceDeviceStatus(): Promise<DeviceBridgeStatus>;
+    getLocalInferenceProviders(): Promise<{ providers: ProviderStatus[] }>;
     getLocalInferenceAssignments(): Promise<{
       assignments: ModelAssignments;
     }>;
@@ -85,7 +86,6 @@ declare module "./client-base" {
       slot: AgentModelSlot,
       policy: RoutingPolicy | null,
     ): Promise<{ preferences: RoutingPreferences }>;
-    getLocalInferenceProviders(): Promise<{ providers: ProviderStatus[] }>;
   }
 }
 
@@ -187,6 +187,12 @@ ElizaClient.prototype.getLocalInferenceDeviceStatus = async function (
   return this.fetch("/api/local-inference/device");
 };
 
+ElizaClient.prototype.getLocalInferenceProviders = async function (
+  this: ElizaClient,
+) {
+  return this.fetch("/api/local-inference/providers");
+};
+
 ElizaClient.prototype.getLocalInferenceAssignments = async function (
   this: ElizaClient,
 ) {
@@ -240,10 +246,4 @@ ElizaClient.prototype.setLocalInferencePolicy = async function (
     method: "POST",
     body: JSON.stringify({ slot, policy }),
   });
-};
-
-ElizaClient.prototype.getLocalInferenceProviders = async function (
-  this: ElizaClient,
-) {
-  return this.fetch("/api/local-inference/providers");
 };

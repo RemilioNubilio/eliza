@@ -271,7 +271,9 @@ describe("background-job-parity: proactive worker", () => {
     });
     resetPlannerDispatchLog(runtime);
 
-    await executeProactiveTask(runtime);
+    await expect(executeProactiveTask(runtime)).rejects.toThrow(
+      /runtime database adapter unavailable/,
+    );
 
     const log = readPlannerDispatchLog(runtime);
     const dispatches = log.filter((d) => d.jobKind === "daily_brief");
@@ -288,7 +290,9 @@ describe("background-job-parity: proactive worker", () => {
     });
     resetPlannerDispatchLog(runtime);
 
-    await executeProactiveTask(runtime);
+    await expect(executeProactiveTask(runtime)).rejects.toThrow(
+      /runtime database adapter unavailable/,
+    );
 
     const log = readPlannerDispatchLog(runtime);
     const skipped = log.filter(
@@ -346,7 +350,7 @@ describe("background-job-parity: followup tracker", () => {
 
 describe("background-job-parity: lifeops scheduler", () => {
   test("executeLifeOpsSchedulerTask does NOT invoke the LLM planner with an empty snapshot", async () => {
-    // Prior behavior (LARP): this function called planJob every tick with a
+    // Prior behavior: this function called planJob every tick with a
     // hardcoded jobKind and an empty snapshot, wasting tokens for a result
     // that was never used. The call was removed. This test guards against
     // that regression.

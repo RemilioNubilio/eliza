@@ -19,7 +19,11 @@ import {
 } from "@elizaos/native-activity-tracker";
 import { insertActivityEvent } from "./activity-tracker-repo.js";
 
-export type ActivityTrackerMode = "running" | "disabled-non-darwin" | "failed";
+export type ActivityTrackerMode =
+  | "running"
+  | "disabled-config"
+  | "disabled-non-darwin"
+  | "failed";
 
 export class ActivityTrackerService extends Service {
   static override readonly serviceType = "activity_tracker";
@@ -30,6 +34,7 @@ export class ActivityTrackerService extends Service {
   private handle: ActivityCollectorHandle | null = null;
   private mode: ActivityTrackerMode = "disabled-non-darwin";
   private writeFailures = 0;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   static override async start(
     runtime: IAgentRuntime,
@@ -44,6 +49,7 @@ export class ActivityTrackerService extends Service {
       await this.handle.stop();
       this.handle = null;
     }
+    await this.writeQueue;
   }
 
   getMode(): ActivityTrackerMode {
@@ -51,6 +57,17 @@ export class ActivityTrackerService extends Service {
   }
 
   private async startCollector(): Promise<void> {
+    if (
+      process.env.MILADY_DISABLE_ACTIVITY_TRACKER === "1" ||
+      process.env.ELIZA_DISABLE_ACTIVITY_TRACKER === "1"
+    ) {
+      this.mode = "disabled-config";
+      logger.info(
+        "[activity-tracker] Collector disabled by configuration; reports will use seeded data only.",
+      );
+      return;
+    }
+
     if (!isSupportedPlatform()) {
       this.mode = "disabled-non-darwin";
       logger.info(
@@ -63,7 +80,7 @@ export class ActivityTrackerService extends Service {
     try {
       this.handle = startActivityCollector({
         onEvent: (event) => {
-          void this.persistEvent(event);
+          this.enqueueEvent(event);
         },
         onFatal: (reason) => {
           this.mode = "failed";
@@ -86,6 +103,13 @@ export class ActivityTrackerService extends Service {
         "[activity-tracker] Failed to start macOS collector; reports will be empty until resolved.",
       );
     }
+  }
+
+  private enqueueEvent(event: ActivityCollectorEvent): void {
+    this.writeQueue = this.writeQueue.then(
+      () => this.persistEvent(event),
+      () => this.persistEvent(event),
+    );
   }
 
   private async persistEvent(event: ActivityCollectorEvent): Promise<void> {

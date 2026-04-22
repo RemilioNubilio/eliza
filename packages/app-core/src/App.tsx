@@ -3,6 +3,9 @@
  */
 
 import { Keyboard } from "@capacitor/keyboard";
+import { MessagesSquare } from "lucide-react";
+
+import "./components/chat/chat-source-registration";
 import { FineTuningView } from "@elizaos/app-training/ui/FineTuningView";
 import {
   Button,
@@ -34,6 +37,8 @@ import { AppsPageView } from "./components/pages/AppsPageView";
 import { AutomationsView } from "./components/pages/AutomationsView";
 import { BrowserWorkspaceView } from "./components/pages/BrowserWorkspaceView";
 import { ChatView } from "./components/pages/ChatView";
+import { PageScopedChatPane } from "./components/pages/PageScopedChatPane";
+import type { PageScope } from "./components/pages/page-scoped-conversations";
 import { ConnectorsPageView } from "./components/pages/ConnectorsPageView";
 import { DatabasePageView } from "./components/pages/DatabasePageView";
 import { InventoryView } from "./components/pages/InventoryView";
@@ -45,6 +50,7 @@ import { RuntimeView } from "./components/pages/RuntimeView";
 import { SettingsView } from "./components/pages/SettingsView";
 import { SkillsView } from "./components/pages/SkillsView";
 import { StreamView } from "./components/pages/StreamView";
+import { TasksPageView } from "./components/pages/TasksPageView";
 import { TrajectoriesView } from "./components/pages/TrajectoriesView";
 import { DesktopWorkspaceSection } from "./components/settings/DesktopWorkspaceSection";
 import { BugReportModal } from "./components/shell/BugReportModal";
@@ -54,6 +60,7 @@ import { Header } from "./components/shell/Header";
 import { ShellOverlays } from "./components/shell/ShellOverlays";
 import { StartupShell } from "./components/shell/StartupShell";
 import { SystemWarningBanner } from "./components/shell/SystemWarningBanner";
+import { AppWorkspaceChrome } from "./components/workspace/AppWorkspaceChrome";
 import { useBootConfig } from "./config";
 import {
   BugReportProvider,
@@ -89,20 +96,61 @@ function TabScrollView({
   className?: string;
 }) {
   return (
-    <div
-      data-shell-scroll-region="true"
-      className={`flex-1 min-h-0 min-w-0 w-full overflow-y-auto ${className}`}
-    >
-      {children}
-    </div>
+    <AppWorkspaceChrome
+      testId="tab-scroll-view"
+      main={
+        <div
+          data-shell-scroll-region="true"
+          className={`flex-1 min-h-0 min-w-0 w-full overflow-y-auto ${className}`}
+        >
+          {children}
+        </div>
+      }
+    />
   );
 }
 
 function TabContentView({ children }: { children: ReactNode }) {
   return (
-    <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full overflow-hidden">
-      {children}
-    </div>
+    <AppWorkspaceChrome
+      testId="tab-content-view"
+      main={
+        <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full overflow-hidden">
+          {children}
+        </div>
+      }
+    />
+  );
+}
+
+function PageChatTab({
+  scope,
+  variant = "content",
+  children,
+}: {
+  scope: PageScope;
+  variant?: "content" | "scroll";
+  children: ReactNode;
+}) {
+  const main =
+    variant === "scroll" ? (
+      <div
+        data-shell-scroll-region="true"
+        className="flex-1 min-h-0 min-w-0 w-full overflow-y-auto"
+      >
+        {children}
+      </div>
+    ) : (
+      <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full overflow-hidden">
+        {children}
+      </div>
+    );
+  return (
+    <AppWorkspaceChrome
+      testId={`tab-page-chat-${scope}`}
+      main={main}
+      chat={<PageScopedChatPane scope={scope} />}
+    />
   );
 }
 
@@ -118,19 +166,13 @@ function ViewRouter({
       case "chat":
         return <ChatView />;
       case "lifeops":
-        return LifeOpsPageView ? (
-          <TabScrollView>
-            <LifeOpsPageView />
-          </TabScrollView>
-        ) : (
-          <ChatView />
-        );
+        // LifeOpsPageView owns its own AppWorkspaceChrome (nav rail + main
+        // + right chat), so don't double-wrap.
+        return LifeOpsPageView ? <LifeOpsPageView /> : <ChatView />;
       case "browser":
-        return (
-          <TabContentView>
-            <BrowserWorkspaceView />
-          </TabContentView>
-        );
+        // BrowserWorkspaceView owns its own AppWorkspaceChrome, so don't
+        // double-wrap.
+        return <BrowserWorkspaceView />;
       case "companion":
         // Companion is now an app — redirect /companion URL to chat
         return <ChatView />;
@@ -139,27 +181,27 @@ function ViewRouter({
       case "apps":
         // Apps disabled in production builds; fall through to chat
         return APPS_ENABLED ? (
-          <TabScrollView>
+          <PageChatTab scope="page-apps" variant="scroll">
             <AppsPageView />
-          </TabScrollView>
+          </PageChatTab>
         ) : (
           <ChatView />
         );
       case "tasks":
         return (
           <TabContentView>
-            <AutomationsView />
+            <TasksPageView />
           </TabContentView>
         );
       case "character":
       case "character-select":
       case "knowledge":
         return (
-          <TabContentView>
+          <PageChatTab scope="page-character">
             <CharacterEditor
               onHeaderActionsChange={onCharacterHeaderActionsChange}
             />
-          </TabContentView>
+          </PageChatTab>
         );
       case "inventory":
         return (
@@ -176,9 +218,9 @@ function ViewRouter({
       case "automations":
       case "triggers":
         return (
-          <TabContentView>
+          <PageChatTab scope="page-automations">
             <AutomationsView />
-          </TabContentView>
+          </PageChatTab>
         );
       case "voice":
         return (
@@ -271,9 +313,7 @@ export function App() {
     actionNotice,
     activeOverlayApp,
     uiTheme,
-    agentStatus,
     backendConnection,
-    unreadConversations,
     activeGameViewerUrl,
     gameOverlayEnabled,
     uiShellMode,
@@ -330,6 +370,27 @@ export function App() {
     string | null
   >(null);
   const [tasksEventsPanelOpen, setTasksEventsPanelOpen] = useState(false);
+  const [widgetsPanelCollapsed, setWidgetsPanelCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return (
+        window.localStorage.getItem("elizaos:chat:widgets-collapsed") === "true"
+      );
+    } catch {
+      return false;
+    }
+  });
+  const handleToggleWidgetsCollapsed = useCallback((next: boolean) => {
+    setWidgetsPanelCollapsed(next);
+    try {
+      window.localStorage.setItem(
+        "elizaos:chat:widgets-collapsed",
+        String(next),
+      );
+    } catch {
+      // localStorage unavailable in sandboxed environments — non-fatal.
+    }
+  }, []);
   const { events: activityEvents, clearEvents: clearActivityEvents } =
     useActivityEvents();
   const [editingAction, setEditingAction] = useState<
@@ -356,48 +417,34 @@ export function App() {
   const isSettingsPage = tab === "settings" || tab === "voice";
   const isAppsToolPage = isAppsToolTab(tab);
   const isDesktopWorkspacePage = tab === "desktop";
-  const unreadCount = unreadConversations?.size ?? 0;
   const mobileChatControls = useMemo(
     () =>
       isChatMobileLayout ? (
         <div className="flex items-center gap-2 w-max">
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
-            className={`inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold transition-all cursor-pointer ${
+            className={`inline-flex h-[2.375rem] w-[2.375rem] min-w-[2.375rem] items-center justify-center rounded-none border-0 !bg-transparent p-0 text-muted shadow-none ring-0 transition-colors hover:!bg-transparent hover:text-txt active:!bg-transparent ${
               mobileConversationsOpen
-                ? "border-accent bg-accent-subtle text-txt"
-                : "border-border bg-card text-txt hover:border-accent hover:text-txt"
+                ? "text-accent"
+                : "text-muted hover:text-txt"
             }`}
             onClick={() => {
+              setTasksEventsPanelOpen(false);
               setMobileConversationsOpen(true);
             }}
-            aria-label={t("aria.openChatsPanel")}
+            aria-label={t("aria.openChannelsPanel", {
+              defaultValue: "Open channels panel",
+            })}
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-            >
-              <title>{t("conversations.chats")}</title>
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
-            {t("conversations.chats")}
-            {unreadCount > 0 && (
-              <span className="inline-flex min-w-[18px] h-[18px] items-center justify-center rounded-full bg-accent text-accent-fg text-2xs font-bold px-1">
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </span>
-            )}
+            <MessagesSquare className="h-4 w-4" aria-hidden />
+            <span className="sr-only">
+              {t("conversations.channels", { defaultValue: "Channels" })}
+            </span>
           </Button>
         </div>
       ) : undefined,
-    [isChatMobileLayout, mobileConversationsOpen, unreadCount, t],
+    [isChatMobileLayout, mobileConversationsOpen, t],
   );
 
   // Keep hook order stable across onboarding/auth state transitions.
@@ -559,7 +606,10 @@ export function App() {
             }
             onToggleTasksPanel={
               isChat && isChatMobileLayout
-                ? () => setTasksEventsPanelOpen((o) => !o)
+                ? () => {
+                    setMobileConversationsOpen(false);
+                    setTasksEventsPanelOpen((open) => !open);
+                  }
                 : undefined
             }
           />
@@ -573,7 +623,14 @@ export function App() {
             {isChatMobileLayout ? (
               <>
                 <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden pt-2 px-2">
-                  {isChat ? (
+                  {isChat && tasksEventsPanelOpen ? (
+                    <TasksEventsPanel
+                      open
+                      events={activityEvents}
+                      clearEvents={clearActivityEvents}
+                      mobile
+                    />
+                  ) : isChat ? (
                     <>
                       <DeferredSetupChecklist
                         className="mb-3"
@@ -609,33 +666,6 @@ export function App() {
                     </DrawerSheetContent>
                   </DrawerSheet>
                 )}
-
-                {isChat && tasksEventsPanelOpen && (
-                  <DrawerSheet
-                    open={tasksEventsPanelOpen}
-                    onOpenChange={setTasksEventsPanelOpen}
-                  >
-                    <DrawerSheetContent
-                      aria-describedby={undefined}
-                      className="h-[min(calc(100dvh-1rem-var(--safe-area-top,0px)-var(--safe-area-bottom,0px)),46rem)] p-0"
-                      showCloseButton={false}
-                    >
-                      <DrawerSheetHeader className="sr-only">
-                        <DrawerSheetTitle>
-                          {t("taskseventspanel.Title", {
-                            defaultValue: "Chat widgets",
-                          })}
-                        </DrawerSheetTitle>
-                      </DrawerSheetHeader>
-                      <TasksEventsPanel
-                        open
-                        events={activityEvents}
-                        clearEvents={clearActivityEvents}
-                        mobile
-                      />
-                    </DrawerSheetContent>
-                  </DrawerSheet>
-                )}
               </>
             ) : (
               <>
@@ -658,6 +688,8 @@ export function App() {
                     open
                     events={activityEvents}
                     clearEvents={clearActivityEvents}
+                    collapsed={widgetsPanelCollapsed}
+                    onToggleCollapsed={handleToggleWidgetsCollapsed}
                   />
                 ) : null}
               </>
@@ -678,9 +710,14 @@ export function App() {
           className="flex flex-col flex-1 min-h-0 w-full font-body text-txt bg-bg"
         >
           <Header />
-          <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
-            <AutomationsView key="automations-view-desktop" />
-          </div>
+          <AppWorkspaceChrome
+            testId="automations-workspace"
+            main={
+              <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
+                <AutomationsView key="automations-view-desktop" />
+              </div>
+            }
+          />
         </div>
       ) : isSettingsPage ? (
         <div
@@ -713,9 +750,14 @@ export function App() {
           className="flex flex-col flex-1 min-h-0 w-full font-body text-txt bg-bg"
         >
           <Header />
-          <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
-            <InventoryView />
-          </div>
+          <AppWorkspaceChrome
+            testId="wallets-workspace"
+            main={
+              <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
+                <InventoryView />
+              </div>
+            }
+          />
         </div>
       ) : isCharacterPage ? (
         <div
@@ -759,7 +801,9 @@ export function App() {
           />
           <main
             className={`flex flex-1 min-h-0 min-w-0 overflow-hidden ${
-              tab === "browser" ? "" : "px-3 xl:px-5 py-4 xl:py-6"
+              tab === "browser" || tab === "apps"
+                ? ""
+                : "px-3 xl:px-5 py-4 xl:py-6"
             }`}
           >
             <ViewRouter
@@ -791,8 +835,10 @@ export function App() {
       activityEvents,
       clearActivityEvents,
       customActionsPanelOpen,
+      handleToggleWidgetsCollapsed,
       settingsInitialSection,
       t,
+      widgetsPanelCollapsed,
     ],
   );
 

@@ -198,7 +198,12 @@ export const LIFEOPS_GOOGLE_CAPABILITIES = [
 export type LifeOpsGoogleCapability =
   (typeof LIFEOPS_GOOGLE_CAPABILITIES)[number];
 
-export const LIFEOPS_X_CAPABILITIES = ["x.read", "x.write"] as const;
+export const LIFEOPS_X_CAPABILITIES = [
+  "x.read",
+  "x.write",
+  "x.dm.read",
+  "x.dm.write",
+] as const;
 export type LifeOpsXCapability = (typeof LIFEOPS_X_CAPABILITIES)[number];
 
 export const LIFEOPS_SIGNAL_CAPABILITIES = [
@@ -244,6 +249,8 @@ export const LIFEOPS_REMINDER_CHANNELS = [
   "signal",
   "whatsapp",
   "imessage",
+  "email",
+  "push",
 ] as const;
 export type LifeOpsReminderChannel = (typeof LIFEOPS_REMINDER_CHANNELS)[number];
 
@@ -258,6 +265,9 @@ export const LIFEOPS_CHANNEL_TYPES = [
   "imessage",
   "x",
   "browser",
+  "email",
+  "push",
+  // Note: "cloud" in LIFEOPS_REMINDER_CHANNELS is a deployment target, not a user-facing delivery channel
 ] as const;
 export type LifeOpsChannelType = (typeof LIFEOPS_CHANNEL_TYPES)[number];
 
@@ -1238,6 +1248,72 @@ export type LifeOpsScheduleSleepStatus =
   | "likely_missed"
   | "unknown";
 
+export type LifeOpsSleepCycleEvidenceSource = "health" | "activity_gap";
+export type LifeOpsSleepCycleType = "nap" | "overnight" | "unknown";
+
+export interface LifeOpsSleepCycleEvidence {
+  startAt: string;
+  endAt: string | null;
+  source: LifeOpsSleepCycleEvidenceSource;
+  confidence: number;
+}
+
+export interface LifeOpsSleepCycle {
+  cycleType: LifeOpsSleepCycleType;
+  sleepStatus: LifeOpsScheduleSleepStatus;
+  isProbablySleeping: boolean;
+  sleepConfidence: number;
+  currentSleepStartedAt: string | null;
+  lastSleepStartedAt: string | null;
+  lastSleepEndedAt: string | null;
+  lastSleepDurationMinutes: number | null;
+  evidence: LifeOpsSleepCycleEvidence[];
+}
+
+export type LifeOpsDayBoundaryAnchor =
+  | "start_of_day"
+  | "end_of_day"
+  | "before_sleep";
+
+export interface LifeOpsDayBoundary {
+  effectiveDayKey: string;
+  localDate: string;
+  timezone: string;
+  anchor: LifeOpsDayBoundaryAnchor;
+  startOfDayAt: string;
+  endOfDayAt: string;
+  beforeSleepAt: string | null;
+  confidence: number;
+}
+
+export type LifeOpsRelativeTimeAnchorSource =
+  | "sleep_cycle"
+  | "activity"
+  | "typical_sleep"
+  | "day_boundary";
+
+export interface LifeOpsRelativeTime {
+  computedAt: string;
+  localNowAt: string;
+  phase: LifeOpsSchedulePhase;
+  isProbablySleeping: boolean;
+  isAwake: boolean;
+  awakeState: "awake" | "probably_sleeping" | "unknown";
+  wakeAnchorAt: string | null;
+  wakeAnchorSource: LifeOpsRelativeTimeAnchorSource | null;
+  minutesSinceWake: number | null;
+  minutesAwake: number | null;
+  bedtimeTargetAt: string | null;
+  bedtimeTargetSource: LifeOpsRelativeTimeAnchorSource | null;
+  minutesUntilBedtimeTarget: number | null;
+  minutesSinceBedtimeTarget: number | null;
+  dayBoundaryStartAt: string;
+  dayBoundaryEndAt: string;
+  minutesSinceDayBoundaryStart: number;
+  minutesUntilDayBoundaryEnd: number;
+  confidence: number;
+}
+
 export type LifeOpsScheduleMealLabel = "breakfast" | "lunch" | "dinner";
 
 export type LifeOpsScheduleMealSource =
@@ -1258,6 +1334,7 @@ export interface LifeOpsScheduleInsight {
   timezone: string;
   inferredAt: string;
   phase: LifeOpsSchedulePhase;
+  relativeTime: LifeOpsRelativeTime;
   sleepStatus: LifeOpsScheduleSleepStatus;
   isProbablySleeping: boolean;
   sleepConfidence: number;
@@ -1276,6 +1353,54 @@ export interface LifeOpsScheduleInsight {
   nextMealWindowStartAt: string | null;
   nextMealWindowEndAt: string | null;
   nextMealConfidence: number;
+}
+
+export type LifeOpsCapabilityDomain =
+  | "core"
+  | "schedule"
+  | "reminders"
+  | "activity"
+  | "connectors"
+  | "profile";
+
+export type LifeOpsCapabilityState =
+  | "working"
+  | "degraded"
+  | "blocked"
+  | "not_configured";
+
+export interface LifeOpsCapabilityEvidence {
+  label: string;
+  state: LifeOpsCapabilityState;
+  detail: string | null;
+  observedAt: string | null;
+}
+
+export interface LifeOpsCapabilityStatus {
+  id: string;
+  domain: LifeOpsCapabilityDomain;
+  label: string;
+  state: LifeOpsCapabilityState;
+  summary: string;
+  confidence: number;
+  lastCheckedAt: string;
+  evidence: LifeOpsCapabilityEvidence[];
+}
+
+export interface LifeOpsCapabilitiesSummary {
+  totalCount: number;
+  workingCount: number;
+  degradedCount: number;
+  blockedCount: number;
+  notConfiguredCount: number;
+}
+
+export interface LifeOpsCapabilitiesStatus {
+  generatedAt: string;
+  appEnabled: boolean;
+  relativeTime: LifeOpsRelativeTime | null;
+  capabilities: LifeOpsCapabilityStatus[];
+  summary: LifeOpsCapabilitiesSummary;
 }
 
 export interface LifeOpsOverviewSection {
@@ -1598,6 +1723,77 @@ export interface LifeOpsNextCalendarEventContext {
   >;
 }
 
+export interface LifeOpsCalendarEventReminderOverride {
+  minutesBefore: number;
+}
+
+export interface LifeOpsCalendarEventUpdate {
+  title?: string;
+  startAt?: string;
+  endAt?: string;
+  notes?: string;
+  reminders?: LifeOpsCalendarEventReminderOverride[];
+}
+
+export interface LifeOpsCalendarEventMutationResult {
+  event: LifeOpsCalendarEvent;
+}
+
+export const LIFEOPS_INBOX_CHANNELS = [
+  "gmail",
+  "discord",
+  "telegram",
+  "signal",
+  "imessage",
+  "whatsapp",
+  "sms",
+] as const;
+export type LifeOpsInboxChannel = (typeof LIFEOPS_INBOX_CHANNELS)[number];
+
+export interface LifeOpsUnifiedMessageSender {
+  id: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+export interface LifeOpsUnifiedMessageSourceRef {
+  channel: LifeOpsInboxChannel;
+  externalId: string;
+}
+
+export interface LifeOpsUnifiedMessage {
+  /** Channel-prefixed, globally unique identifier. */
+  id: string;
+  channel: LifeOpsInboxChannel;
+  sender: LifeOpsUnifiedMessageSender;
+  /** Gmail-style subject; `null` for chat channels. */
+  subject: string | null;
+  snippet: string;
+  /** ISO-8601 timestamp. */
+  receivedAt: string;
+  unread: boolean;
+  deepLink: string | null;
+  sourceRef: LifeOpsUnifiedMessageSourceRef;
+}
+
+export interface LifeOpsUnifiedInboxChannelCount {
+  total: number;
+  unread: number;
+}
+
+export interface LifeOpsUnifiedInbox {
+  messages: LifeOpsUnifiedMessage[];
+  channelCounts: Record<LifeOpsInboxChannel, LifeOpsUnifiedInboxChannelCount>;
+  fetchedAt: string;
+}
+
+export interface GetLifeOpsUnifiedInboxRequest {
+  /** Cap on the total number of messages returned. Defaults to 100. */
+  limit?: number;
+  /** If omitted, all connected channels are included. */
+  channels?: LifeOpsInboxChannel[];
+}
+
 export const LIFEOPS_GOOGLE_CONNECTOR_REASONS = [
   "connected",
   "disconnected",
@@ -1661,11 +1857,15 @@ export interface LifeOpsXConnectorStatus {
   grantedScopes: string[];
   identity: Record<string, unknown> | null;
   hasCredentials: boolean;
+  feedRead: boolean;
+  feedWrite: boolean;
+  dmRead: boolean;
+  dmWrite: boolean;
   /**
-   * DM inbound read is supported when `x.read` capability is granted.
+   * DM inbound read is supported when `x.dm.read` capability is granted.
    * Use `syncXDms()` to pull and persist, then `getXDms()` or
    * `readXInboundDms()` to retrieve.
-  */
+   */
   dmInbound: boolean;
   grant: LifeOpsConnectorGrant | null;
   degradations?: LifeOpsConnectorDegradation[];

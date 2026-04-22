@@ -1,7 +1,7 @@
 import type {
   LifeOpsOccurrenceView,
   LifeOpsOverview,
-} from "@elizaos/shared/contracts/lifeops";
+} from "@elizaos/app-lifeops/contracts";
 import { describe, expect, it } from "vitest";
 import {
   formatOverview,
@@ -129,6 +129,27 @@ describe("formatOverviewForQuery", () => {
       timezone: "UTC",
       inferredAt: "2026-04-19T13:00:00.000Z",
       phase: "afternoon",
+      relativeTime: {
+        computedAt: "2026-04-19T13:00:00.000Z",
+        localNowAt: "2026-04-19T13:00:00+00:00",
+        phase: "afternoon",
+        isProbablySleeping: false,
+        isAwake: true,
+        awakeState: "awake",
+        wakeAnchorAt: "2026-04-19T07:30:00.000Z",
+        wakeAnchorSource: "sleep_cycle",
+        minutesSinceWake: 330,
+        minutesAwake: 330,
+        bedtimeTargetAt: "2026-04-19T23:30:00.000Z",
+        bedtimeTargetSource: "typical_sleep",
+        minutesUntilBedtimeTarget: 630,
+        minutesSinceBedtimeTarget: null,
+        dayBoundaryStartAt: "2026-04-19T00:00:00.000Z",
+        dayBoundaryEndAt: "2026-04-20T00:00:00.000Z",
+        minutesSinceDayBoundaryStart: 780,
+        minutesUntilDayBoundaryEnd: 660,
+        confidence: 0.81,
+      },
       sleepStatus: "slept",
       isProbablySleeping: false,
       sleepConfidence: 0.81,

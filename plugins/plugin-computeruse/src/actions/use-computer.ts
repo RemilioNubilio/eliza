@@ -6,15 +6,9 @@ import type {
   Memory,
   State,
 } from "@elizaos/core";
-import type {
-  ComputerActionResult,
-  DesktopActionParams,
-} from "../types.js";
 import type { ComputerUseService } from "../services/computer-use-service.js";
-import {
-  buildScreenshotAttachment,
-  resolveActionParams,
-} from "./helpers.js";
+import type { ComputerActionResult, DesktopActionParams } from "../types.js";
+import { buildScreenshotAttachment, resolveActionParams } from "./helpers.js";
 
 const MOCK_SCREENSHOT_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+R4QAAAAASUVORK5CYII=";
@@ -120,8 +114,8 @@ async function deliverResult(
   await callback({
     text: result.success
       ? params.action === "screenshot"
-        ? "Here is the current screen."
-        : result.message ?? `Completed ${params.action}.`
+        ? (result.message ?? "Here is the current screen.")
+        : (result.message ?? `Completed ${params.action}.`)
       : `Desktop action failed: ${result.error}`,
     ...(result.screenshot
       ? {
@@ -156,31 +150,30 @@ export const useComputerAction: Action = {
     "MOVE_MOUSE",
     "DRAG",
     "MOUSE_CLICK",
+    "CLICK_WITH_MODIFIERS",
     "TAKE_SCREENSHOT",
     "CAPTURE_SCREEN",
-    "SCREEN_CAPTURE",
-    "GET_SCREENSHOT",
     "SEE_SCREEN",
-    "LOOK_AT_SCREEN",
-    "VIEW_SCREEN",
   ],
   description:
     "Control the local desktop. This action can inspect the current screen, move the mouse, click, drag, type, press keys, scroll, and perform modified clicks. It is intended for real application interaction when the agent needs to operate the user's computer directly.\n\n" +
     "Available actions:\n" +
-    "- screenshot: capture the current screen.\n" +
-    "- click: left click at coordinate.\n" +
-    "- click_with_modifiers: click while holding modifier keys such as shift/cmd/ctrl.\n" +
-    "- double_click: double click at coordinate.\n" +
-    "- right_click: right click at coordinate.\n" +
-    "- mouse_move: move the cursor to coordinate.\n" +
-    "- type: type text into the focused application.\n" +
-    "- key: press a single key.\n" +
-    "- key_combo: press a key combination like ctrl+c or cmd+shift+s.\n" +
-    "- scroll: scroll at a coordinate in a direction.\n" +
-    "- drag: drag from startCoordinate to coordinate.\n" +
-    "- detect_elements / ocr: parity stubs preserved from upstream; they return an explicit local-runtime not-available error.\n\n" +
-    "Why this exists: it lets the agent operate arbitrary desktop software, not just browser pages or the terminal. Start with a screenshot when visual context is needed, then act using exact coordinates and follow-up screenshots.",
-  descriptionCompressed: "Desktop control: mouse, keyboard, screenshot, scroll, drag. For direct app interaction.",
+    "- screenshot: Capture the current screen state. No parameters needed.\n" +
+    "- click: Left-click at pixel coordinates. Requires coordinate: [x, y].\n" +
+    "- click_with_modifiers: Hold modifiers such as ctrl, shift, alt, or cmd while clicking. Requires coordinate and modifiers.\n" +
+    "- double_click: Double-click at coordinates. Requires coordinate: [x, y].\n" +
+    "- right_click: Right-click at coordinates. Requires coordinate: [x, y].\n" +
+    "- mouse_move: Move cursor without clicking. Requires coordinate: [x, y].\n" +
+    "- type: Type text at the current cursor position. Requires text.\n" +
+    "- key: Press a single key (e.g. Return, Tab, Escape, F5). Requires key.\n" +
+    "- key_combo: Press a key combination (e.g. ctrl+c, cmd+shift+s, alt+F4). Requires key.\n" +
+    "- scroll: Scroll at a position. Requires coordinate, scrollDirection (up/down/left/right), optional scrollAmount.\n" +
+    "- drag: Drag from one point to another. Requires startCoordinate and coordinate.\n" +
+    "- detect_elements: Stub for upstream parity on local machines.\n" +
+    "- ocr: Stub for upstream parity on local machines.\n\n" +
+    "Always take a screenshot first to see the current screen state before performing actions. " +
+    "After each action, a screenshot is automatically returned showing the result.",
+
   parameters: [
     {
       name: "action",
@@ -224,6 +217,13 @@ export const useComputerAction: Action = {
       schema: { type: "string" },
     },
     {
+      name: "modifiers",
+      description:
+        "Modifier keys to hold during click_with_modifiers, e.g. ['cmd', 'shift'] or ['ctrl'].",
+      required: false,
+      schema: { type: "array", items: { type: "string" } },
+    },
+    {
       name: "key",
       description: "Single key or combo string depending on action.",
       required: false,
@@ -257,7 +257,7 @@ export const useComputerAction: Action = {
       name: "scrollAmount",
       description: "Scroll tick count.",
       required: false,
-      schema: { type: "number", minimum: 1, maximum: 100, default: 3 },
+      schema: { type: "number", minimum: 1, maximum: 20, default: 3 },
     },
   ],
   validate: async (
@@ -291,6 +291,39 @@ export const useComputerAction: Action = {
     const result = await service.executeDesktopAction(params);
     await deliverResult(params, result, callback);
 
-    return result as unknown as any;
+    if (callback) {
+      const text = result.success
+        ? params.action === "screenshot"
+          ? "Here is the current screen."
+          : `Action "${params.action}" completed successfully.`
+        : result.permissionDenied
+          ? `Action failed because ${result.permissionType} permission is missing.`
+          : result.approvalRequired
+            ? `Action "${params.action}" is waiting for approval (${result.approvalId}).`
+            : `Action failed: ${result.error}`;
+
+      await callback({
+        text,
+        ...(result.screenshot
+          ? {
+              attachments: [
+                {
+                  id: `screenshot-${Date.now()}`,
+                  url: `data:image/png;base64,${result.screenshot}`,
+                  title: "Screenshot",
+                  source: "computeruse",
+                  description: `Screen capture after ${params.action}`,
+                  contentType: "image" as const,
+                },
+              ],
+            }
+          : {}),
+      });
+    }
+
+    return {
+      success: result.success,
+      data: { screenshot: !!result.screenshot },
+    };
   },
 };

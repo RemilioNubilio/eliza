@@ -1,4 +1,4 @@
-import { hasAdminAccess } from "@elizaos/agent/security";
+import { hasAdminAccess } from "@elizaos/agent";
 import type {
   Action,
   ActionResult,
@@ -14,7 +14,7 @@ import type {
   LifeOpsBrowserActionKind,
   LifeOpsBrowserKind,
   UpdateLifeOpsBrowserSettingsRequest,
-} from "@elizaos/shared/contracts/lifeops";
+} from "@elizaos/app-lifeops/contracts";
 import { LifeOpsService, LifeOpsServiceError } from "./lifeops/service.js";
 
 type BrowserCommand =

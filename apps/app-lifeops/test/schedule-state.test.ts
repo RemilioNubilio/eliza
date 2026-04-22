@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { LifeOpsScheduleInsight } from "@elizaos/shared/contracts/lifeops";
+import { describe, expect, it } from "vitest";
 import {
   deriveLocalScheduleObservations,
   mergeScheduleObservations,
@@ -12,6 +12,27 @@ const BASE_INSIGHT: LifeOpsScheduleInsight = {
   timezone: "UTC",
   inferredAt: "2026-04-19T13:00:00.000Z",
   phase: "afternoon",
+  relativeTime: {
+    computedAt: "2026-04-19T13:00:00.000Z",
+    localNowAt: "2026-04-19T13:00:00+00:00",
+    phase: "afternoon",
+    isProbablySleeping: false,
+    isAwake: true,
+    awakeState: "awake",
+    wakeAnchorAt: "2026-04-19T07:17:00.000Z",
+    wakeAnchorSource: "sleep_cycle",
+    minutesSinceWake: 343,
+    minutesAwake: 343,
+    bedtimeTargetAt: "2026-04-19T23:30:00.000Z",
+    bedtimeTargetSource: "typical_sleep",
+    minutesUntilBedtimeTarget: 630,
+    minutesSinceBedtimeTarget: null,
+    dayBoundaryStartAt: "2026-04-19T00:00:00.000Z",
+    dayBoundaryEndAt: "2026-04-20T00:00:00.000Z",
+    minutesSinceDayBoundaryStart: 780,
+    minutesUntilDayBoundaryEnd: 660,
+    confidence: 0.81,
+  },
   sleepStatus: "slept",
   isProbablySleeping: false,
   sleepConfidence: 0.81,
@@ -32,7 +53,9 @@ const BASE_INSIGHT: LifeOpsScheduleInsight = {
   nextMealConfidence: 0.62,
 };
 
-function observation(overrides: Partial<LifeOpsScheduleObservation>): LifeOpsScheduleObservation {
+function observation(
+  overrides: Partial<LifeOpsScheduleObservation>,
+): LifeOpsScheduleObservation {
   return {
     id: "observation-1",
     agentId: "agent-1",
@@ -125,8 +148,149 @@ describe("schedule-state", () => {
     expect(merged?.scope).toBe("cloud");
     expect(merged?.phase).toBe("waking");
     expect(merged?.wakeAt).toBe("2026-04-19T11:30:00.000Z");
+    expect(merged?.relativeTime.minutesSinceWake).toBe(90);
     expect(merged?.nextMealLabel).toBe("lunch");
     expect(merged?.deviceCount).toBe(2);
     expect(merged?.contributingDeviceKinds).toEqual(["iphone", "mac"]);
+  });
+
+  it("drops stale meal_window_likely observations whose window has already passed", () => {
+    const merged = mergeScheduleObservations({
+      agentId: "agent-1",
+      scope: "local",
+      timezone: "America/Los_Angeles",
+      // After midnight the next day: any dinner window from last night is stale.
+      now: new Date("2026-04-21T08:00:00.000Z"),
+      observations: [
+        observation({
+          id: "active-late",
+          deviceId: "macbook-1",
+          deviceKind: "mac",
+          state: "active_recently",
+          confidence: 0.7,
+          observedAt: "2026-04-21T07:55:00.000Z",
+          windowStartAt: "2026-04-21T07:30:00.000Z",
+          windowEndAt: "2026-04-21T08:00:00.000Z",
+          phase: "winding_down",
+        }),
+        observation({
+          id: "stale-dinner",
+          deviceId: "macbook-1",
+          deviceKind: "mac",
+          state: "meal_window_likely",
+          confidence: 0.52,
+          mealLabel: "dinner",
+          // Dinner window created at 9:30 PM Apr 20 local (04:30 UTC Apr 21),
+          // ending at 12:30 AM Apr 21 local (07:30 UTC Apr 21). Now is 01:00
+          // AM local (08:00 UTC) — the entire window is behind us.
+          observedAt: "2026-04-21T04:30:00.000Z",
+          windowStartAt: "2026-04-21T04:30:00.000Z",
+          windowEndAt: "2026-04-21T07:30:00.000Z",
+          phase: "evening",
+          metadata: {
+            source: "schedule_insight",
+            snapshot: {
+              nextMealLabel: "dinner",
+              nextMealWindowStartAt: "2026-04-21T04:30:00.000Z",
+              nextMealWindowEndAt: "2026-04-21T07:30:00.000Z",
+              nextMealConfidence: 0.52,
+            },
+          },
+        }),
+      ],
+    });
+
+    expect(merged).not.toBeNull();
+    expect(merged?.nextMealLabel).toBeNull();
+    expect(merged?.nextMealWindowStartAt).toBeNull();
+    expect(merged?.nextMealWindowEndAt).toBeNull();
+    expect(merged?.nextMealConfidence).toBe(0);
+  });
+
+  it("keeps a future meal_window_likely observation untouched", () => {
+    const merged = mergeScheduleObservations({
+      agentId: "agent-1",
+      scope: "local",
+      timezone: "UTC",
+      now: new Date("2026-04-19T11:30:00.000Z"),
+      observations: [
+        observation({
+          id: "upcoming-lunch",
+          deviceId: "macbook-1",
+          deviceKind: "mac",
+          state: "meal_window_likely",
+          confidence: 0.6,
+          mealLabel: "lunch",
+          observedAt: "2026-04-19T11:25:00.000Z",
+          windowStartAt: "2026-04-19T12:00:00.000Z",
+          windowEndAt: "2026-04-19T14:00:00.000Z",
+          phase: "morning",
+        }),
+      ],
+    });
+
+    expect(merged?.nextMealLabel).toBe("lunch");
+    expect(merged?.nextMealWindowStartAt).toBe("2026-04-19T12:00:00.000Z");
+    expect(merged?.nextMealWindowEndAt).toBe("2026-04-19T14:00:00.000Z");
+  });
+
+  it("preserves the inferred effective day key from schedule snapshots", () => {
+    const observations = deriveLocalScheduleObservations({
+      agentId: "agent-1",
+      deviceId: "iphone-1",
+      deviceKind: "iphone",
+      timezone: "UTC",
+      observedAt: "2026-04-19T02:00:00.000Z",
+      insight: {
+        ...BASE_INSIGHT,
+        effectiveDayKey: "2026-04-18",
+        localDate: "2026-04-19",
+        inferredAt: "2026-04-19T02:00:00.000Z",
+        phase: "sleeping",
+        relativeTime: {
+          computedAt: "2026-04-19T02:00:00.000Z",
+          localNowAt: "2026-04-19T02:00:00+00:00",
+          phase: "sleeping",
+          isProbablySleeping: true,
+          isAwake: false,
+          awakeState: "probably_sleeping",
+          wakeAnchorAt: null,
+          wakeAnchorSource: null,
+          minutesSinceWake: null,
+          minutesAwake: null,
+          bedtimeTargetAt: "2026-04-18T23:30:00.000Z",
+          bedtimeTargetSource: "sleep_cycle",
+          minutesUntilBedtimeTarget: null,
+          minutesSinceBedtimeTarget: 150,
+          dayBoundaryStartAt: "2026-04-19T00:00:00.000Z",
+          dayBoundaryEndAt: "2026-04-20T00:00:00.000Z",
+          minutesSinceDayBoundaryStart: 120,
+          minutesUntilDayBoundaryEnd: 1320,
+          confidence: 0.81,
+        },
+        sleepStatus: "sleeping_now",
+        isProbablySleeping: true,
+        currentSleepStartedAt: "2026-04-18T23:30:00.000Z",
+        lastSleepStartedAt: "2026-04-18T23:30:00.000Z",
+        lastSleepEndedAt: null,
+        wakeAt: null,
+        firstActiveAt: null,
+        lastActiveAt: "2026-04-18T23:20:00.000Z",
+      },
+    });
+
+    const merged = mergeScheduleObservations({
+      agentId: "agent-1",
+      scope: "cloud",
+      timezone: "UTC",
+      now: new Date("2026-04-19T02:00:00.000Z"),
+      observations,
+    });
+
+    expect(merged?.phase).toBe("sleeping");
+    expect(merged?.effectiveDayKey).toBe("2026-04-18");
+    expect(merged?.localDate).toBe("2026-04-19");
+    expect(merged?.relativeTime.minutesUntilBedtimeTarget).toBeNull();
+    expect(merged?.relativeTime.minutesSinceBedtimeTarget).toBe(150);
   });
 });

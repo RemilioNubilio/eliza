@@ -1,13 +1,14 @@
+import { hasAdminAccess, hasOwnerAccess } from "@elizaos/agent";
 import {
-  logger,
   type Action,
   type ActionExample,
   type ActionResult,
   type HandlerOptions,
   type IAgentRuntime,
+  logger,
   type Memory,
 } from "@elizaos/core";
-import { hasAdminAccess, hasOwnerAccess } from "@elizaos/agent/security";
+import { LifeOpsService } from "../lifeops/service.js";
 import {
   readTwilioCredentialsFromEnv,
   sendTwilioVoiceCall,
@@ -34,12 +35,9 @@ function coerceBool(value: unknown): boolean {
   return false;
 }
 
-// E.164: leading +, 1-15 digits total, first digit non-zero.
 const E164_RE = /^\+[1-9]\d{1,14}$/;
 
-// All-5s placeholder (the classic "555" fake number, with common punctuation).
-const PLACEHOLDER_555_RE =
-  /^\+?1?[-\s]?\(?5{3}\)?[-\s]?5{3}[-\s]?5{4}$/;
+const PLACEHOLDER_555_RE = /^\+?1?[-\s]?\(?5{3}\)?[-\s]?5{3}[-\s]?5{4}$/;
 
 function isE164(value: string): boolean {
   return E164_RE.test(value);
@@ -65,8 +63,6 @@ function invalidPhoneResult(
       : `I need a valid phone number in E.164 format (e.g. +15551234567) to place the call. Please confirm the number for ${subject}.`;
   return {
     text,
-    // success: false — the call was not placed because the phone number is
-    // invalid. Both top-level success and values.success reflect the failure.
     success: false,
     values: { success: false, error: errorCode, to, contact: contact ?? null },
     data: { actionName, error: errorCode, to, contact: contact ?? null },
@@ -89,7 +85,10 @@ export const twilioCallAction: Action = {
     "calls, not for calendar-only rescheduling or advice. Always drafts first; the " +
     "caller must pass confirmed: true to actually dial.",
 
-  validate: async (runtime: IAgentRuntime, message: Memory): Promise<boolean> => {
+  validate: async (
+    runtime: IAgentRuntime,
+    message: Memory,
+  ): Promise<boolean> => {
     if (!readTwilioCredentialsFromEnv()) return false;
     return hasAdminAccess(runtime, message);
   },
@@ -97,7 +96,8 @@ export const twilioCallAction: Action = {
   parameters: [
     {
       name: "to",
-      description: "Destination phone number in E.164 format (e.g. +15551234567).",
+      description:
+        "Destination phone number in E.164 format (e.g. +15551234567).",
       required: true,
       schema: { type: "string" as const },
     },
@@ -204,7 +204,12 @@ export const twilioCallAction: Action = {
       );
     }
     if (!isE164(to)) {
-      return invalidPhoneResult(to, undefined, ACTION_NAME, "INVALID_PHONE_NUMBER");
+      return invalidPhoneResult(
+        to,
+        undefined,
+        ACTION_NAME,
+        "INVALID_PHONE_NUMBER",
+      );
     }
     if (!messageBody) {
       return {
@@ -302,16 +307,160 @@ type CallUserParameters = {
 };
 
 type CallExternalParameters = {
-	confirmed?: boolean;
-	to?: string;
-	message?: string;
-	contact?: string;
+  confirmed?: boolean;
+  to?: string;
+  message?: string;
+  contact?: string;
 };
 
-function messageText(message: Memory): string {
-	return typeof message.content?.text === "string"
-		? message.content.text.trim()
-		: "";
+type PendingCallDraft = {
+  actionName: "CALL_USER" | "CALL_EXTERNAL";
+  to?: string | null;
+  message?: string | null;
+  approvalTaskId?: string | null;
+  createdAt: string;
+};
+
+function normalizeLookup(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getPendingCallCacheKey(roomId: string, actionName: string): string {
+  return `lifeops:twilio-call:pending:${actionName}:${roomId}`;
+}
+
+async function readPendingCallDraft(
+  runtime: IAgentRuntime,
+  roomId: string,
+  actionName: "CALL_USER" | "CALL_EXTERNAL",
+): Promise<PendingCallDraft | null> {
+  if (typeof runtime.getCache !== "function") {
+    return null;
+  }
+  return (
+    (await runtime.getCache<PendingCallDraft>(
+      getPendingCallCacheKey(roomId, actionName),
+    )) ?? null
+  );
+}
+
+async function writePendingCallDraft(
+  runtime: IAgentRuntime,
+  roomId: string,
+  draft: PendingCallDraft,
+): Promise<void> {
+  if (typeof runtime.setCache !== "function") {
+    return;
+  }
+  await runtime.setCache(
+    getPendingCallCacheKey(roomId, draft.actionName),
+    draft,
+  );
+}
+
+async function clearPendingCallDraft(
+  runtime: IAgentRuntime,
+  roomId: string,
+  actionName: "CALL_USER" | "CALL_EXTERNAL",
+): Promise<void> {
+  if (typeof runtime.deleteCache !== "function") {
+    return;
+  }
+  await runtime.deleteCache(getPendingCallCacheKey(roomId, actionName));
+}
+
+async function enqueueCallApprovalRequest(args: {
+  runtime: IAgentRuntime;
+  message: Memory;
+  actionName: "CALL_USER" | "CALL_EXTERNAL";
+  to?: string;
+  body: string;
+}): Promise<string | null> {
+  return await args.runtime.createTask({
+    name: `${args.actionName}_${Date.now()}`,
+    description:
+      args.actionName === "CALL_USER"
+        ? `Approve calling the owner${args.body ? ` with message: ${args.body}` : ""}.`
+        : `Approve calling ${args.to ?? "the selected recipient"}${args.body ? ` with message: ${args.body}` : ""}.`,
+    roomId: args.message.roomId,
+    entityId: args.message.entityId,
+    tags: ["AWAITING_CHOICE", "APPROVAL", args.actionName],
+    metadata: {
+      options: [
+        { name: "confirm", description: "Place the call" },
+        { name: "cancel", description: "Do not call" },
+      ],
+      approvalRequest: {
+        timeoutMs: 24 * 60 * 60 * 1000,
+        timeoutDefault: "cancel",
+        createdAt: Date.now(),
+        isAsync: true,
+      },
+      actionName: args.actionName,
+      channel: "phone_call",
+      payload: {
+        to: args.to ?? null,
+        message: args.body,
+      },
+    },
+  });
+}
+
+function isE164PhoneNumber(value: string): boolean {
+  return /^\+[1-9]\d{7,14}$/.test(value.trim());
+}
+
+async function resolveExternalCallRecipient(args: {
+  runtime: IAgentRuntime;
+  providedTo?: string;
+  messageText?: string;
+}): Promise<{ to: string | null; matchedRelationshipId?: string | null }> {
+  const explicit = args.providedTo?.trim();
+  if (explicit) {
+    if (isE164PhoneNumber(explicit)) {
+      return { to: explicit, matchedRelationshipId: null };
+    }
+  }
+
+  const service = new LifeOpsService(args.runtime);
+  const relationships = await service.listRelationships({ limit: 200 });
+  const haystack = normalizeLookup(
+    [explicit ?? "", args.messageText ?? ""].join(" "),
+  );
+  if (!haystack) {
+    return { to: null, matchedRelationshipId: null };
+  }
+
+  const candidates = relationships.filter(
+    (relationship) =>
+      typeof relationship.phone === "string" && relationship.phone,
+  );
+  for (const relationship of candidates) {
+    const lookupValues = [
+      relationship.name,
+      relationship.primaryHandle,
+      relationship.email ?? "",
+      relationship.notes ?? "",
+      ...relationship.tags,
+    ]
+      .map(normalizeLookup)
+      .filter((value) => value.length > 0);
+
+    const matched = lookupValues.some(
+      (value) => haystack.includes(value) || value.includes(haystack),
+    );
+    if (matched && relationship.phone) {
+      return {
+        to: relationship.phone,
+        matchedRelationshipId: relationship.id,
+      };
+    }
+  }
+
+  return { to: explicit ?? null, matchedRelationshipId: null };
 }
 
 function readOwnerNumber(
@@ -349,10 +498,14 @@ function readExternalAllowList(
   return Array.from(list);
 }
 
+function normalizePhoneAllowListKey(value: string): string {
+  return value.replace(/[^0-9+]/g, "").replace(/^\+/, "");
+}
+
 function deliveryToResult(
-	delivery: TwilioDeliveryResult,
-	to: string,
-	actionName: string,
+  delivery: TwilioDeliveryResult,
+  to: string,
+  actionName: string,
 ): ActionResult {
   return {
     text: delivery.ok ? `Placed call to ${to}.` : `Call to ${to} failed.`,
@@ -370,37 +523,37 @@ function deliveryToResult(
       error: delivery.error,
       retryCount: delivery.retryCount ?? 0,
     },
-	};
+  };
 }
 
 function looksLikeStandingCallPolicy(text: string): boolean {
-	const normalized = text.trim().toLowerCase();
-	if (!normalized) {
-		return false;
-	}
-	return (
-		/\b(?:if|when|whenever)\b/u.test(normalized) &&
-		/\b(?:call|phone|dial)\b/u.test(normalized) &&
-		/\b(?:stuck|blocked|jam(?:s|med)?|browser|computer|workflow|unblock)\b/u.test(
-			normalized,
-		)
-	);
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /\b(?:if|when|whenever)\b/u.test(normalized) &&
+    /\b(?:call|phone|dial)\b/u.test(normalized) &&
+    /\b(?:stuck|blocked|jam(?:s|med)?|browser|computer|workflow|unblock)\b/u.test(
+      normalized,
+    )
+  );
 }
 
 function buildCallUserPolicyAcknowledgement(text: string): string {
-	const normalized = text.trim().toLowerCase();
-	let context = "while working remotely";
-	if (/\bbrowser\b/u.test(normalized) && /\bcomputer\b/u.test(normalized)) {
-		context = "in the browser or on your computer";
-	} else if (/\bbrowser\b/u.test(normalized)) {
-		context = "in the browser";
-	} else if (/\bcomputer\b/u.test(normalized)) {
-		context = "on your computer";
-	} else if (/\bworkflow\b/u.test(normalized)) {
-		context = "when a remote workflow gets stuck";
-	}
+  const normalized = text.trim().toLowerCase();
+  let context = "while working remotely";
+  if (/\bbrowser\b/u.test(normalized) && /\bcomputer\b/u.test(normalized)) {
+    context = "in the browser or on your computer";
+  } else if (/\bbrowser\b/u.test(normalized)) {
+    context = "in the browser";
+  } else if (/\bcomputer\b/u.test(normalized)) {
+    context = "on your computer";
+  } else if (/\bworkflow\b/u.test(normalized)) {
+    context = "when a remote workflow gets stuck";
+  }
 
-	return `If I get stuck ${context}, I'll escalate by phone and call you so you can jump in and unblock it. I've recorded that escalation path for when it's needed.`;
+  return `If I get stuck ${context}, I'll escalate by phone and call you so you can jump in and unblock it. I've recorded that escalation path for when it's needed.`;
 }
 
 export const callUserAction: Action & {
@@ -427,13 +580,16 @@ export const callUserAction: Action & {
     "Place an outbound phone call to the agent owner via Twilio. Use this when the assistant is blocked and needs real-time help from the owner, or when the owner explicitly asks to be called. Standing policies like 'if you get stuck in the browser or on my computer, call me' belong here on the first turn; this action can record the escalation path and return a confirmation/intervention request instead of dialing immediately when confirmation is still required.",
   suppressPostActionContinuation: true,
 
-  validate: async (runtime: IAgentRuntime, message: Memory): Promise<boolean> => {
+  validate: async (
+    runtime: IAgentRuntime,
+    message: Memory,
+  ): Promise<boolean> => {
     return hasOwnerAccess(runtime, message);
   },
 
-	handler: async (runtime, message, _state, options): Promise<ActionResult> => {
-		if (!(await hasOwnerAccess(runtime, message))) {
-			return {
+  handler: async (runtime, message, _state, options): Promise<ActionResult> => {
+    if (!(await hasOwnerAccess(runtime, message))) {
+      return {
         text: "",
         success: false,
         values: { success: false, error: "PERMISSION_DENIED" },
@@ -441,37 +597,58 @@ export const callUserAction: Action & {
       };
     }
 
-		const params =
-			((options as HandlerOptions | undefined)?.parameters as
-				| CallUserParameters
-				| undefined) ?? {};
-		const requestText = messageText(message);
+    const params =
+      ((options as HandlerOptions | undefined)?.parameters as
+        | CallUserParameters
+        | undefined) ?? {};
+    const userText =
+      typeof message.content?.text === "string" ? message.content.text : "";
+    if (params.confirmed !== true && looksLikeStandingCallPolicy(userText)) {
+      return {
+        text: buildCallUserPolicyAcknowledgement(userText),
+        success: true,
+        values: { success: true, policyRecorded: true },
+        data: {
+          actionName: "CALL_USER",
+          policyRecorded: true,
+          channel: "phone_call",
+        },
+      };
+    }
+    const pendingDraft = await readPendingCallDraft(
+      runtime,
+      message.roomId,
+      "CALL_USER",
+    );
 
-		if (params.confirmed !== true && looksLikeStandingCallPolicy(requestText)) {
-			return {
-				text: buildCallUserPolicyAcknowledgement(requestText),
-				success: true,
-				values: {
-					success: true,
-					policyRecorded: true,
-					channel: "phone_call",
-				},
-				data: {
-					actionName: "CALL_USER",
-					policyRecorded: true,
-					channel: "phone_call",
-					status: "planned",
-				},
-			};
-		}
-
-		if (params.confirmed !== true) {
-			logger.info({ action: "CALL_USER" }, "[CALL_USER] confirmation required");
-			return {
+    if (params.confirmed !== true) {
+      logger.info({ action: "CALL_USER" }, "[CALL_USER] confirmation required");
+      const spokenMessage =
+        params.message?.trim() ||
+        pendingDraft?.message?.trim() ||
+        "Your agent is calling you.";
+      const approvalTaskId = await enqueueCallApprovalRequest({
+        runtime,
+        message,
+        actionName: "CALL_USER",
+        body: spokenMessage,
+      });
+      await writePendingCallDraft(runtime, message.roomId, {
+        actionName: "CALL_USER",
+        to: readOwnerNumber(runtime),
+        message: spokenMessage,
+        approvalTaskId,
+        createdAt: new Date().toISOString(),
+      });
+      return {
         text: "Please confirm before I place the call.",
         success: false,
         values: { success: false, requiresConfirmation: true },
-        data: { actionName: "CALL_USER", requiresConfirmation: true },
+        data: {
+          actionName: "CALL_USER",
+          requiresConfirmation: true,
+          approvalTaskId,
+        },
       };
     }
 
@@ -513,13 +690,22 @@ export const callUserAction: Action & {
     }
 
     const spokenMessage =
-      params.message?.trim() || "Your agent is calling you.";
+      params.message?.trim() ||
+      pendingDraft?.message?.trim() ||
+      "Your agent is calling you.";
     const delivery = await sendTwilioVoiceCall({
       credentials,
       to,
       message: spokenMessage,
     });
-    return deliveryToResult(delivery, to, "CALL_USER");
+    const result = deliveryToResult(delivery, to, "CALL_USER");
+    if (result.success) {
+      await clearPendingCallDraft(runtime, message.roomId, "CALL_USER");
+      if (pendingDraft?.approvalTaskId) {
+        await runtime.deleteTask(pendingDraft.approvalTaskId as never);
+      }
+    }
+    return result;
   },
 
   parameters: [
@@ -596,7 +782,10 @@ export const callExternalAction: Action & {
     "Place an outbound phone call to a third party via Twilio. Use this for approved booking, reschedule, outage, support, or escalation calls to vendors or counterparties. Examples: 'call the dentist and reschedule my appointment', 'phone my cable company and ask about the outage', 'call the airline', or 'call the hotel to rebook'. This action can draft the call, ask which saved contact to use, and then require confirmation before dialing. If the user wants a real phone call to a third party, prefer this action over OWNER_CALENDAR, LIFE, or OWNER_SEND_MESSAGE. The recipient must appear in the configured allow-list before the actual call is placed.",
   suppressPostActionContinuation: true,
 
-  validate: async (runtime: IAgentRuntime, message: Memory): Promise<boolean> => {
+  validate: async (
+    runtime: IAgentRuntime,
+    message: Memory,
+  ): Promise<boolean> => {
     return hasOwnerAccess(runtime, message);
   },
 
@@ -614,8 +803,19 @@ export const callExternalAction: Action & {
       ((options as HandlerOptions | undefined)?.parameters as
         | CallExternalParameters
         | undefined) ?? {};
-    const to = params.to?.trim();
-    const contact = params.contact?.trim();
+    const pendingDraft = await readPendingCallDraft(
+      runtime,
+      message.roomId,
+      "CALL_EXTERNAL",
+    );
+    const resolvedRecipient = await resolveExternalCallRecipient({
+      runtime,
+      providedTo: params.to ?? pendingDraft?.to ?? undefined,
+      messageText:
+        typeof message.content?.text === "string" ? message.content.text : "",
+    });
+    const to = resolvedRecipient.to?.trim();
+    const contact: string | undefined = undefined;
     if (!to) {
       return {
         text: "Who should I call, or which saved contact/phone number should I use?",
@@ -646,6 +846,24 @@ export const callExternalAction: Action & {
         { action: "CALL_EXTERNAL", to },
         "[CALL_EXTERNAL] confirmation required",
       );
+      const spokenMessage =
+        params.message?.trim() ||
+        pendingDraft?.message?.trim() ||
+        "This is a call from an automated assistant.";
+      const approvalTaskId = await enqueueCallApprovalRequest({
+        runtime,
+        message,
+        actionName: "CALL_EXTERNAL",
+        to,
+        body: spokenMessage,
+      });
+      await writePendingCallDraft(runtime, message.roomId, {
+        actionName: "CALL_EXTERNAL",
+        to,
+        message: spokenMessage,
+        approvalTaskId,
+        createdAt: new Date().toISOString(),
+      });
       return {
         text: `Please confirm before I call ${to}.`,
         success: false,
@@ -654,12 +872,19 @@ export const callExternalAction: Action & {
           actionName: "CALL_EXTERNAL",
           requiresConfirmation: true,
           to,
+          matchedRelationshipId:
+            resolvedRecipient.matchedRelationshipId ?? null,
+          approvalTaskId,
         },
       };
     }
 
     const allowList = readExternalAllowList(runtime);
-    if (!allowList.includes(to)) {
+    const normalizedTo = normalizePhoneAllowListKey(to);
+    const isAllowed = allowList.some(
+      (candidate) => normalizePhoneAllowListKey(candidate) === normalizedTo,
+    );
+    if (!isAllowed) {
       logger.warn(
         { action: "CALL_EXTERNAL", to },
         "[CALL_EXTERNAL] recipient not in allow-list",
@@ -672,6 +897,8 @@ export const callExternalAction: Action & {
           actionName: "CALL_EXTERNAL",
           reason: "disallowed-recipient",
           to,
+          matchedRelationshipId:
+            resolvedRecipient.matchedRelationshipId ?? null,
         },
       };
     }
@@ -687,13 +914,22 @@ export const callExternalAction: Action & {
     }
 
     const spokenMessage =
-      params.message?.trim() || "This is a call from an automated assistant.";
+      params.message?.trim() ||
+      pendingDraft?.message?.trim() ||
+      "This is a call from an automated assistant.";
     const delivery = await sendTwilioVoiceCall({
       credentials,
       to,
       message: spokenMessage,
     });
-    return deliveryToResult(delivery, to, "CALL_EXTERNAL");
+    const result = deliveryToResult(delivery, to, "CALL_EXTERNAL");
+    if (result.success) {
+      await clearPendingCallDraft(runtime, message.roomId, "CALL_EXTERNAL");
+      if (pendingDraft?.approvalTaskId) {
+        await runtime.deleteTask(pendingDraft.approvalTaskId as never);
+      }
+    }
+    return result;
   },
 
   parameters: [

@@ -12,10 +12,14 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import puppeteer, { type Browser, type Page } from "puppeteer-core";
+import { type Browser, type Page } from "puppeteer-core";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { resolveLiveBrowserExecutable } from "../../../../../test/helpers/browser-executable";
 import { describeIf } from "../../../../../test/helpers/conditional-tests.ts";
+import {
+  closePuppeteerBrowser,
+  launchPuppeteerBrowserWithRetry,
+} from "../helpers/browser-launch";
 import {
   buildIsolatedLiveProviderEnv,
   selectLiveProvider,
@@ -41,6 +45,8 @@ const LIVE_BROWSER = resolveLiveBrowserExecutable();
 const CHROME_PATH = LIVE_BROWSER.executablePath;
 const LIVE_TESTS_ENABLED =
   process.env.MILADY_LIVE_TEST === "1" || process.env.ELIZA_LIVE_TEST === "1";
+const LIVE_BROWSER_SUITE_ENABLED =
+  process.env.MILADY_LIVE_BROWSER_SUITE === "1";
 const CHROME_AVAILABLE = CHROME_PATH !== null && existsSync(CHROME_PATH);
 const LIVE_PROVIDER =
   (LIVE_TESTS_ENABLED && selectLiveProvider("openai")) ||
@@ -113,7 +119,9 @@ let liveStack: StartedStack | null = null;
 let uiUrl = DEFAULT_UI_URL;
 let apiUrl = DEFAULT_API_URL;
 
-const describeLive = describeIf(LIVE_TESTS_ENABLED && CHROME_AVAILABLE);
+const describeLive = describeIf(
+  LIVE_TESTS_ENABLED && LIVE_BROWSER_SUITE_ENABLED && CHROME_AVAILABLE,
+);
 
 if (LIVE_TESTS_ENABLED && !CHROME_AVAILABLE) {
   console.info(
@@ -136,18 +144,20 @@ describeLive("Live memory + relationships browser E2E", () => {
     apiUrl = stripTrailingSlash(liveStack.apiBase);
     await ensureHttpOk(`${uiUrl}/`);
     await ensureHttpOk(`${apiUrl}/api/status`);
-    browserProfileDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "eliza-memory-browser-"),
-    );
-    browser = await launchMemoryBrowser(browserProfileDir);
+    browser = await launchPuppeteerBrowserWithRetry({
+      executablePath: CHROME_PATH,
+      headless: true,
+      protocolTimeout: 180_000,
+      args: [
+        "--disable-background-timer-throttling",
+        "--disable-renderer-backgrounding",
+        "--use-angle=swiftshader",
+      ],
+    });
   }, 120_000);
 
   afterAll(async () => {
-    await browser?.close();
-    if (browserProfileDir) {
-      await fs.rm(browserProfileDir, { recursive: true, force: true });
-      browserProfileDir = null;
-    }
+    await closePuppeteerBrowser(browser);
     await stopRealStack(liveStack);
     liveStack = null;
   }, 30_000);

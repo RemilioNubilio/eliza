@@ -14,6 +14,19 @@ import { getDefaultStylePreset } from "@elizaos/shared/onboarding-presets";
 import { type RefObject, useCallback } from "react";
 import type { StylePreset } from "../api";
 import { ElizaClient, type VoiceConfig } from "../api";
+
+const ensureOnboardedAgentRunning = async (
+  client: ElizaClient,
+): Promise<void> => {
+  try {
+    const status = await client.getStatus();
+    if (status?.state !== "running" && status?.state !== "starting") {
+      await client.startAgent();
+    }
+  } catch {
+    // Non-fatal: agent manager may not be ready yet. Onboarding will retry.
+  }
+};
 import {
   getDesktopRuntimeMode,
   invokeDesktopBridgeRequest,
@@ -164,17 +177,6 @@ async function persistOnboardingStyleVoice(args: {
       tts: voiceConfig,
     },
   });
-}
-
-async function ensureOnboardedAgentRunning(
-  clientRef: ElizaClient,
-): Promise<void> {
-  const status = await clientRef.startAndWait(120_000);
-  if (status.state !== "running") {
-    throw new Error(
-      `Agent failed to reach running state after onboarding (state: ${status.state}).`,
-    );
-  }
 }
 
 export function buildOnboardingFeatureSubmitPayload(args: {
@@ -413,71 +415,6 @@ export function useOnboardingCallbacks(deps: OnboardingCallbacksDeps) {
           setComputerUseEnabled?.(onboardingFeatureComputerUse);
         };
 
-        if (useCloudFastTrack) {
-          const style = resolveSelectedOnboardingStyle({
-            styles: onboardingOptions.styles,
-            onboardingStyle,
-            selectedVrmIndex,
-            uiLanguage,
-          });
-          const defaultName =
-            style.name ?? getDefaultStylePreset(uiLanguage).name;
-
-          await client.submitOnboarding({
-            name: onboardingName || defaultName,
-            bio: style?.bio ?? ["An autonomous AI agent."],
-            systemPrompt:
-              style?.system?.replace(
-                /\{\{name\}\}/g,
-                onboardingName || defaultName,
-              ) ??
-              `You are ${onboardingName || defaultName}, an autonomous AI agent powered by elizaOS.`,
-            style: style?.style,
-            adjectives: style?.adjectives,
-            postExamples: style?.postExamples,
-            messageExamples: style?.messageExamples,
-            topics: style?.topics,
-            avatarIndex: style?.avatarIndex ?? 1,
-            language: uiLanguage,
-            presetId: style?.id ?? getDefaultStylePreset(uiLanguage).id,
-            runMode: "cloud",
-            cloudProvider: "elizacloud",
-            smallModel: onboardingSmallModel,
-            largeModel: onboardingLargeModel,
-            ...onboardingFeaturePayload,
-          });
-          try {
-            await persistOnboardingStyleVoice({
-              style,
-              voiceProvider: onboardingVoiceProvider,
-              voiceApiKey: onboardingVoiceApiKey,
-              cloudTtsSelected: true,
-              clientRef: client,
-            });
-          } catch (err) {
-            console.warn(
-              "[onboarding] Failed to persist cloud voice preset",
-              err,
-            );
-          }
-          await ensureOnboardedAgentRunning(client);
-
-          applySelectedLocalCapabilities();
-          completeOnboarding();
-          return;
-        }
-
-        const style = resolveSelectedOnboardingStyle({
-          styles: onboardingOptions.styles,
-          onboardingStyle,
-          selectedVrmIndex,
-          uiLanguage,
-        });
-
-        const systemPrompt = style?.system
-          ? style.system.replace(/\{\{name\}\}/g, onboardingName)
-          : `You are ${onboardingName}, an autonomous AI agent powered by elizaOS. ${onboardingOptions.sharedStyleRules}`;
-
         const runtimeConfig = buildOnboardingRuntimeConfig({
           onboardingServerTarget,
           onboardingCloudApiKey,
@@ -511,6 +448,93 @@ export function useOnboardingCallbacks(deps: OnboardingCallbacksDeps) {
             solana: rpcSel.solana,
           },
         });
+
+        if (useCloudFastTrack) {
+          const style = resolveSelectedOnboardingStyle({
+            styles: onboardingOptions.styles,
+            onboardingStyle,
+            selectedVrmIndex,
+            uiLanguage,
+          });
+          const defaultName =
+            style.name ?? getDefaultStylePreset(uiLanguage).name;
+          const fastTrackSandboxMode =
+            onboardingServerTarget === "elizacloud" ? "standard" : "off";
+
+          await client.submitOnboarding({
+            name: onboardingName || defaultName,
+            sandboxMode: fastTrackSandboxMode as "off",
+            bio: style?.bio ?? ["An autonomous AI agent."],
+            systemPrompt:
+              style?.system?.replace(
+                /\{\{name\}\}/g,
+                onboardingName || defaultName,
+              ) ??
+              `You are ${onboardingName || defaultName}, an autonomous AI agent powered by elizaOS.`,
+            style: style?.style,
+            adjectives: style?.adjectives,
+            postExamples: style?.postExamples,
+            messageExamples: style?.messageExamples,
+            topics: style?.topics,
+            avatarIndex: style?.avatarIndex ?? 1,
+            language: uiLanguage,
+            presetId: style?.id ?? getDefaultStylePreset(uiLanguage).id,
+            deploymentTarget: runtimeConfig.deploymentTarget,
+            ...(runtimeConfig.linkedAccounts
+              ? { linkedAccounts: runtimeConfig.linkedAccounts }
+              : {}),
+            ...(runtimeConfig.serviceRouting
+              ? { serviceRouting: runtimeConfig.serviceRouting }
+              : {}),
+            ...(runtimeConfig.credentialInputs
+              ? { credentialInputs: runtimeConfig.credentialInputs }
+              : {}),
+            ...onboardingFeaturePayload,
+            walletConfig: nextWalletConfig,
+          } as Parameters<typeof client.submitOnboarding>[0]);
+          try {
+            await persistOnboardingStyleVoice({
+              style,
+              voiceProvider: onboardingVoiceProvider,
+              voiceApiKey: onboardingVoiceApiKey,
+              cloudTtsSelected:
+                runtimeConfig.serviceRouting?.tts?.transport === "cloud-proxy" &&
+                runtimeConfig.serviceRouting?.tts?.backend === "elizacloud",
+              clientRef: client,
+            });
+          } catch (err) {
+            console.warn(
+              "[onboarding] Failed to persist cloud voice preset",
+              err,
+            );
+          }
+
+          applySelectedLocalCapabilities();
+          if (runtimeConfig.needsProviderSetup) {
+            setActionNotice(
+              "Choose a chat provider in Settings to start chatting.",
+              "info",
+              6000,
+            );
+            completeOnboarding("settings");
+            return;
+          }
+          await ensureOnboardedAgentRunning(client);
+
+          completeOnboarding();
+          return;
+        }
+
+        const style = resolveSelectedOnboardingStyle({
+          styles: onboardingOptions.styles,
+          onboardingStyle,
+          selectedVrmIndex,
+          uiLanguage,
+        });
+
+        const systemPrompt = style?.system
+          ? style.system.replace(/\{\{name\}\}/g, onboardingName)
+          : `You are ${onboardingName}, an autonomous AI agent powered by elizaOS. ${onboardingOptions.sharedStyleRules}`;
 
         const isSandboxMode = onboardingServerTarget === "elizacloud";
         const isLocalMode =

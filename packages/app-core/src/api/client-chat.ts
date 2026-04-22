@@ -4,6 +4,16 @@
  */
 
 import type { DatabaseProviderType } from "@elizaos/agent/contracts/config";
+import type {
+  CaptureLifeOpsActivitySignalRequest,
+  CreateLifeOpsBrowserCompanionPairingRequest,
+  LifeOpsActivitySignal,
+  LifeOpsBrowserCompanionPackageStatus,
+  LifeOpsBrowserCompanionPairingResponse,
+  LifeOpsBrowserKind,
+  LifeOpsConnectorMode,
+  LifeOpsConnectorSide,
+} from "@elizaos/app-lifeops/contracts";
 import { ElizaClient } from "./client-base";
 import type {
   ApiError,
@@ -139,6 +149,11 @@ declare module "./client-base" {
         worldId?: string;
         /** User-facing server/world label for selectors and section headers. */
         worldLabel: string;
+        /**
+         * Normalized room kind — "DM" for 1:1 direct messages. Optional
+         * because not every connector tags rooms.
+         */
+        roomType?: string;
         title: string;
         avatarUrl?: string;
         lastMessageText: string;
@@ -213,6 +228,9 @@ declare module "./client-base" {
       },
     ): Promise<{ conversation: Conversation }>;
     deleteConversation(id: string): Promise<{ ok: boolean }>;
+    cleanupEmptyConversations(options?: {
+      keepId?: string;
+    }): Promise<{ deleted: string[] }>;
     getKnowledgeStats(): Promise<KnowledgeStats>;
     listKnowledgeDocuments(options?: {
       limit?: number;
@@ -777,6 +795,19 @@ ElizaClient.prototype.deleteConversation = async function (
 ) {
   return this.fetch(`/api/conversations/${encodeURIComponent(id)}`, {
     method: "DELETE",
+  });
+};
+
+ElizaClient.prototype.cleanupEmptyConversations = async function (
+  this: ElizaClient,
+  options?,
+) {
+  return this.fetch("/api/conversations/cleanup-empty", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...(options?.keepId ? { keepId: options.keepId } : {}),
+    }),
   });
 };
 

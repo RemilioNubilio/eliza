@@ -1,39 +1,51 @@
-/**
- * LifeOps widgets module — side-effect import registers:
- *   1. LifeOps client methods on ElizaClient (via ../api/client-lifeops)
- *   2. LifeOps widget components in the app-core widget registry
- *   3. LifeOps sidebar widget declarations for the "chat-sidebar" slot
- *
- * Usage:
- *   import "@elizaos/app-lifeops/widgets";
- */
-
-// Side-effect: augment ElizaClient with LifeOps methods.
 import "../api/client-lifeops.js";
 import {
   registerBuiltinWidgetDeclarations,
   registerBuiltinWidgets,
 } from "@elizaos/app-core/widgets";
+import { LIFEOPS_CHANNEL_WIDGETS } from "../components/chat/widgets/plugins/lifeops-channels.js";
 import {
-  LifeOpsOverviewSidebarWidget,
   LIFEOPS_OVERVIEW_WIDGETS,
+  LifeOpsOverviewSidebarWidget,
 } from "../components/chat/widgets/plugins/lifeops-overview.js";
 
-registerBuiltinWidgets(LIFEOPS_OVERVIEW_WIDGETS);
+// The consolidated "Glance" overview is intentionally not registered —
+// the right rail now surfaces Calendar, Inbox, and Automations as three
+// focused widgets instead. The overview component stays exported so the
+// LifeOps page view (or future entry points) can still render it.
+registerBuiltinWidgets([...LIFEOPS_CHANNEL_WIDGETS]);
 
 registerBuiltinWidgetDeclarations(
   [
     {
-      id: "lifeops.overview",
+      id: "lifeops.calendar",
       pluginId: "lifeops",
       slot: "chat-sidebar",
-      label: "LifeOps Glance",
-      icon: "Sparkles",
-      order: 90,
+      label: "Calendar",
+      icon: "CalendarDays",
+      order: 85,
+      defaultEnabled: true,
+    },
+    {
+      id: "lifeops.inbox",
+      pluginId: "lifeops",
+      slot: "chat-sidebar",
+      label: "Inbox",
+      icon: "Mail",
+      order: 86,
+      defaultEnabled: true,
+    },
+    {
+      id: "lifeops.automations",
+      pluginId: "lifeops",
+      slot: "chat-sidebar",
+      label: "Automations",
+      icon: "Clock",
+      order: 87,
       defaultEnabled: true,
     },
   ],
   { fallbackPluginIds: ["lifeops"] },
 );
 
-export { LifeOpsOverviewSidebarWidget, LIFEOPS_OVERVIEW_WIDGETS };
+export { LIFEOPS_OVERVIEW_WIDGETS, LifeOpsOverviewSidebarWidget };

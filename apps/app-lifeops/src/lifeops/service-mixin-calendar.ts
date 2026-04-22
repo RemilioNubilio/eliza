@@ -10,7 +10,7 @@ import type {
   LifeOpsConnectorSide,
   LifeOpsGmailMessageSummary,
   LifeOpsNextCalendarEventContext,
-} from "@elizaos/shared/contracts/lifeops";
+} from "@elizaos/app-lifeops/contracts";
 import {
   createGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
@@ -64,13 +64,63 @@ import {
   normalizeOptionalBoolean,
 } from "./service-normalize.js";
 import { LifeOpsServiceError } from "./service-types.js";
-import type { Constructor, LifeOpsServiceBase } from "./service-mixin-core.js";
+import type {
+  Constructor,
+  LifeOpsServiceBase,
+  MixinClass,
+} from "./service-mixin-core.js";
+
+export interface LifeOpsCalendarService {
+  getCalendarFeed(
+    requestUrl: URL,
+    request?: GetLifeOpsCalendarFeedRequest,
+    now?: Date,
+  ): Promise<LifeOpsCalendarFeed>;
+  createCalendarEvent(
+    requestUrl: URL,
+    request: CreateLifeOpsCalendarEventRequest,
+    now?: Date,
+  ): Promise<LifeOpsCalendarEvent>;
+  updateCalendarEvent(
+    requestUrl: URL,
+    request: {
+      mode?: LifeOpsConnectorMode | null;
+      side?: LifeOpsConnectorSide | null;
+      grantId?: string;
+      calendarId?: string | null;
+      eventId: string;
+      title?: string;
+      description?: string;
+      location?: string;
+      startAt?: string;
+      endAt?: string;
+      timeZone?: string;
+      attendees?: CreateLifeOpsCalendarEventAttendee[] | null;
+    },
+  ): Promise<LifeOpsCalendarEvent>;
+  deleteCalendarEvent(
+    requestUrl: URL,
+    request: {
+      mode?: LifeOpsConnectorMode | null;
+      side?: LifeOpsConnectorSide | null;
+      grantId?: string;
+      calendarId?: string | null;
+      eventId: string;
+    },
+  ): Promise<void>;
+  getNextCalendarEventContext(
+    requestUrl: URL,
+    request?: GetLifeOpsCalendarFeedRequest,
+    now?: Date,
+  ): Promise<LifeOpsNextCalendarEventContext>;
+}
 
 const DEFAULT_GMAIL_TRIAGE_MAX_RESULTS = 12;
 
-/** @internal */
-export function withCalendar<TBase extends Constructor<LifeOpsServiceBase>>(Base: TBase) {
-  class LifeOpsCalendarServiceMixin extends Base {
+export function withCalendar<TBase extends Constructor<LifeOpsServiceBase>>(
+  Base: TBase,
+): MixinClass<TBase, LifeOpsCalendarService> {
+  return class extends Base {
 
     public async recordCalendarEventAudit(
       ownerId: string,
@@ -172,6 +222,7 @@ export function withCalendar<TBase extends Constructor<LifeOpsServiceBase>>(Base
       );
       const syncCalendar = async (): Promise<LifeOpsCalendarFeed> => {
         const syncedAt = new Date().toISOString();
+        const syncRecordedAt = new Date(syncedAt);
         const existingEvents = await this.repository.listCalendarEvents(
           this.agentId(),
           "google",
@@ -239,15 +290,41 @@ export function withCalendar<TBase extends Constructor<LifeOpsServiceBase>>(Base
         }
         await this.syncCalendarReminderPlans(nextEvents);
 
+        const existingSyncState = await this.repository.getCalendarSyncState(
+          this.agentId(),
+          "google",
+          args.calendarId,
+          grant.side,
+        );
+        const preserveExistingCoveredWindow =
+          existingSyncState &&
+          isCalendarSyncStateFresh({
+            syncedAt: existingSyncState.syncedAt,
+            timeMin: existingSyncState.windowStartAt,
+            timeMax: existingSyncState.windowEndAt,
+            windowStartAt: existingSyncState.windowStartAt,
+            windowEndAt: existingSyncState.windowEndAt,
+            now: syncRecordedAt,
+          }) &&
+          Date.parse(existingSyncState.windowStartAt) <=
+            Date.parse(args.timeMin) &&
+          Date.parse(existingSyncState.windowEndAt) >= Date.parse(args.timeMax);
+
         await this.repository.upsertCalendarSyncState(
           createLifeOpsCalendarSyncState({
             agentId: this.agentId(),
             provider: "google",
             side: grant.side,
             calendarId: args.calendarId,
-            windowStartAt: args.timeMin,
-            windowEndAt: args.timeMax,
-            syncedAt,
+            windowStartAt: preserveExistingCoveredWindow
+              ? existingSyncState.windowStartAt
+              : args.timeMin,
+            windowEndAt: preserveExistingCoveredWindow
+              ? existingSyncState.windowEndAt
+              : args.timeMax,
+            syncedAt: preserveExistingCoveredWindow
+              ? existingSyncState.syncedAt
+              : syncedAt,
           }),
         );
         await this.clearGoogleGrantAuthFailure(grant);
@@ -319,7 +396,7 @@ export function withCalendar<TBase extends Constructor<LifeOpsServiceBase>>(Base
         calendarId,
         effectiveSide,
       );
-      if (
+      const cacheFresh =
         !forceSync &&
         syncState &&
         isCalendarSyncStateFresh({
@@ -329,7 +406,9 @@ export function withCalendar<TBase extends Constructor<LifeOpsServiceBase>>(Base
           windowStartAt: syncState.windowStartAt,
           windowEndAt: syncState.windowEndAt,
           now,
-        })
+        });
+      if (
+        cacheFresh
       ) {
         return {
           calendarId,
@@ -347,54 +426,16 @@ export function withCalendar<TBase extends Constructor<LifeOpsServiceBase>>(Base
         };
       }
 
-      try {
-        return await this.syncGoogleCalendarFeed({
-          requestUrl,
-          requestedMode: mode,
-          requestedSide: effectiveSide,
-          grantId: grant.id,
-          calendarId,
-          timeMin,
-          timeMax,
-          timeZone,
-        });
-      } catch (error) {
-        if (
-          error instanceof LifeOpsServiceError &&
-          (error.status === 401 || error.status === 403)
-        ) {
-          const cachedEvents = await this.repository.listCalendarEvents(
-            this.agentId(),
-            "google",
-            timeMin,
-            timeMax,
-            effectiveSide,
-          );
-          if (cachedEvents.length > 0) {
-            this.logLifeOpsWarn(
-              "calendar_feed_cache_fallback",
-              "Using cached calendar events after Google sync failed.",
-              {
-                statusCode: error.status,
-                calendarId,
-                timeMin,
-                timeMax,
-                side: effectiveSide,
-                cachedEventCount: cachedEvents.length,
-              },
-            );
-            return {
-              calendarId,
-              events: cachedEvents,
-              source: "cache",
-              timeMin,
-              timeMax,
-              syncedAt: syncState?.syncedAt ?? null,
-            };
-          }
-        }
-        throw error;
-      }
+      return await this.syncGoogleCalendarFeed({
+        requestUrl,
+        requestedMode: mode,
+        requestedSide: effectiveSide,
+        grantId: grant.id,
+        calendarId,
+        timeMin,
+        timeMax,
+        timeZone,
+      });
     }
 
     public async aggregateCalendarFeeds(
@@ -904,7 +945,5 @@ export function withCalendar<TBase extends Constructor<LifeOpsServiceBase>>(Base
         linkedMailError,
       );
     }
-  }
-
-  return LifeOpsCalendarServiceMixin;
+  } as MixinClass<TBase, LifeOpsCalendarService>;
 }

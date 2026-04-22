@@ -7,8 +7,8 @@ import type {
   LifeOpsBrowserCompanionReleaseManifest,
   LifeOpsBrowserKind,
   LifeOpsBrowserPackagePathTarget,
-} from "@elizaos/shared/contracts/lifeops";
-import { VERSION } from "@elizaos/agent/runtime/version";
+} from "../contracts/lifeops";
+import { VERSION } from "@elizaos/agent/runtime";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

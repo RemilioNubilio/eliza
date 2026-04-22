@@ -11,6 +11,7 @@
  * The `@elizaos/app-lifeops/widgets` entry point imports this transitively.
  */
 
+import { ElizaClient } from "@elizaos/app-core/api/client-base";
 import type {
   CaptureLifeOpsActivitySignalRequest,
   CompleteLifeOpsBrowserSessionRequest,
@@ -25,12 +26,13 @@ import type {
   CreateLifeOpsGoalRequest,
   DisconnectLifeOpsGoogleConnectorRequest,
   DisconnectLifeOpsMessagingConnectorRequest,
-  GetLifeOpsIMessageMessagesRequest,
   GetLifeOpsCalendarFeedRequest,
   GetLifeOpsGmailTriageRequest,
+  GetLifeOpsIMessageMessagesRequest,
+  GetLifeOpsUnifiedInboxRequest,
   LifeOpsActivitySignal,
-  LifeOpsBrowserCompanionPackageStatus,
   LifeOpsBrowserCompanionAutoPairResponse,
+  LifeOpsBrowserCompanionPackageStatus,
   LifeOpsBrowserCompanionPairingResponse,
   LifeOpsBrowserCompanionStatus,
   LifeOpsBrowserKind,
@@ -39,7 +41,10 @@ import type {
   LifeOpsBrowserSession,
   LifeOpsBrowserSettings,
   LifeOpsBrowserTabSummary,
+  LifeOpsCalendarEventMutationResult,
+  LifeOpsCalendarEventUpdate,
   LifeOpsCalendarFeed,
+  LifeOpsCapabilitiesStatus,
   LifeOpsConnectorMode,
   LifeOpsConnectorSide,
   LifeOpsDefinitionRecord,
@@ -56,12 +61,14 @@ import type {
   LifeOpsOccurrenceActionResult,
   LifeOpsOccurrenceExplanation,
   LifeOpsOverview,
-  OpenLifeOpsBrowserCompanionManagerResponse,
-  OpenLifeOpsBrowserCompanionPackagePathResponse,
   LifeOpsReminderInspection,
   LifeOpsSignalConnectorStatus,
   LifeOpsSignalPairingStatus,
   LifeOpsTelegramConnectorStatus,
+  LifeOpsUnifiedInbox,
+  LifeOpsXConnectorStatus,
+  OpenLifeOpsBrowserCompanionManagerResponse,
+  OpenLifeOpsBrowserCompanionPackagePathResponse,
   SelectLifeOpsGoogleConnectorPreferenceRequest,
   SendLifeOpsGmailReplyRequest,
   SendLifeOpsIMessageRequest,
@@ -74,15 +81,45 @@ import type {
   StartLifeOpsTelegramAuthRequest,
   StartLifeOpsTelegramAuthResponse,
   SubmitLifeOpsTelegramAuthRequest,
-  VerifyLifeOpsTelegramConnectorRequest,
-  VerifyLifeOpsTelegramConnectorResponse,
   SyncLifeOpsBrowserStateRequest,
   UpdateLifeOpsBrowserSessionProgressRequest,
   UpdateLifeOpsBrowserSettingsRequest,
   UpdateLifeOpsDefinitionRequest,
   UpdateLifeOpsGoalRequest,
+  VerifyLifeOpsTelegramConnectorRequest,
+  VerifyLifeOpsTelegramConnectorResponse,
 } from "@elizaos/shared/contracts/lifeops";
-import { ElizaClient } from "@elizaos/app-core/api/client-base";
+import type { GetLifeOpsScheduleMergedStateResponse } from "../lifeops/schedule-sync-contracts.js";
+import type { RoutineSeedTemplate } from "../lifeops/seed-routines.js";
+
+type LifeOpsSeedRoutinesResponse = {
+  createdIds: string[];
+};
+
+type LifeOpsSeedTemplatesResponse = {
+  needsSeeding: boolean;
+  availableTemplates: RoutineSeedTemplate[];
+};
+
+type LifeOpsXConnectorRequest = {
+  mode?: LifeOpsConnectorMode;
+  capabilities: LifeOpsXConnectorStatus["grantedCapabilities"];
+  grantedScopes?: string[];
+  identity?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+};
+
+type LifeOpsXPostRequest = {
+  mode?: LifeOpsConnectorMode;
+  text: string;
+  confirmPost?: boolean;
+};
+
+type LifeOpsScheduleMergedStateRequest = {
+  timezone?: string | null;
+  scope?: "local" | "cloud" | "effective";
+  refresh?: boolean;
+};
 
 declare module "@elizaos/app-core/api/client-base" {
   interface ElizaClient {
@@ -91,6 +128,15 @@ declare module "@elizaos/app-core/api/client-base" {
       enabled: boolean;
     }): Promise<{ enabled: boolean }>;
     getLifeOpsOverview(): Promise<LifeOpsOverview>;
+    getLifeOpsCapabilitiesStatus(): Promise<LifeOpsCapabilitiesStatus>;
+    getLifeOpsScheduleMergedState(
+      data?: LifeOpsScheduleMergedStateRequest,
+    ): Promise<GetLifeOpsScheduleMergedStateResponse>;
+    getLifeOpsSeedTemplates(): Promise<LifeOpsSeedTemplatesResponse>;
+    seedLifeOpsRoutines(data: {
+      keys: string[];
+      timezone?: string;
+    }): Promise<LifeOpsSeedRoutinesResponse>;
     getLifeOpsBrowserSettings(): Promise<{ settings: LifeOpsBrowserSettings }>;
     updateLifeOpsBrowserSettings(
       data: UpdateLifeOpsBrowserSettingsRequest,
@@ -168,6 +214,14 @@ declare module "@elizaos/app-core/api/client-base" {
     createLifeOpsCalendarEvent(
       data: CreateLifeOpsCalendarEventRequest,
     ): Promise<{ event: LifeOpsCalendarFeed["events"][number] }>;
+    updateLifeOpsCalendarEvent(
+      eventId: string,
+      patch: LifeOpsCalendarEventUpdate,
+    ): Promise<LifeOpsCalendarEventMutationResult>;
+    deleteLifeOpsCalendarEvent(eventId: string): Promise<{ deleted: true }>;
+    getLifeOpsUnifiedInbox(
+      options?: GetLifeOpsUnifiedInboxRequest,
+    ): Promise<LifeOpsUnifiedInbox>;
     createLifeOpsGmailReplyDraft(
       data: CreateLifeOpsGmailReplyDraftRequest,
     ): Promise<{ draft: LifeOpsGmailReplyDraft }>;
@@ -232,6 +286,19 @@ declare module "@elizaos/app-core/api/client-base" {
       mode?: LifeOpsConnectorMode,
       side?: LifeOpsConnectorSide,
     ): Promise<LifeOpsGoogleConnectorStatus[]>;
+    getXLifeOpsConnectorStatus(
+      mode?: LifeOpsConnectorMode,
+    ): Promise<LifeOpsXConnectorStatus>;
+    upsertXLifeOpsConnector(
+      data: LifeOpsXConnectorRequest,
+    ): Promise<LifeOpsXConnectorStatus>;
+    createXLifeOpsPost(data: LifeOpsXPostRequest): Promise<{
+      ok: boolean;
+      status: number | null;
+      postId?: string;
+      error?: string;
+      category: "success" | "auth" | "rate_limit" | "network" | "unknown";
+    }>;
 
     // --- iMessage connector ---
     getIMessageConnectorStatus(): Promise<LifeOpsIMessageConnectorStatus>;
@@ -256,10 +323,12 @@ declare module "@elizaos/app-core/api/client-base" {
     startLifeOpsSignalPairing(
       data?: StartLifeOpsSignalPairingRequest,
     ): Promise<StartLifeOpsSignalPairingResponse>;
-    getSignalPairingStatus(
+    getLifeOpsSignalPairingStatus(
       sessionId: string,
     ): Promise<LifeOpsSignalPairingStatus>;
-    stopLifeOpsSignalPairing(sessionId: string): Promise<void>;
+    stopLifeOpsSignalPairing(
+      sessionId: string,
+    ): Promise<LifeOpsSignalPairingStatus>;
     disconnectSignalConnector(
       data?: DisconnectLifeOpsMessagingConnectorRequest,
     ): Promise<LifeOpsSignalConnectorStatus>;
@@ -287,7 +356,7 @@ declare module "@elizaos/app-core/api/client-base" {
     ): Promise<StartLifeOpsTelegramAuthResponse>;
     cancelTelegramAuth(
       data?: DisconnectLifeOpsMessagingConnectorRequest,
-    ): Promise<void>;
+    ): Promise<LifeOpsTelegramConnectorStatus>;
     disconnectTelegramConnector(
       data?: DisconnectLifeOpsMessagingConnectorRequest,
     ): Promise<LifeOpsTelegramConnectorStatus>;
@@ -313,6 +382,48 @@ ElizaClient.prototype.updateLifeOpsAppState = async function (
 
 ElizaClient.prototype.getLifeOpsOverview = async function (this: ElizaClient) {
   return this.fetch("/api/lifeops/overview");
+};
+
+ElizaClient.prototype.getLifeOpsCapabilitiesStatus = async function (
+  this: ElizaClient,
+) {
+  return this.fetch("/api/lifeops/capabilities");
+};
+
+ElizaClient.prototype.getLifeOpsScheduleMergedState = async function (
+  this: ElizaClient,
+  data = {},
+) {
+  const params = new URLSearchParams();
+  if (data.timezone) {
+    params.set("timezone", data.timezone);
+  }
+  if (data.scope) {
+    params.set("scope", data.scope);
+  }
+  if (data.refresh !== undefined) {
+    params.set("refresh", String(data.refresh));
+  }
+  const query = params.toString();
+  return this.fetch<GetLifeOpsScheduleMergedStateResponse>(
+    `/api/lifeops/schedule/merged-state${query ? `?${query}` : ""}`,
+  );
+};
+
+ElizaClient.prototype.getLifeOpsSeedTemplates = async function (
+  this: ElizaClient,
+) {
+  return this.fetch("/api/lifeops/seed-templates");
+};
+
+ElizaClient.prototype.seedLifeOpsRoutines = async function (
+  this: ElizaClient,
+  data,
+) {
+  return this.fetch<LifeOpsSeedRoutinesResponse>("/api/lifeops/seed", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
 };
 
 ElizaClient.prototype.getLifeOpsBrowserSettings = async function (
@@ -606,6 +717,47 @@ ElizaClient.prototype.createLifeOpsCalendarEvent = async function (
   });
 };
 
+ElizaClient.prototype.updateLifeOpsCalendarEvent = async function (
+  this: ElizaClient,
+  eventId,
+  patch,
+) {
+  return this.fetch(
+    `/api/lifeops/calendar/events/${encodeURIComponent(eventId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    },
+  );
+};
+
+ElizaClient.prototype.deleteLifeOpsCalendarEvent = async function (
+  this: ElizaClient,
+  eventId,
+) {
+  return this.fetch(
+    `/api/lifeops/calendar/events/${encodeURIComponent(eventId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+};
+
+ElizaClient.prototype.getLifeOpsUnifiedInbox = async function (
+  this: ElizaClient,
+  options = {},
+) {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  if (options.channels && options.channels.length > 0) {
+    params.set("channels", options.channels.join(","));
+  }
+  const query = params.toString();
+  return this.fetch(`/api/lifeops/inbox/unified${query ? `?${query}` : ""}`);
+};
+
 ElizaClient.prototype.createLifeOpsGmailReplyDraft = async function (
   this: ElizaClient,
   data,
@@ -828,6 +980,38 @@ ElizaClient.prototype.getGoogleLifeOpsConnectorAccounts = async function (
   return this.fetch(`/api/lifeops/connectors/google/accounts${query}`);
 };
 
+ElizaClient.prototype.getXLifeOpsConnectorStatus = async function (
+  this: ElizaClient,
+  mode,
+) {
+  const params = new URLSearchParams();
+  if (mode) {
+    params.set("mode", mode);
+  }
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return this.fetch(`/api/lifeops/connectors/x/status${query}`);
+};
+
+ElizaClient.prototype.upsertXLifeOpsConnector = async function (
+  this: ElizaClient,
+  data,
+) {
+  return this.fetch("/api/lifeops/connectors/x", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+};
+
+ElizaClient.prototype.createXLifeOpsPost = async function (
+  this: ElizaClient,
+  data,
+) {
+  return this.fetch("/api/lifeops/x/posts", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+};
+
 // ---------------------------------------------------------------------------
 // iMessage connector
 // ---------------------------------------------------------------------------
@@ -901,12 +1085,12 @@ ElizaClient.prototype.startLifeOpsSignalPairing = async function (
   );
 };
 
-ElizaClient.prototype.getSignalPairingStatus = async function (
+ElizaClient.prototype.getLifeOpsSignalPairingStatus = async function (
   this: ElizaClient,
-  sessionId,
-) {
+  sessionId: string,
+): Promise<LifeOpsSignalPairingStatus> {
   const params = new URLSearchParams({ sessionId });
-  return this.fetch(
+  return this.fetch<LifeOpsSignalPairingStatus>(
     `/api/lifeops/connectors/signal/pairing-status?${params.toString()}`,
   );
 };
@@ -914,11 +1098,14 @@ ElizaClient.prototype.getSignalPairingStatus = async function (
 ElizaClient.prototype.stopLifeOpsSignalPairing = async function (
   this: ElizaClient,
   sessionId,
-): Promise<void> {
-  return this.fetch<void>("/api/lifeops/connectors/signal/stop", {
-    method: "POST",
-    body: JSON.stringify({ sessionId }),
-  });
+): Promise<LifeOpsSignalPairingStatus> {
+  return this.fetch<LifeOpsSignalPairingStatus>(
+    "/api/lifeops/connectors/signal/stop",
+    {
+      method: "POST",
+      body: JSON.stringify({ sessionId }),
+    },
+  );
 };
 
 ElizaClient.prototype.disconnectSignalConnector = async function (
@@ -1007,7 +1194,12 @@ ElizaClient.prototype.cancelTelegramAuth = async function (
   this: ElizaClient,
   data = { provider: "telegram" },
 ) {
-  return this.fetch("/api/lifeops/connectors/telegram/cancel", {
+  const params = new URLSearchParams();
+  if (data.side) {
+    params.set("side", data.side);
+  }
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return this.fetch(`/api/lifeops/connectors/telegram/cancel${query}`, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -1017,7 +1209,12 @@ ElizaClient.prototype.disconnectTelegramConnector = async function (
   this: ElizaClient,
   data = { provider: "telegram" },
 ) {
-  return this.fetch("/api/lifeops/connectors/telegram/disconnect", {
+  const params = new URLSearchParams();
+  if (data.side) {
+    params.set("side", data.side);
+  }
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return this.fetch(`/api/lifeops/connectors/telegram/disconnect${query}`, {
     method: "POST",
     body: JSON.stringify(data),
   });

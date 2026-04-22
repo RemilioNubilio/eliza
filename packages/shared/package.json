@@ -1,6 +1,6 @@
 {
   "name": "@elizaos/shared",
-  "version": "2.0.0-alpha.222",
+  "version": "2.0.0-alpha.269",
   "description": "Shared code for Eliza agent and app-core.",
   "type": "module",
   "main": "src/index.ts",
@@ -15,7 +15,7 @@
     "build": "bun run build:i18n && bun run build:dist",
     "build:i18n": "node scripts/generate-keywords.mjs --target ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run --config ./vitest.config.ts",
     "lint": "bunx @biomejs/biome check src",
     "lint:fix": "bunx @biomejs/biome check --write src",
     "format": "bunx @biomejs/biome format src",
@@ -33,6 +33,7 @@
     "./contracts/awareness": "./src/contracts/awareness.ts",
     "./contracts/config": "./src/contracts/config.ts",
     "./contracts/drop": "./src/contracts/drop.ts",
+    "./contracts/lifeops": "./src/contracts/lifeops.ts",
     "./contracts/onboarding": "./src/contracts/onboarding.ts",
     "./contracts/permissions": "./src/contracts/permissions.ts",
     "./contracts/service-routing": "./src/contracts/service-routing.ts",
@@ -41,7 +42,6 @@
     "./contracts/theme": "./src/contracts/theme.ts",
     "./themes": "./src/themes/index.ts",
     "./themes/presets": "./src/themes/presets.ts",
-    "./contracts/lifeops": "./src/contracts/lifeops.ts",
     "./contracts/wallet": "./src/contracts/wallet.ts",
     "./config": "./src/config/types.ts",
     "./awareness": "./src/awareness/index.ts",
@@ -54,7 +54,8 @@
     "./dev-settings-banner-style": "./src/dev-settings-banner-style.ts",
     "./dev-settings-figlet-heading": "./src/dev-settings-figlet-heading.ts",
     "./recent-messages-state": "./src/recent-messages-state.ts",
-    "./type-guards": "./src/type-guards.ts"
+    "./type-guards": "./src/type-guards.ts",
+    "./contracts/lifeops-extensions": "./src/contracts/lifeops-extensions.ts"
   },
   "publishConfig": {
     "access": "public",

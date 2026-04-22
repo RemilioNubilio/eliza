@@ -12,10 +12,8 @@ const repoRoot = path.resolve(here, "..", "..", "..", "..", "..");
 const bunCmd = process.env.npm_execpath || process.env.BUN || "bun";
 const nodeCmd = resolveNodeCmd();
 const appRoot = path.join(repoRoot, "apps", "app");
-const appCoreRoot = path.join(repoRoot, "eliza", "packages", "app-core");
 const elizaRoot = path.join(repoRoot, "eliza");
-const cloudRoot = path.join(repoRoot, "eliza", "cloud");
-const stewardFiRoot = path.join(repoRoot, "eliza", "steward-fi");
+const appCoreRoot = path.join(elizaRoot, "packages", "app-core");
 const unitShardCount = 1;
 
 await runManagedTestCommand({
@@ -73,129 +71,26 @@ for (let shard = 1; shard <= unitShardCount; shard += 1) {
 
 await runManagedTestCommand({
   repoRoot,
-  lockName: "integration",
-  label: "integration",
+  lockName: "computeruse-real",
+  label: "computeruse-real",
   command: bunCmd,
-  args: ["run", "test:integration"],
-  cwd: repoRoot,
-  env: buildTestEnv(repoRoot),
-});
-
-await runManagedTestCommand({
-  repoRoot,
-  lockName: "e2e-all",
-  label: "e2e-all",
-  command: bunCmd,
-  args: ["run", "test:e2e:all"],
-  cwd: repoRoot,
-  env: buildTestEnv(repoRoot),
-});
-
-await runManagedTestCommand({
-  repoRoot,
-  lockName: "scenarios-all",
-  label: "scenarios-all",
-  command: bunCmd,
-  args: ["run", "test:scenarios"],
-  cwd: repoRoot,
-  env: buildTestEnv(repoRoot),
-});
-
-await runManagedTestCommand({
-  repoRoot,
-  lockName: "live-smoke",
-  label: "live-smoke",
-  command: bunCmd,
-  args: ["run", "test:live:smoke"],
-  cwd: repoRoot,
+  args: ["run", "test"],
+  cwd: path.join(repoRoot, "eliza", "plugins", "plugin-computeruse"),
   env: {
     ...buildTestEnv(repoRoot),
     MILADY_LIVE_TEST: "1",
     ELIZA_LIVE_TEST: "1",
+    COMPUTER_USE_BROWSER_HEADLESS:
+      process.env.COMPUTER_USE_BROWSER_HEADLESS || "1",
   },
 });
 
 await runManagedTestCommand({
   repoRoot,
-  lockName: "evm-live-rpc",
-  label: "evm-live-rpc",
+  lockName: "e2e",
+  label: "e2e",
   command: bunCmd,
-  args: ["run", "test:live:evm:rpc"],
-  cwd: repoRoot,
-  env: {
-    ...buildTestEnv(repoRoot),
-    MILADY_LIVE_TEST: "1",
-    ELIZA_LIVE_TEST: "1",
-  },
-});
-
-await runManagedTestCommand({
-  repoRoot,
-  lockName: "evm-live-transfer",
-  label: "evm-live-transfer",
-  command: bunCmd,
-  args: [
-    "x",
-    "vitest",
-    "run",
-    "--config",
-    "test/vitest/real.config.ts",
-    "eliza/plugins/plugin-evm/typescript/__tests__/integration/transfer.live.test.ts",
-  ],
-  cwd: repoRoot,
-  env: {
-    ...buildTestEnv(repoRoot),
-    MILADY_LIVE_TEST: "1",
-    ELIZA_LIVE_TEST: "1",
-  },
-});
-
-await runManagedTestCommand({
-  repoRoot,
-  lockName: "ui-playwright",
-  label: "ui-playwright",
-  command: bunCmd,
-  args: ["run", "test:ui:playwright"],
+  args: ["run", "test:e2e"],
   cwd: repoRoot,
   env: buildTestEnv(repoRoot),
-});
-
-await runManagedTestCommand({
-  repoRoot,
-  lockName: "orchestrator-integration",
-  label: "orchestrator-integration",
-  command: bunCmd,
-  args: ["run", "test:orchestrator:integration"],
-  cwd: repoRoot,
-  env: buildTestEnv(repoRoot),
-});
-
-await runManagedTestCommand({
-  repoRoot,
-  lockName: "eliza-all",
-  label: "eliza-all",
-  command: bunCmd,
-  args: ["run", "test"],
-  cwd: elizaRoot,
-  env: buildTestEnv(elizaRoot),
-});
-
-await runManagedTestCommand({
-  repoRoot,
-  lockName: "cloud-all",
-  label: "cloud-all",
-  command: bunCmd,
-  args: ["run", "test"],
-  cwd: cloudRoot,
-  env: buildTestEnv(cloudRoot),
-});
-
-await runManagedTestCommand({
-  repoRoot,
-  lockName: "steward-fi-all",
-  label: "steward-fi-all",
-  command: bunCmd,
-  args: ["run", "test"],
-  cwd: stewardFiRoot,
-  env: buildTestEnv(stewardFiRoot),
 });

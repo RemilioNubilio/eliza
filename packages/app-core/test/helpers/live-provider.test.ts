@@ -8,14 +8,30 @@ describe("selectLiveProvider", () => {
 
   it("rejects groq-shaped keys for openai provider selection", async () => {
     vi.stubEnv("OPENAI_API_KEY", "gsk_test_invalid_for_openai");
+    vi.stubEnv("ELIZA_E2E_OPENAI_API_KEY", "");
 
     const { selectLiveProvider } = await import("./live-provider.ts");
 
     expect(selectLiveProvider("openai")).toBeNull();
   });
 
+  it("does not treat Eliza Cloud keys as direct OpenAI provider credentials", async () => {
+    vi.stubEnv("ELIZAOS_CLOUD_API_KEY", "cloud_test_key");
+    vi.stubEnv("ELIZA_CLOUD_API_KEY", "");
+    vi.stubEnv("OPENAI_API_KEY", "");
+    vi.stubEnv("ELIZA_E2E_OPENAI_API_KEY", "");
+
+    const { availableProviderNames, selectLiveProvider } = await import(
+      "./live-provider.ts"
+    );
+
+    expect(selectLiveProvider("openai")).toBeNull();
+    expect(availableProviderNames()).not.toContain("openai");
+  });
+
   it("still selects groq when both env vars exist but openai is misconfigured", async () => {
     vi.stubEnv("OPENAI_API_KEY", "gsk_test_invalid_for_openai");
+    vi.stubEnv("ELIZA_E2E_OPENAI_API_KEY", "");
     vi.stubEnv("GROQ_API_KEY", "gsk_test_valid_for_groq");
 
     const { selectLiveProvider } = await import("./live-provider.ts");

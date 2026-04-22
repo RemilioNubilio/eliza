@@ -1,36 +1,16 @@
-/**
- * LifeOps plugin — registers LifeOps and website-blocker routes with the
- * elizaOS runtime plugin route system.
- *
- * Unlike Vincent/Shopify/Steward (which have a handful of routes each),
- * LifeOps has 60+ routes with many dynamic segments. Rather than
- * duplicating every path pattern, we register a small set of catch-all
- * entries per HTTP method and delegate to the existing monolithic
- * `handleLifeOpsRoutes` / `handleWebsiteBlockerRoutes` handlers.
- *
- * The plugin route bridge in runtime-plugin-routes.ts matches exact path
- * segments, so we register one route per (method × prefix) combination.
- * Each handler builds the LifeOpsRouteContext or WebsiteBlockerRouteContext
- * that the underlying handlers expect, then delegates.
- */
-
 import type http from "node:http";
-import type { AgentRuntime, Plugin, Route } from "@elizaos/core";
+import { TLSSocket } from "node:tls";
 import {
+  readJsonBody as httpReadJsonBody,
   sendJson as httpSendJson,
   sendJsonError as httpSendJsonError,
-  readJsonBody as httpReadJsonBody,
 } from "@elizaos/agent/api/http-helpers";
 import { decodePathComponent as httpDecodePathComponent } from "@elizaos/agent/api/server-helpers";
-import { handleLifeOpsRoutes } from "./lifeops-routes.js";
+import type { AgentRuntime, Plugin, Route } from "@elizaos/core";
 import type { LifeOpsRouteContext } from "./lifeops-routes.js";
-import { handleWebsiteBlockerRoutes } from "./website-blocker-routes.js";
+import { handleLifeOpsRoutes } from "./lifeops-routes.js";
 import type { WebsiteBlockerRouteContext } from "./website-blocker-routes.js";
-
-// ---------------------------------------------------------------------------
-// Context builders — bridge plugin route (req, res, runtime) to the context
-// objects the LifeOps handlers expect.
-// ---------------------------------------------------------------------------
+import { handleWebsiteBlockerRoutes } from "./website-blocker-routes.js";
 
 function json(res: http.ServerResponse, data: unknown, status = 200): void {
   httpSendJson(res, data, status);
@@ -55,7 +35,7 @@ function requestBaseUrl(req: http.IncomingMessage): string {
   const headers = req.headers ?? {};
   const protocol =
     firstHeaderValue(headers["x-forwarded-proto"]) ??
-    (((req.socket as { encrypted?: boolean } | undefined)?.encrypted ?? false)
+    (req.socket instanceof TLSSocket && req.socket.encrypted
       ? "https"
       : "http");
   const host =
@@ -119,12 +99,14 @@ const LIFEOPS_STATIC_ROUTES: Array<{
 }> = [
   { type: "GET", path: "/api/lifeops/app-state" },
   { type: "PUT", path: "/api/lifeops/app-state" },
+  { type: "GET", path: "/api/lifeops/capabilities" },
   { type: "GET", path: "/api/lifeops/calendar/feed" },
   { type: "GET", path: "/api/lifeops/calendar/next-context" },
   { type: "GET", path: "/api/lifeops/gmail/triage" },
   { type: "GET", path: "/api/lifeops/gmail/search" },
   { type: "GET", path: "/api/lifeops/gmail/needs-response" },
   { type: "POST", path: "/api/lifeops/calendar/events" },
+  { type: "GET", path: "/api/lifeops/inbox/unified" },
   { type: "POST", path: "/api/lifeops/gmail/reply-drafts" },
   { type: "POST", path: "/api/lifeops/gmail/batch-reply-drafts" },
   { type: "POST", path: "/api/lifeops/gmail/reply-send" },
@@ -144,6 +126,9 @@ const LIFEOPS_STATIC_ROUTES: Array<{
   { type: "GET", path: "/api/lifeops/connectors/x/status" },
   { type: "POST", path: "/api/lifeops/connectors/x" },
   { type: "POST", path: "/api/lifeops/x/posts" },
+  { type: "GET", path: "/api/lifeops/x/dms/digest" },
+  { type: "POST", path: "/api/lifeops/x/dms/curate" },
+  { type: "POST", path: "/api/lifeops/x/dms/send" },
   // iMessage
   { type: "GET", path: "/api/lifeops/connectors/imessage/status" },
   { type: "GET", path: "/api/lifeops/connectors/imessage/chats" },
@@ -201,6 +186,7 @@ const LIFEOPS_STATIC_ROUTES: Array<{
   { type: "POST", path: "/api/lifeops/definitions" },
   { type: "GET", path: "/api/lifeops/goals" },
   { type: "POST", path: "/api/lifeops/goals" },
+  { type: "POST", path: "/api/lifeops/features/toggle" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -208,6 +194,9 @@ const LIFEOPS_STATIC_ROUTES: Array<{
 // ---------------------------------------------------------------------------
 
 const LIFEOPS_DYNAMIC_ROUTES: Array<{ type: string; path: string }> = [
+  // /api/lifeops/calendar/events/:eventId
+  { type: "PATCH", path: "/api/lifeops/calendar/events/:eventId" },
+  { type: "DELETE", path: "/api/lifeops/calendar/events/:eventId" },
   // /api/lifeops/definitions/:id
   { type: "GET", path: "/api/lifeops/definitions/:id" },
   { type: "PUT", path: "/api/lifeops/definitions/:id" },
@@ -275,7 +264,9 @@ const WEBSITE_BLOCKER_ROUTES: Array<{ type: string; path: string }> = [
 // Build Plugin Route arrays
 // ---------------------------------------------------------------------------
 
-function lifeOpsRouteHandler(): Route["handler"] {
+type PluginRouteHandler = NonNullable<Route["handler"]>;
+
+function lifeOpsRouteHandler(): PluginRouteHandler {
   return async (
     req: unknown,
     res: unknown,
@@ -292,7 +283,7 @@ function lifeOpsRouteHandler(): Route["handler"] {
   };
 }
 
-function websiteBlockerRouteHandler(): Route["handler"] {
+function websiteBlockerRouteHandler(): PluginRouteHandler {
   return async (
     req: unknown,
     res: unknown,
@@ -318,7 +309,7 @@ const lifeOpsPluginRoutes: Route[] = [
         path: r.path,
         rawPath: true as const,
         ...(r.public ? ({ public: true } as const) : {}),
-        handler: lifeOpsRouteHandler()!,
+        handler: lifeOpsRouteHandler(),
       }) as Route,
   ),
   // Dynamic LifeOps routes
@@ -328,7 +319,7 @@ const lifeOpsPluginRoutes: Route[] = [
         type: r.type as Route["type"],
         path: r.path,
         rawPath: true as const,
-        handler: lifeOpsRouteHandler()!,
+        handler: lifeOpsRouteHandler(),
       }) as Route,
   ),
   // Website blocker routes
@@ -338,7 +329,7 @@ const lifeOpsPluginRoutes: Route[] = [
         type: r.type as Route["type"],
         path: r.path,
         rawPath: true as const,
-        handler: websiteBlockerRouteHandler()!,
+        handler: websiteBlockerRouteHandler(),
       }) as Route,
   ),
 ];

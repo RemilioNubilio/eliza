@@ -14,13 +14,16 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   type Browser,
   type BrowserContext,
-  chromium,
   type Page,
 } from "playwright-core";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { resolveLiveBrowserExecutable } from "../../../../../test/helpers/browser-executable";
 import { describeIf } from "../../../../../test/helpers/conditional-tests.ts";
+import {
+  closePlaywrightBrowser,
+  launchPlaywrightBrowserWithRetry,
+} from "../helpers/browser-launch";
 import {
   buildIsolatedLiveProviderEnv,
   selectLiveProvider,
@@ -30,6 +33,8 @@ import { resolveNodeCmd } from "../scripts/managed-test-command.mjs";
 
 const LIVE_TESTS_ENABLED =
   process.env.MILADY_LIVE_TEST === "1" || process.env.ELIZA_LIVE_TEST === "1";
+const LIVE_BROWSER_SUITE_ENABLED =
+  process.env.MILADY_LIVE_BROWSER_SUITE === "1";
 const LIVE_PROVIDER =
   (LIVE_TESTS_ENABLED && selectLiveProvider("openai")) ||
   (LIVE_TESTS_ENABLED ? selectLiveProvider() : null);
@@ -43,7 +48,9 @@ const LIVE_PROVIDER_LABELS = {
 const LIVE_PROVIDER_LABEL = LIVE_PROVIDER
   ? LIVE_PROVIDER_LABELS[LIVE_PROVIDER.name]
   : null;
-const describeLive = describeIf(LIVE_TESTS_ENABLED && LIVE_PROVIDER !== null);
+const describeHeavyLive = describeIf(
+  LIVE_TESTS_ENABLED && LIVE_BROWSER_SUITE_ENABLED && LIVE_PROVIDER !== null,
+);
 const REPO_ROOT = path.resolve(
   import.meta.dirname,
   "..",
@@ -555,7 +562,7 @@ async function startRealStack(): Promise<StartedStack> {
     );
   }
 
-  const browser = await chromium.launch({
+  const browser = await launchPlaywrightBrowserWithRetry({
     executablePath: CHROME_PATH,
     args: ["--use-angle=swiftshader"],
     headless: true,
@@ -575,7 +582,7 @@ async function stopRealStack(stack: StartedStack | null): Promise<void> {
   if (!stack) return;
 
   try {
-    await stack.browser.close();
+    await closePlaywrightBrowser(stack.browser);
   } catch {
     // Best effort during cleanup.
   }
@@ -790,7 +797,7 @@ async function submitOnboarding(apiBase: string): Promise<void> {
   );
 }
 
-describeLive("real onboarding handoff to companion mode", () => {
+describeHeavyLive("real onboarding handoff to companion mode", () => {
   let stack: StartedStack | null = null;
 
   beforeAll(async () => {

@@ -22,7 +22,7 @@ import type {
   SetLifeOpsReminderPreferenceRequest,
   UpdateLifeOpsDefinitionRequest,
   UpdateLifeOpsGoalRequest,
-} from "@elizaos/shared/contracts/lifeops";
+} from "@elizaos/app-lifeops/contracts";
 import {
   buildNativeAppleReminderMetadata,
   type NativeAppleReminderLikeKind,
@@ -1060,10 +1060,12 @@ async function resolveOccurrenceWithIntentFallback(args: {
 
 function summarizeCadence(cadence: LifeOpsCadence): string {
   const cadenceWindows = Array.isArray((cadence as { windows?: unknown }).windows)
-    ? ((cadence as { windows: string[] }).windows).filter((window) =>
-        typeof window === "string" && window.trim().length > 0,
+    ? ((cadence as { windows: string[] }).windows ?? []).filter(
+        (windowName) =>
+          typeof windowName === "string" && windowName.trim().length > 0,
       )
     : [];
+
   switch (cadence.kind) {
     case "once": {
       const dueAt = new Date(cadence.dueAt);
@@ -1128,6 +1130,7 @@ type LifeReplyScenario =
   | "captured_phone"
   | "configured_escalation"
   | "overview"
+  | "weekly_goal_review"
   | "service_error";
 
 function buildRuleBasedLifeReply(args: {
@@ -2494,7 +2497,7 @@ export const lifeAction: Action & {
     "DO NOT use this action for daily briefs, unread summaries, drafts awaiting sign-off, or cross-channel inbox review — use OWNER_INBOX instead. " +
     "DO NOT use this action for calendar lookups, scheduling meetings, availability, Calendly, or travel itineraries — use OWNER_CALENDAR instead. " +
     "DO NOT use this action for multi-device push ladders or device-wide reminder delivery — use PUBLISH_DEVICE_INTENT instead. " +
-    "DO NOT use this action for pre-event asset checklists, document-signing workflows, collecting updated ID copies, or cancellation-fee warning/escalation policies — use OWNER_INBOX, PUBLISH_DEVICE_INTENT, OWNER_CALENDAR, or LIFEOPS_COMPUTER_USE instead. " +
+    "DO NOT use this action for pre-event asset checklists, questions like 'what slides, bio, title, or portal assets do I still owe before the event', document-signing workflows, collecting updated ID copies, or cancellation-fee warning/escalation policies — use OWNER_INBOX, PUBLISH_DEVICE_INTENT, OWNER_CALENDAR, or LIFEOPS_COMPUTER_USE instead. " +
     "DO NOT use this action for browser/portal/file workflows on the owner's machine — use LIFEOPS_COMPUTER_USE instead. " +
     "This action provides the final grounded reply; do not pair it with a speculative REPLY action or fall back to advice-only chat when the user wants real LifeOps follow-through.",
   descriptionCompressed: "LifeOps: manage habits, goals, reminders, alarms, escalation. Create/edit/complete/snooze items. Query active status.",
@@ -3210,7 +3213,15 @@ export const lifeAction: Action & {
             : (deferredGoalDraft?.request.metadata ?? explicitMetadata);
         let evaluationSummary: string | null = null;
 
-        if (!deferredGoalDraft || editingDeferredGoalDraft) {
+        const hasExplicitGroundedGoal =
+          Boolean(title) &&
+          (createConfirmed ||
+            (Boolean(successCriteria) && Boolean(supportStrategy)));
+
+        if (
+          (!deferredGoalDraft || editingDeferredGoalDraft) &&
+          !hasExplicitGroundedGoal
+        ) {
           const llmPlan = await extractGoalCreatePlanWithLlm({
             runtime,
             intent,

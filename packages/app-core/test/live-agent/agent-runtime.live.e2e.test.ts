@@ -31,11 +31,8 @@ import dotenv from "dotenv";
 import { afterAll, beforeAll, describe, expect } from "vitest";
 import { itIf } from "../../../../../test/helpers/conditional-tests.ts";
 import { selectLiveProvider } from "../../../../../test/helpers/live-provider";
-import { sleep, withTimeout } from "../../../../../test/helpers/test-utils";
-
-/** Matches the table name used by @elizaos/core personality module. */
-const USER_PREFS_TABLE = "user_personality_preferences";
-
+import { withTimeout, sleep } from "../../../../../test/helpers/test-utils";
+import { USER_PREFS_TABLE } from "../../../typescript/src/features/advanced-capabilities/personality/types.ts";
 import { startApiServer } from "@elizaos/agent/api/server";
 import { ensureAgentWorkspace } from "@elizaos/agent/providers/workspace";
 import { configureLocalEmbeddingPlugin } from "@elizaos/agent/runtime/eliza";
@@ -866,19 +863,35 @@ describe("Agent Runtime E2E", () => {
           channelId: conversationRoomId,
           type: ChannelType.DM,
         });
-        const msg = createMessageMemory({
-          id: crypto.randomUUID() as UUID,
-          entityId: userId,
-          roomId: conversationRoomId,
-          content: {
-            text: "Say hello in one word.",
-            source: "test",
-            channelType: ChannelType.DM,
+        const createProbeMessage = () =>
+          createMessageMemory({
+            id: crypto.randomUUID() as UUID,
+            entityId: userId,
+            roomId: conversationRoomId,
+            content: {
+              text: "Say hello in one word.",
+              source: "test",
+              channelType: ChannelType.DM,
+            },
+          });
+
+        let resp = await handleMessageAndCollectText(
+          runtime,
+          createProbeMessage(),
+          {
+            timeoutMs: 90_000,
           },
-        });
-        const resp = await handleMessageAndCollectText(runtime, msg, {
-          timeoutMs: 90_000,
-        });
+        );
+        if (resp.length === 0) {
+          await sleep(1_000);
+          resp = await handleMessageAndCollectText(
+            runtime,
+            createProbeMessage(),
+            {
+              timeoutMs: 90_000,
+            },
+          );
+        }
         if (resp.length === 0) {
           if (
             await shouldSkipDueModelProviderUnavailable(

@@ -4,7 +4,7 @@
  * Thin wrapper over @elizaos/plugin-computeruse's useComputerAction with
  * LifeOps-specific access control (owner-only) and an opt-out feature flag
  * (ELIZA_LIFEOPS_COMPUTER_USE_ENABLED=0). If the plugin package is not
- * installed in the workspace, exports a stub action that returns a clear
+ * installed in the workspace, exports an unavailable action that returns a clear
  * "not installed" result instead of crashing the plugin load.
  */
 
@@ -16,7 +16,7 @@ import type {
   IAgentRuntime,
   Memory,
 } from "@elizaos/core";
-import { hasOwnerAccess } from "@elizaos/agent/security";
+import { hasOwnerAccess } from "@elizaos/agent";
 
 const ACTION_NAME = "LIFEOPS_COMPUTER_USE";
 const ACTION_NAMES = {
@@ -238,7 +238,7 @@ function selectDelegateAction(
   );
 }
 
-const stubExamples: ActionExample[][] = [
+const unavailableExamples: ActionExample[][] = [
   [
     {
       name: "{{name1}}",
@@ -270,6 +270,9 @@ export const lifeOpsComputerUseAction: Action & {
     "CAPTURE_SCREEN",
     "PORTAL_UPLOAD",
     "UPLOAD_DECK",
+    "REQUEST_UPLOAD",
+    "UPLOAD_TO_PORTAL",
+    "PORTAL_ASSET_UPLOAD",
   ],
   tags: [
     "always-include",
@@ -292,7 +295,8 @@ export const lifeOpsComputerUseAction: Action & {
     "assistant should perform directly, including standing instructions like " +
     "'when I send the file, upload it to the portal for me.' Select this action " +
     "even before the file arrives when the user is delegating that future upload " +
-    "workflow; the action can hold the task and ask for portal/file details later. Owner-only. " +
+    "workflow; the action can hold the task and ask for portal/file details later. " +
+    "Do not use this merely to ask the owner for a missing document or updated ID copy; if the workflow is blocked waiting on the owner to send an artifact, use an intervention or inbox action unless the assistant is actually operating a browser, portal, or file surface. Owner-only. " +
     "Disabled when ELIZA_LIFEOPS_COMPUTER_USE_ENABLED=0.",
   suppressPostActionContinuation: true,
 
@@ -376,7 +380,7 @@ export const lifeOpsComputerUseAction: Action & {
   ],
 
   examples: [
-    ...stubExamples,
+    ...unavailableExamples,
     [
       {
         name: "{{name1}}",
@@ -438,15 +442,36 @@ export const lifeOpsComputerUseAction: Action & {
       };
     }
 
+    if (typeof base.handler !== "function") {
+      return {
+        text: `Computer-use delegate ${base.name} does not expose a handler.`,
+        success: false,
+        values: {
+          success: false,
+          error: "COMPUTER_USE_HANDLER_MISSING",
+          delegate: base.name,
+        },
+        data: { actionName: ACTION_NAME, delegate: base.name },
+      };
+    }
+
     const result = await base.handler(runtime, message, state, options, callback, []);
-    if (result && typeof result === "object" && "success" in result) {
+    if (
+      result &&
+      typeof result === "object" &&
+      typeof (result as { success?: unknown }).success === "boolean"
+    ) {
       return result as ActionResult;
     }
     return {
-      text: "",
-      success: true,
-      values: { success: true },
-      data: { actionName: ACTION_NAME, raw: result },
+      text: `Computer-use delegate ${base.name} returned an invalid action result.`,
+      success: false,
+      values: {
+        success: false,
+        error: "COMPUTER_USE_INVALID_RESULT",
+        delegate: base.name,
+      },
+      data: { actionName: ACTION_NAME, delegate: base.name, raw: result },
     };
   },
 };

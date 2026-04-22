@@ -12,21 +12,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { logger, type UUID } from "@elizaos/core";
 import type { ElizaConfig } from "../config/config.js";
-import {
-  isConnectorConfigured,
-  isStreamingDestinationConfigured,
-} from "../config/plugin-auto-enable.js";
 import { resolveDefaultAgentWorkspaceDir } from "../providers/workspace.js";
-import {
-  classifyRegistryPluginRelease,
-  getBundledRuntimePluginIds,
-} from "../runtime/release-plugin-policy.js";
+import { getBundledRuntimePluginIds } from "../runtime/release-plugin-policy.js";
 import { signalAuthExists } from "../services/signal-pairing.js";
 import {
   type PluginParamInfo,
   validatePluginConfig,
 } from "./plugin-validation.js";
-import { findOwnPackageRoot } from "./server.js";
+import { findOwnPackageRoot } from "./server-helpers.js";
 import { applySignalQrOverride } from "./signal-routes.js";
 import { applyWhatsAppQrOverride } from "./whatsapp-routes.js";
 
@@ -90,7 +83,7 @@ export interface StreamEventEnvelope {
   sessionKey?: string;
   agentId?: string;
   roomId?: UUID;
-  payload: object;
+  payload: unknown;
 }
 
 export function getReleaseBundledPluginIds(): Set<string> {

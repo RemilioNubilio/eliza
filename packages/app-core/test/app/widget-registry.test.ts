@@ -16,12 +16,17 @@ describe("resolveWidgetsForSlot", () => {
 
     expect(widgetIds).toEqual(
       expect.arrayContaining([
-        "lifeops/lifeops.overview",
+        "lifeops/lifeops.calendar",
+        "lifeops/lifeops.inbox",
+        "lifeops/lifeops.automations",
         "agent-orchestrator/agent-orchestrator.apps",
-        "agent-orchestrator/agent-orchestrator.tasks",
         "agent-orchestrator/agent-orchestrator.activity",
       ]),
     );
+    // The orchestrator "tasks" widget was removed in favor of the TERMINAL
+    // section in the left sidebar, which already lists live PTY sessions.
+    expect(widgetIds).not.toContain("agent-orchestrator/agent-orchestrator.tasks");
+    expect(widgetIds).not.toContain("lifeops/lifeops.google");
     expect(widgetIds).not.toContain("todo/todo.items");
   });
 

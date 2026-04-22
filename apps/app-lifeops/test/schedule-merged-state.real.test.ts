@@ -1,9 +1,10 @@
 import type { AgentRuntime } from "@elizaos/core";
 import { describe, expect, it } from "vitest";
 import { createRealTestRuntime } from "../../../../test/helpers/real-runtime";
+import { resolveDefaultTimeZone } from "../src/lifeops/defaults.js";
 import {
-  type LifeOpsScheduleMergedStateRecord,
   LifeOpsRepository,
+  type LifeOpsScheduleMergedStateRecord,
 } from "../src/lifeops/repository.js";
 import { LifeOpsService } from "../src/lifeops/service.js";
 
@@ -66,17 +67,39 @@ async function seedScheduleTelemetry(service: LifeOpsService): Promise<void> {
 function buildCloudState(
   agentId: string,
   nowIso: string,
+  timezone: string,
 ): LifeOpsScheduleMergedStateRecord {
   return {
-    id: `lifeops-schedule-merged:${agentId}:cloud:UTC`,
+    id: `lifeops-schedule-merged:${agentId}:cloud:${timezone}`,
     agentId,
     scope: "cloud",
     mergedAt: nowIso,
     effectiveDayKey: "2026-04-19",
     localDate: "2026-04-19",
-    timezone: "UTC",
+    timezone,
     inferredAt: nowIso,
     phase: "winding_down",
+    relativeTime: {
+      computedAt: nowIso,
+      localNowAt: "2026-04-19T17:30:00+00:00",
+      phase: "winding_down",
+      isProbablySleeping: false,
+      isAwake: true,
+      awakeState: "awake",
+      wakeAnchorAt: "2026-04-19T10:30:00.000Z",
+      wakeAnchorSource: "sleep_cycle",
+      minutesSinceWake: 420,
+      minutesAwake: 420,
+      bedtimeTargetAt: "2026-04-20T00:00:00.000Z",
+      bedtimeTargetSource: "typical_sleep",
+      minutesUntilBedtimeTarget: 390,
+      minutesSinceBedtimeTarget: null,
+      dayBoundaryStartAt: "2026-04-19T00:00:00.000Z",
+      dayBoundaryEndAt: "2026-04-20T00:00:00.000Z",
+      minutesSinceDayBoundaryStart: 1050,
+      minutesUntilDayBoundaryEnd: 390,
+      confidence: 0.91,
+    },
     sleepStatus: "slept",
     isProbablySleeping: false,
     sleepConfidence: 0.91,
@@ -129,17 +152,19 @@ describe("merged schedule state", () => {
     try {
       const now = new Date();
       const nowIso = now.toISOString();
+      const timezone = resolveDefaultTimeZone();
       await seedScheduleTelemetry(fixture.service);
       await fixture.service.refreshLocalMergedScheduleState({
-        timezone: "UTC",
+        timezone,
         now,
       });
       await fixture.service.repository.upsertScheduleMergedState(
-        buildCloudState(String(fixture.runtime.agentId), nowIso),
+        buildCloudState(String(fixture.runtime.agentId), nowIso, timezone),
       );
 
       const overview = await fixture.service.getOverview(now);
-      const snapshot = await fixture.service.readReminderActivityProfileSnapshot();
+      const snapshot =
+        await fixture.service.readReminderActivityProfileSnapshot();
 
       expect(overview.schedule?.phase).toBe("winding_down");
       expect(overview.schedule?.nextMealLabel).toBe("dinner");

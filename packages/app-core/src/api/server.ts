@@ -126,14 +126,27 @@ import { handleAuthPairingCompatRoutes } from "./auth-pairing-compat-routes";
 import { handleCloudRoute } from "./cloud-routes";
 import { handleCloudStatusRoutes } from "./cloud-status-routes";
 import { handleComputerUseCompatRoutes } from "./computer-use-compat-routes";
+import {
+  buildCorsAllowedPorts,
+  getCorsAllowedPorts,
+  isAllowedLocalOrigin,
+} from "./server-cors";
+// Phase 2 extraction: Vincent routes → app-vincent/src/plugin.ts (vincentPlugin)
+// Phase 2 extraction: Shopify routes → app-shopify/src/plugin.ts (shopifyPlugin)
+import {
+  isAllowedDevConsoleLogPath,
+  readDevConsoleLogTail,
+} from "./dev-console-log";
+
+import { isCloudProvisioned as _isCloudProvisioned } from "./server-onboarding-compat";
 import { handleDatabaseRowsCompatRoute } from "./database-rows-compat-routes";
 import { handleDevCompatRoutes } from "./dev-compat-routes";
 import { handleLocalInferenceCompatRoutes } from "./local-inference-compat-routes";
 import { handleN8nRoutes } from "./n8n-routes";
 import { handleOnboardingCompatRoute } from "./onboarding-compat-routes";
+import { handleCatalogRoutes } from "./catalog-routes";
 import { handlePluginsCompatRoutes } from "./plugins-compat-routes";
-import { getCorsAllowedPorts, isAllowedLocalOrigin } from "./server-cors";
-import { isCloudProvisioned as _isCloudProvisioned } from "./server-onboarding-compat";
+
 // Phase 2 extraction: Steward compat routes → app-steward/src/plugin.ts (stewardPlugin)
 // Includes: handleWalletBrowserCompatRoutes, handleWalletTradeCompatRoutes,
 //           handleStewardCompatRoutes, handleWalletCompatRoutes
@@ -759,6 +772,8 @@ async function handleCompatRoute(
     });
   }
 
+  if (await handleComputerUseCompatRoutes(req, res, state)) return true;
+
   if (method === "POST" && url.pathname === "/api/tts/cloud") {
     if (!ensureCompatApiAuthorized(req, res)) return true;
     return await _handleCloudTtsPreviewRoute(req, res);
@@ -930,6 +945,9 @@ async function handleCompatRoute(
 
   // Plugin routes — extracted to plugins-compat-routes.ts
   if (await handlePluginsCompatRoutes(req, res, state)) return true;
+
+  // Catalog routes — registry SoT projections (apps, plugins, connectors)
+  if (await handleCatalogRoutes(req, res)) return true;
 
   if (await handleOnboardingCompatRoute(req, res, state)) return true;
 
