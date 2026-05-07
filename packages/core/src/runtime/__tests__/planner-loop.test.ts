@@ -86,6 +86,9 @@ describe("v5 planner loop skeleton", () => {
 		expect(v5PlannerTemplate).toContain(
 			"prefer SEARCH when it is exposed; otherwise use an exposed task-agent tool",
 		);
+		expect(v5PlannerTemplate).toContain(
+			"prior attachments, memory, or conversation snippets are not a substitute",
+		);
 	});
 
 	it("calls ACTION_PLANNER, executes the first queued tool, then evaluates", async () => {
