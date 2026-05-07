@@ -11,13 +11,13 @@ import type {
   Plugin,
   Room,
   World,
-} from "@elizaos/core";
+} from "../../../../core/src/index.node.ts";
 import {
   asUUID,
   ChannelType,
   createUniqueUuid,
   EventType,
-} from "@elizaos/core";
+} from "../../../../core/src/index.node.ts";
 import {
   getNewlyActivatedPlugin,
   getNewlyDeactivatedPlugin,
@@ -29,6 +29,8 @@ let AgentRuntimeCtor:
       opts: Record<string, unknown>,
     ) => IAgentRuntime)
   | null = null;
+let InMemoryDatabaseAdapterCtor: (new () => Record<string, unknown>) | null =
+  null;
 let secretsManagerPlugin: Plugin | null = null;
 let pluginManagerPlugin: Plugin | null = null;
 let SECRETS_SERVICE_TYPE: string = "SECRETS";
@@ -72,13 +74,18 @@ async function collectSecrets(
 }
 
 async function tryImportDeps(): Promise<boolean> {
-  const core = await import("@elizaos/core");
+  const core = await import("../../../../core/src/index.node.ts");
   // AgentRuntime may or may not be exported — it is on the default package
   if (!("AgentRuntime" in core) || typeof core.AgentRuntime !== "function") {
     console.error("[ElizaHandler] @elizaos/core does not export AgentRuntime");
     return false;
   }
   AgentRuntimeCtor = core.AgentRuntime as unknown as typeof AgentRuntimeCtor;
+  InMemoryDatabaseAdapterCtor =
+    "InMemoryDatabaseAdapter" in core &&
+    typeof core.InMemoryDatabaseAdapter === "function"
+      ? (core.InMemoryDatabaseAdapter as unknown as typeof InMemoryDatabaseAdapterCtor)
+      : null;
 
   secretsManagerPlugin =
     "secretsManagerPlugin" in core &&
@@ -180,6 +187,30 @@ async function loadModelProviderPlugin(): Promise<Plugin | null> {
     }
   }
   return null;
+}
+
+async function loadSqlPlugin(): Promise<Plugin | null> {
+  try {
+    const mod = (await import("@elizaos/plugin-sql")) as Record<
+      string,
+      unknown
+    >;
+    return (mod.default ?? mod.pluginSql ?? null) as Plugin | null;
+  } catch {
+    try {
+      const mod = (await import(
+        pathToFileURL(
+          resolve(REPO_ROOT, "plugins/plugin-sql/typescript/index.node.ts"),
+        ).href
+      )) as Record<string, unknown>;
+      return (mod.default ?? mod.pluginSql ?? null) as Plugin | null;
+    } catch (err) {
+      console.warn(
+        `[ElizaHandler] Failed to load SQL plugin: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
 }
 
 async function sendMessageAndWaitForResponse(
@@ -330,6 +361,13 @@ export const elizaHandler: Handler = {
     };
 
     const plugins: Plugin[] = [];
+    const adapter = InMemoryDatabaseAdapterCtor
+      ? new InMemoryDatabaseAdapterCtor()
+      : undefined;
+    if (!adapter) {
+      const sqlPlugin = await loadSqlPlugin();
+      if (sqlPlugin) plugins.push(sqlPlugin);
+    }
     if (secretsManagerPlugin) plugins.push(secretsManagerPlugin);
     if (pluginManagerPlugin) plugins.push(pluginManagerPlugin);
 
@@ -348,6 +386,7 @@ export const elizaHandler: Handler = {
       agentId,
       character,
       plugins,
+      ...(adapter ? { adapter } : {}),
     });
     if (
       typeof (runtime as unknown as Record<string, unknown>).initialize ===

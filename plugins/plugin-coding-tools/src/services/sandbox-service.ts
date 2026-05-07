@@ -1,115 +1,103 @@
+import { homedir } from "node:os";
 import * as path from "node:path";
-import { type IAgentRuntime, Service, logger as coreLogger } from "@elizaos/core";
+import {
+  logger as coreLogger,
+  type IAgentRuntime,
+  Service,
+} from "@elizaos/core";
 import {
   isAbsolutePath,
-  isBlockedPath,
   isUncPath,
-  isWithinAnyRoot,
+  isWithin,
   resolveRealPath,
 } from "../lib/path-utils.js";
 import { CODING_TOOLS_LOG_PREFIX, SANDBOX_SERVICE } from "../types.js";
 
-const DEFAULT_DENY_COMMAND_PATTERNS = [
-  /\brm\s+-rf\s+\/(?:\s|$)/,
-  /\brm\s+-rf\s+~(?:\/|\s|$)/,
-  /\brm\s+-rf\s+\$HOME/,
-  /\bsudo\s+/,
-  /\bmkfs\b/,
-  /\bdd\s+if=.+of=\/dev\//,
-  /\b:\s*\(\s*\)\s*\{/, // fork bomb
-  /\bcurl\s+.*\|\s*(?:bash|sh|zsh)\b/,
-  /\bwget\s+.*\|\s*(?:bash|sh|zsh)\b/,
-  /\bchmod\s+-R\s+777\b/,
-  /\bchown\s+-R\s+root\b/,
-  />\s*\/dev\/sd[a-z]/,
-];
-
 /**
- * Path + command validation for all coding tools.
+ * Path-blocklist policy for the coding tools.
  *
- * Roots model: every path operation must resolve (via realpath) to a location
- * within at least one configured workspace root. Default roots: process.cwd().
- * Override via `CODING_TOOLS_WORKSPACE_ROOTS` runtime setting (comma-separated
- * absolute paths) or `addRoot()` at runtime (used by EnterWorktree, etc.).
+ * Coding tools default to *trusted* mode: the agent can read and write
+ * anywhere on disk EXCEPT a small list of paths that hold private user
+ * data plus per-OS system paths (system binaries, kernel/boot files,
+ * Windows AppData crypto + cert stores).
+ *
+ * Configuration:
+ *   CODING_TOOLS_BLOCKED_PATHS=/abs1,/abs2,...  — comma-separated absolute
+ *     paths. Replaces the default list when set.
+ *   CODING_TOOLS_BLOCKED_PATHS_ADD=/abs1,...    — comma-separated absolute
+ *     paths to ADD to the default list (most common UI use).
+ *
+ * Both `~` and `$HOME` are expanded.
  */
 export class SandboxService extends Service {
   static serviceType = SANDBOX_SERVICE;
   capabilityDescription =
-    "Path validation, workspace-root sealing, and command denylist for coding tools.";
+    "Path blocklist policy for coding tools. Permits anything not under a blocked path.";
 
-  private rootsByConversation = new Map<string, Set<string>>();
-  private defaultRoots: string[] = [];
-  private extraDenyPatterns: RegExp[] = [];
+  private blockedPaths: string[] = [];
 
   static async start(runtime: IAgentRuntime): Promise<SandboxService> {
     const svc = new SandboxService(runtime);
-    svc.loadConfig();
+    await svc.loadConfig();
     coreLogger.debug(
-      `${CODING_TOOLS_LOG_PREFIX} SandboxService started (default roots: ${svc.defaultRoots.join(", ") || "<empty>"})`,
+      `${CODING_TOOLS_LOG_PREFIX} SandboxService: blocking ${svc.blockedPaths.length} path(s)`,
     );
     return svc;
   }
 
   async stop(): Promise<void> {
-    this.rootsByConversation.clear();
+    this.blockedPaths = [];
   }
 
-  private loadConfig(): void {
-    const raw = this.runtime.getSetting?.("CODING_TOOLS_WORKSPACE_ROOTS");
-    if (typeof raw === "string" && raw.trim().length > 0) {
-      this.defaultRoots = raw
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map((p) => path.resolve(p));
+  private async loadConfig(): Promise<void> {
+    const replace = this.runtime.getSetting?.("CODING_TOOLS_BLOCKED_PATHS");
+    const additions = this.runtime.getSetting?.(
+      "CODING_TOOLS_BLOCKED_PATHS_ADD",
+    );
+    let paths: string[];
+    if (typeof replace === "string" && replace.trim().length > 0) {
+      paths = parseList(replace);
     } else {
-      this.defaultRoots = [path.resolve(process.cwd())];
+      paths = defaultBlockedPaths();
     }
-    const denyRaw = this.runtime.getSetting?.("CODING_TOOLS_DENY_COMMANDS");
-    if (typeof denyRaw === "string" && denyRaw.trim().length > 0) {
-      this.extraDenyPatterns = denyRaw
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map((s) => {
-          try {
-            return new RegExp(s);
-          } catch {
-            return new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-          }
-        });
+    if (typeof additions === "string" && additions.trim().length > 0) {
+      paths = paths.concat(parseList(additions));
     }
+    // realpath each path so macOS /var ↔ /private/var (and Linux symlinked
+    // paths) match correctly against realpath-resolved targets in
+    // validatePath.
+    const resolved = await Promise.all(
+      paths.map(async (p) => resolveRealPath(path.resolve(expandHome(p)))),
+    );
+    this.blockedPaths = dedupe(resolved);
   }
 
-  rootsFor(conversationId: string | undefined): string[] {
-    if (!conversationId) return [...this.defaultRoots];
-    const extra = this.rootsByConversation.get(conversationId);
-    if (!extra || extra.size === 0) return [...this.defaultRoots];
-    return [...this.defaultRoots, ...extra];
+  /**
+   * Return the active blocklist (resolved absolute paths). Used by tests and
+   * the available-tools provider.
+   */
+  getBlockedPaths(): string[] {
+    return this.blockedPaths.slice();
   }
 
-  addRoot(conversationId: string, rootAbs: string): void {
-    if (!isAbsolutePath(rootAbs)) {
-      throw new Error(`addRoot requires absolute path, got ${rootAbs}`);
-    }
-    const set = this.rootsByConversation.get(conversationId) ?? new Set<string>();
-    set.add(path.resolve(rootAbs));
-    this.rootsByConversation.set(conversationId, set);
-  }
+  /**
+   * No-ops kept for API compatibility with worktree actions that previously
+   * tracked allowed roots. The current sandbox model is blocklist-only.
+   */
+  addRoot(_conversationId: string | undefined, _absPath: string): void {}
 
-  removeRoot(conversationId: string, rootAbs: string): void {
-    const set = this.rootsByConversation.get(conversationId);
-    if (!set) return;
-    set.delete(path.resolve(rootAbs));
-    if (set.size === 0) this.rootsByConversation.delete(conversationId);
-  }
+  removeRoot(_conversationId: string | undefined, _absPath: string): void {}
 
   async validatePath(
-    conversationId: string | undefined,
+    _conversationId: string | undefined,
     absPath: string,
   ): Promise<
     | { ok: true; resolved: string }
-    | { ok: false; reason: "not_absolute" | "unc_path" | "blocked" | "outside_roots"; message: string }
+    | {
+        ok: false;
+        reason: "not_absolute" | "unc_path" | "blocked";
+        message: string;
+      }
   > {
     if (!isAbsolutePath(absPath)) {
       return {
@@ -125,49 +113,112 @@ export class SandboxService extends Service {
         message: `UNC paths are not permitted: ${absPath}`,
       };
     }
-    if (isBlockedPath(absPath)) {
-      return {
-        ok: false,
-        reason: "blocked",
-        message: `Path is on the system blocklist: ${absPath}`,
-      };
-    }
-    const roots = this.rootsFor(conversationId);
-    const within = await isWithinAnyRoot(absPath, roots);
-    if (!within) {
-      return {
-        ok: false,
-        reason: "outside_roots",
-        message: `Path is outside the configured workspace roots (${roots.join(", ")}): ${absPath}`,
-      };
-    }
     const resolved = await resolveRealPath(absPath);
+    for (const blocked of this.blockedPaths) {
+      if (isWithin(resolved, blocked) || resolved === blocked) {
+        return {
+          ok: false,
+          reason: "blocked",
+          message: `Path ${absPath} is under blocked location ${blocked}.`,
+        };
+      }
+    }
     return { ok: true, resolved };
   }
+}
 
-  validateCommand(
-    command: string,
-  ): { ok: true } | { ok: false; reason: "command_denied"; pattern: string; message: string } {
-    for (const pat of DEFAULT_DENY_COMMAND_PATTERNS) {
-      if (pat.test(command)) {
-        return {
-          ok: false,
-          reason: "command_denied",
-          pattern: pat.source,
-          message: `Command matches built-in denylist /${pat.source}/`,
-        };
-      }
+function parseList(s: string): string[] {
+  return s
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
+function expandHome(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return path.join(homedir(), p.slice(2));
+  if (p.startsWith("$HOME/")) return path.join(homedir(), p.slice(6));
+  return p;
+}
+
+function defaultBlockedPaths(): string[] {
+  const home = homedir();
+  // User-private home subdirs we never want the agent to touch on any OS.
+  const userHome = [
+    path.join(home, "pvt"),
+    path.join(home, "Library"),
+    path.join(home, ".ssh"),
+    path.join(home, ".aws"),
+    path.join(home, ".gnupg"),
+    path.join(home, ".docker"),
+    path.join(home, ".kube"),
+    path.join(home, ".netrc"),
+  ];
+
+  switch (process.platform) {
+    case "darwin":
+      return [
+        ...userHome,
+        // /etc and /var symlink to /private/{etc,var} on macOS; realpath in
+        // loadConfig handles that, so blocking either form catches both.
+        "/System",
+        "/Library/LaunchDaemons",
+        "/Library/LaunchAgents",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/libexec",
+        "/bin",
+        "/sbin",
+        "/etc",
+        "/var/db",
+        "/var/root",
+      ];
+
+    case "linux":
+      return [
+        ...userHome,
+        "/etc",
+        "/boot",
+        "/sys",
+        "/usr/bin",
+        "/usr/sbin",
+        "/bin",
+        "/sbin",
+        "/root",
+        "/var/lib/dpkg",
+        "/var/lib/apt",
+      ];
+
+    case "win32": {
+      const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+      const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
+      const programFilesX86 =
+        process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
+      const programData = process.env.ProgramData ?? "C:\\ProgramData";
+      return [
+        ...userHome,
+        path.join(home, "AppData", "Roaming", "Microsoft", "Crypto"),
+        path.join(home, "AppData", "Local", "Microsoft", "Credentials"),
+        path.join(home, "AppData", "Roaming", "Microsoft", "Protect"),
+        path.join(
+          home,
+          "AppData",
+          "Roaming",
+          "Microsoft",
+          "SystemCertificates",
+        ),
+        systemRoot,
+        programFiles,
+        programFilesX86,
+        programData,
+      ];
     }
-    for (const pat of this.extraDenyPatterns) {
-      if (pat.test(command)) {
-        return {
-          ok: false,
-          reason: "command_denied",
-          pattern: pat.source,
-          message: `Command matches user denylist /${pat.source}/`,
-        };
-      }
-    }
-    return { ok: true };
+
+    default:
+      return userHome;
   }
+}
+
+function dedupe(arr: string[]): string[] {
+  return Array.from(new Set(arr));
 }

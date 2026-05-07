@@ -42,10 +42,13 @@ function makeRuntime(responses: unknown[]): IAgentRuntime {
 		character: {
 			name: "Test Agent",
 			system: "You are concise.",
+			bio: "I help with calendars.",
 		},
 		actions: [],
 		providers: [],
 		composeState: vi.fn(async () => makeState()),
+		runActionsByMode: vi.fn(async () => undefined),
+		emitEvent: vi.fn(async () => undefined),
 		useModel: vi.fn(async () => {
 			if (queue.length === 0) {
 				throw new Error("Unexpected useModel call");
@@ -127,9 +130,7 @@ describe("runV5MessageRuntimeStage1", () => {
 				],
 			},
 		]);
-		const fullRecentPayload = `${"# Conversation Messages\n"}${"x".repeat(
-			12_000,
-		)}`;
+		const longUserText = "x".repeat(12_000);
 		const state: State = {
 			values: {
 				availableContexts: "simple, general",
@@ -138,9 +139,20 @@ describe("runV5MessageRuntimeStage1", () => {
 				providerOrder: ["RECENT_MESSAGES", "PROVIDERS", "CHARACTER"],
 				providers: {
 					RECENT_MESSAGES: {
-						text: fullRecentPayload,
+						text: "# Conversation Messages\nshould not render as text",
 						values: { shouldNotRender: "value leak" },
-						data: { secret: "secret leak" },
+						data: {
+							secret: "secret leak",
+							recentMessages: [
+								{
+									id: "00000000-0000-0000-0000-00000000aaaa" as UUID,
+									entityId: "00000000-0000-0000-0000-00000000ffff" as UUID,
+									roomId: "00000000-0000-0000-0000-000000001111" as UUID,
+									createdAt: 1,
+									content: { text: longUserText },
+								},
+							],
+						},
 						providerName: "RECENT_MESSAGES",
 					},
 					PROVIDERS: {
@@ -184,11 +196,22 @@ describe("runV5MessageRuntimeStage1", () => {
 		]);
 		const systemContent = params.messages?.[0]?.content ?? "";
 		const userContent = params.messages?.[1]?.content ?? "";
+		expect(systemContent.startsWith("You are concise.")).toBe(true);
+		expect(systemContent.indexOf("# About Test Agent")).toBeGreaterThan(
+			systemContent.indexOf("You are concise."),
+		);
+		expect(systemContent.indexOf("user_role: USER")).toBeGreaterThan(
+			systemContent.indexOf("# About Test Agent"),
+		);
 		expect(systemContent).toContain("message_handler_stage:");
 		expect(systemContent).toContain("available_contexts:");
-		expect(userContent).toContain("# Conversation Messages");
-		expect(userContent.match(/x/g)?.length).toBe(12_000);
+		// Prior dialogue lands as a `message:user:` segment in the user content,
+		// NOT as a `# Conversation Messages` text dump from RECENT_MESSAGES.
+		expect(userContent).toContain("message:user:");
+		expect(userContent).toContain(longUserText);
+		expect(userContent).not.toContain("# Conversation Messages");
 		expect(userContent).toContain("Can you check my calendar?");
+		expect(userContent).not.toContain("user_role:");
 		const fullPrompt = `${params.prompt ?? ""}\n${systemContent}\n${userContent}`;
 		expect(fullPrompt).not.toContain("values:");
 		expect(fullPrompt).not.toContain("data:");

@@ -56,10 +56,17 @@ export interface RecordedModelCall {
 	modelType: string;
 	modelName?: string;
 	provider: string;
-	prompt: string;
+	/**
+	 * @deprecated v5 paths emit native chat messages instead of a single
+	 * concatenated prompt string. The recorder no longer requires `prompt`
+	 * on new stages; existing trajectory snapshots may still carry it.
+	 * Trajectory viewers should read `messages` directly.
+	 */
+	prompt?: string;
 	messages?: ChatMessage[] | unknown[];
 	tools?: unknown;
 	toolChoice?: ToolChoice | unknown;
+	providerOptions?: unknown;
 	response: string;
 	toolCalls?: RecordedToolCall[];
 	usage?: RecordedUsage;
@@ -237,13 +244,18 @@ function trajectoryFileName(id: string): string {
 	return `${id}.json`;
 }
 
+function atomicTempPath(filePath: string): string {
+	const rand = Math.random().toString(16).slice(2);
+	return `${filePath}.${process.pid}.${Date.now().toString(36)}.${rand}.tmp`;
+}
+
 async function atomicWriteJson(
 	filePath: string,
 	value: unknown,
 	logger?: RecorderLogger,
 ): Promise<void> {
 	const dir = path.dirname(filePath);
-	const tmp = `${filePath}.tmp`;
+	const tmp = atomicTempPath(filePath);
 	try {
 		await fs.mkdir(dir, { recursive: true });
 		await fs.writeFile(tmp, JSON.stringify(value, null, 2), "utf8");
@@ -267,7 +279,7 @@ async function atomicWriteText(
 	logger?: RecorderLogger,
 ): Promise<void> {
 	const dir = path.dirname(filePath);
-	const tmp = `${filePath}.tmp`;
+	const tmp = atomicTempPath(filePath);
 	try {
 		await fs.mkdir(dir, { recursive: true });
 		await fs.writeFile(tmp, value, "utf8");
@@ -380,10 +392,13 @@ function renderTrajectoryMarkdown(trajectory: RecordedTrajectory): string {
 			if (typeof stage.model.costUsd === "number") {
 				lines.push(`- cost: $${stage.model.costUsd.toFixed(6)}`);
 			}
-			lines.push("");
-			lines.push("### Prompt");
-			lines.push("");
-			lines.push(...markdownFence(stage.model.prompt));
+			if (typeof stage.model.prompt === "string") {
+				const prompt = stage.model.prompt;
+				lines.push("");
+				lines.push("### Prompt");
+				lines.push("");
+				lines.push(...markdownFence(prompt));
+			}
 			lines.push("");
 			lines.push("### Response");
 			lines.push("");
@@ -414,6 +429,17 @@ function renderTrajectoryMarkdown(trajectory: RecordedTrajectory): string {
 				lines.push(
 					...markdownFence(
 						safeStringifyForMarkdown(stage.model.toolCalls),
+						"json",
+					),
+				);
+			}
+			if (stage.model.providerOptions !== undefined) {
+				lines.push("");
+				lines.push("### Provider Options");
+				lines.push("");
+				lines.push(
+					...markdownFence(
+						safeStringifyForMarkdown(stage.model.providerOptions),
 						"json",
 					),
 				);

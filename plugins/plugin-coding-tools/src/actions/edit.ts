@@ -3,11 +3,11 @@ import * as fs from "node:fs/promises";
 import {
   type Action,
   type ActionResult,
+  logger as coreLogger,
   type HandlerCallback,
   type IAgentRuntime,
   type Memory,
   type State,
-  logger as coreLogger,
 } from "@elizaos/core";
 
 import {
@@ -50,6 +50,7 @@ export const editAction: Action = {
   name: "EDIT",
   contexts: [...CODING_TOOLS_CONTEXTS],
   contextGate: { anyOf: [...CODING_TOOLS_CONTEXTS] },
+  roleGate: { minRole: "ADMIN" },
   similes: ["EDIT_FILE", "MODIFY_FILE"],
   description:
     "Replace text in an existing file. Default behavior requires `old_string` to match exactly once; pass `replace_all=true` to substitute every occurrence. The file must have been READ in this session, must still match its recorded mtime, and the new content cannot introduce a detected secret pattern.",
@@ -76,14 +77,13 @@ export const editAction: Action = {
     },
     {
       name: "replace_all",
-      description: "If true, replace every occurrence; otherwise require exactly one match.",
+      description:
+        "If true, replace every occurrence; otherwise require exactly one match.",
       required: false,
       schema: { type: "boolean" },
     },
   ],
   validate: async (runtime: IAgentRuntime) => {
-    const d = runtime.getSetting?.("CODING_TOOLS_DISABLE");
-    if (d === true || d === "true" || d === "1") return false;
     return true;
   },
   handler: async (
@@ -98,7 +98,10 @@ export const editAction: Action = {
         ? String(message.roomId)
         : undefined;
     if (!conversationId) {
-      return failureToActionResult({ reason: "missing_param", message: "no roomId" });
+      return failureToActionResult({
+        reason: "missing_param",
+        message: "no roomId",
+      });
     }
 
     const filePath = readStringParam(options, "file_path");
@@ -134,11 +137,7 @@ export const editAction: Action = {
     const validated = await sandbox.validatePath(conversationId, filePath);
     if (!validated.ok) {
       const reason =
-        validated.reason === "outside_roots"
-          ? "path_outside_roots"
-          : validated.reason === "blocked"
-            ? "path_blocked"
-            : "invalid_param";
+        validated.reason === "blocked" ? "path_blocked" : "invalid_param";
       return failureToActionResult({ reason, message: validated.message });
     }
 
@@ -146,7 +145,8 @@ export const editAction: Action = {
 
     const gate = await fileState.assertWritable(conversationId, resolved);
     if (!gate.ok) {
-      const reason = gate.reason === "stale_read" ? "stale_read" : "invalid_param";
+      const reason =
+        gate.reason === "stale_read" ? "stale_read" : "invalid_param";
       return failureToActionResult({ reason, message: gate.message });
     }
 
@@ -155,7 +155,10 @@ export const editAction: Action = {
       original = await fs.readFile(resolved, "utf8");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return failureToActionResult({ reason: "io_error", message: `read failed: ${msg}` });
+      return failureToActionResult({
+        reason: "io_error",
+        message: `read failed: ${msg}`,
+      });
     }
 
     const occurrences = countOccurrences(original, oldStr);
@@ -193,7 +196,10 @@ export const editAction: Action = {
       await fs.writeFile(resolved, updated, "utf8");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return failureToActionResult({ reason: "io_error", message: `write failed: ${msg}` });
+      return failureToActionResult({
+        reason: "io_error",
+        message: `write failed: ${msg}`,
+      });
     }
 
     await fileState.recordWrite(conversationId, resolved);

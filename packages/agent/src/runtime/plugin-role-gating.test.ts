@@ -45,23 +45,24 @@ describe("plugin role gating action policy", () => {
     vi.clearAllMocks();
   });
 
-  it("allows an explicit guest action policy to lower a static owner gate", async () => {
+  it("allows an explicit guest action policy to lower a static owner gate", () => {
     const originalValidate = vi.fn(async () => true);
     const action = {
       name: "START_CODING_TASK",
       similes: ["CREATE_TASK"],
+      contextGate: { anyOf: ["general"], roleGate: { minRole: "OWNER" } },
+      roleGate: { minRole: "OWNER" },
       validate: originalValidate,
     } as unknown as Action;
 
-    applyPluginRoleGating([pluginWithAction(action)]);
+    applyPluginRoleGating(
+      [pluginWithAction(action)],
+      runtimeWithPolicy(JSON.stringify({ START_CODING_TASK: "GUEST" })),
+    );
 
-    await expect(
-      action.validate?.(
-        runtimeWithPolicy(JSON.stringify({ START_CODING_TASK: "GUEST" })),
-        message(),
-      ),
-    ).resolves.toBe(true);
-    expect(originalValidate).toHaveBeenCalled();
+    expect(action.roleGate).toBeUndefined();
+    expect(action.contextGate).toEqual({ anyOf: ["general"] });
+    expect(originalValidate).not.toHaveBeenCalled();
     expect(mocks.checkSenderRole).not.toHaveBeenCalled();
   });
 
@@ -91,42 +92,51 @@ describe("plugin role gating action policy", () => {
     expect(registeredAction.contextGate).toEqual({ anyOf: ["general"] });
   });
 
-  it("matches configured policies against action similes", async () => {
+  it("matches configured policies against action similes", () => {
     const originalValidate = vi.fn(async () => true);
     const action = {
       name: "START_CODING_TASK",
       similes: ["CREATE_TASK"],
+      contextGate: { anyOf: ["general"], roleGate: { minRole: "OWNER" } },
+      roleGate: { minRole: "OWNER" },
       validate: originalValidate,
     } as unknown as Action;
 
-    applyPluginRoleGating([pluginWithAction(action)]);
+    applyPluginRoleGating(
+      [pluginWithAction(action)],
+      runtimeWithPolicy(JSON.stringify({ CREATE_TASK: "GUEST" })),
+    );
 
-    await expect(
-      action.validate?.(
-        runtimeWithPolicy(JSON.stringify({ CREATE_TASK: "GUEST" })),
-        message(),
-      ),
-    ).resolves.toBe(true);
-    expect(originalValidate).toHaveBeenCalled();
+    expect(action.roleGate).toBeUndefined();
+    expect(action.contextGate).toEqual({ anyOf: ["general"] });
+    expect(originalValidate).not.toHaveBeenCalled();
     expect(mocks.checkSenderRole).not.toHaveBeenCalled();
   });
 
-  it("keeps the built-in gate when no action policy is configured", async () => {
+  it("keeps source-declared action gates when no action policy is configured", async () => {
+    const originalValidate = vi.fn(async () => true);
     const action = {
       name: "START_CODING_TASK",
-      validate: vi.fn(async () => true),
+      contextGate: { anyOf: ["general"], roleGate: { minRole: "OWNER" } },
+      roleGate: { minRole: "OWNER" },
+      validate: originalValidate,
     } as unknown as Action;
-    mocks.checkSenderRole.mockResolvedValue({
-      role: "GUEST",
-      isAdmin: false,
-      isOwner: false,
-    });
 
-    applyPluginRoleGating([pluginWithAction(action)]);
+    applyPluginRoleGating(
+      [pluginWithAction(action)],
+      runtimeWithPolicy(undefined),
+    );
+
+    expect(action.roleGate).toEqual({ minRole: "OWNER" });
+    expect(action.contextGate).toEqual({
+      anyOf: ["general"],
+      roleGate: { minRole: "OWNER" },
+    });
 
     await expect(
       action.validate?.(runtimeWithPolicy(undefined), message()),
-    ).resolves.toBe(false);
-    expect(mocks.checkSenderRole).toHaveBeenCalled();
+    ).resolves.toBe(true);
+    expect(originalValidate).toHaveBeenCalled();
+    expect(mocks.checkSenderRole).not.toHaveBeenCalled();
   });
 });

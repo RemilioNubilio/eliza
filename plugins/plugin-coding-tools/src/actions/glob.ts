@@ -4,11 +4,11 @@ import * as path from "node:path";
 import {
   type Action,
   type ActionResult,
+  logger as coreLogger,
   type HandlerCallback,
   type IAgentRuntime,
   type Memory,
   type State,
-  logger as coreLogger,
 } from "@elizaos/core";
 
 import {
@@ -26,7 +26,13 @@ import {
 } from "../types.js";
 
 const RESULT_LIMIT = 100;
-const EXCLUDED_DIR_NAMES = new Set([".git", "node_modules", "dist", ".turbo", ".cache"]);
+const EXCLUDED_DIR_NAMES = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  ".turbo",
+  ".cache",
+]);
 
 interface NodeFsGlobModule {
   glob: (
@@ -133,6 +139,7 @@ export const globAction: Action = {
   name: "GLOB",
   contexts: [...CODING_TOOLS_CONTEXTS],
   contextGate: { anyOf: [...CODING_TOOLS_CONTEXTS] },
+  roleGate: { minRole: "ADMIN" },
   similes: ["FIND_FILES"],
   description:
     "Find files matching a glob pattern (e.g. '**/*.ts'). Returns up to 100 absolute paths sorted by mtime descending. Excludes VCS, build, and dependency directories. Use this instead of BASH for file discovery.",
@@ -153,9 +160,11 @@ export const globAction: Action = {
       schema: { type: "string" },
     },
   ],
-  validate: async (runtime: IAgentRuntime, _message: Memory, _state?: State) => {
-    const d = runtime.getSetting?.("CODING_TOOLS_DISABLE");
-    if (d === true || d === "true" || d === "1") return false;
+  validate: async (
+    runtime: IAgentRuntime,
+    _message: Memory,
+    _state?: State,
+  ) => {
     return true;
   },
   handler: async (
@@ -170,7 +179,10 @@ export const globAction: Action = {
         ? String(message.roomId)
         : undefined;
     if (!conversationId) {
-      return failureToActionResult({ reason: "missing_param", message: "no roomId" });
+      return failureToActionResult({
+        reason: "missing_param",
+        message: "no roomId",
+      });
     }
 
     const pattern = readStringParam(options, "pattern");
@@ -200,13 +212,7 @@ export const globAction: Action = {
     const validation = await sandbox.validatePath(conversationId, targetPath);
     if (!validation.ok) {
       const reason =
-        validation.reason === "outside_roots"
-          ? "path_outside_roots"
-          : validation.reason === "blocked"
-            ? "path_blocked"
-            : validation.reason === "not_absolute"
-              ? "invalid_param"
-              : "invalid_param";
+        validation.reason === "blocked" ? "path_blocked" : "invalid_param";
       return failureToActionResult({ reason, message: validation.message });
     }
     const root = validation.resolved;
@@ -240,15 +246,19 @@ export const globAction: Action = {
     );
 
     const filtered = stats.filter(
-      (entry): entry is { filePath: string; mtimeMs: number } => entry !== undefined,
+      (entry): entry is { filePath: string; mtimeMs: number } =>
+        entry !== undefined,
     );
     filtered.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
     const truncated = filtered.length > RESULT_LIMIT;
-    const limited = filtered.slice(0, RESULT_LIMIT).map((entry) => entry.filePath);
+    const limited = filtered
+      .slice(0, RESULT_LIMIT)
+      .map((entry) => entry.filePath);
 
     const header = `${limited.length} files (truncated=${truncated})`;
-    const text = limited.length === 0 ? header : `${header}\n${limited.join("\n")}`;
+    const text =
+      limited.length === 0 ? header : `${header}\n${limited.join("\n")}`;
 
     coreLogger.debug(
       `${CODING_TOOLS_LOG_PREFIX} GLOB pattern=${JSON.stringify(pattern)} root=${root} found=${limited.length} truncated=${truncated}`,

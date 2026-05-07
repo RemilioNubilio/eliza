@@ -2431,63 +2431,6 @@ export const allActionsSpec = {
 				"Generate image from conversation context. Use to visualize or illustrate.",
 		},
 		{
-			name: "ACTIVATE_N8N_WORKFLOW",
-			description:
-				"Activate an n8n workflow to start processing triggers and running automatically. Identifies workflows by ID, name, or semantic description in any language.",
-			parameters: [
-				{
-					name: "workflowId",
-					description: "Optional exact n8n workflow id to activate.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Optional exact n8n workflow id to activate.",
-				},
-				{
-					name: "workflowName",
-					description: "Optional workflow name to activate.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Optional workflow name to activate.",
-				},
-				{
-					name: "query",
-					description:
-						"Optional natural-language description of the workflow to activate.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed:
-						"Optional natural-language description of the workflow to activate.",
-				},
-			],
-			descriptionCompressed:
-				"activate n8n workflow start process trigger run automatically identify workflow ID, name, semantic description language",
-			similes: [
-				"ACTIVATE_WORKFLOW",
-				"ENABLE_WORKFLOW",
-				"START_WORKFLOW",
-				"TURN_ON_WORKFLOW",
-			],
-			exampleCalls: [
-				{
-					user: "Use ACTIVATE_N8N_WORKFLOW with the provided parameters.",
-					actions: ["ACTIVATE_N8N_WORKFLOW"],
-					params: {
-						ACTIVATE_N8N_WORKFLOW: {
-							workflowId: "example",
-							workflowName: "example",
-							query: "example",
-						},
-					},
-				},
-			],
-		},
-		{
 			name: "ASK_USER_QUESTION",
 			description:
 				"Broadcast 1-4 structured questions back to the user. Each question has a short header, a full question string, and optional multi-choice options with descriptions and previews. This is a structured-question broadcast surface — the action returns the question payload as data so a UI layer can render it; the action does NOT block waiting for an answer. UI integration is pending; for now treat the response as a published question, not as an interactive prompt.",
@@ -2553,7 +2496,7 @@ export const allActionsSpec = {
 		{
 			name: "ATTACK_NPC",
 			description:
-				"Engage a nearby NPC in combat by its instance id. The server pathfinds the agent into attack range automatically.",
+				"Engage a nearby NPC in the SCAPE world in combat by its instance id (taken from the SCAPE_NEARBY provider's npcs list). The game server pathfinds the agent into attack range and starts combat via PlayerManager.attackNpcAsAgent. Use only when an enemy id is known and combat is desired; this is a write action that mutates world state.",
 			parameters: [
 				{
 					name: "npcId",
@@ -2565,7 +2508,7 @@ export const allActionsSpec = {
 					descriptionCompressed: "NPC id.",
 				},
 			],
-			descriptionCompressed: "Attack NPC by id.",
+			descriptionCompressed: "scape:attack-npc by-id (paths-into-range)",
 			similes: ["FIGHT_NPC", "KILL_NPC", "ENGAGE"],
 			exampleCalls: [
 				{
@@ -2582,7 +2525,7 @@ export const allActionsSpec = {
 		{
 			name: "BASH",
 			description:
-				"Execute a shell command via /bin/bash -c <command>. Runs in the session cwd unless an explicit cwd inside the sandbox roots is supplied. Foreground commands return stdout, stderr, and exit code. Long-running commands auto-promote to background and return a task_id; pass run_in_background=true to background immediately. Respects the sandbox command denylist.",
+				"Execute a shell command via /bin/bash -c <command>. Runs in the session cwd by default. Foreground commands return stdout, stderr, and exit code. Long-running commands auto-promote to background and return a task_id; pass run_in_background=true to background immediately. Paths under the configured blocklist (e.g. ~/pvt, ~/Library, ~/.ssh) are off-limits as cwd.",
 			parameters: [
 				{
 					name: "command",
@@ -2620,13 +2563,13 @@ export const allActionsSpec = {
 				{
 					name: "cwd",
 					description:
-						"Absolute working directory; must resolve inside the configured workspace roots. Defaults to the session cwd.",
+						"Absolute working directory; must not resolve under a blocked path. Defaults to the session cwd.",
 					required: false,
 					schema: {
 						type: "string",
 					},
 					descriptionCompressed:
-						"Absolute working directory. must resolve inside the configured workspace roots. Defaults to the session cwd.",
+						"Absolute working directory. must not resolve under a blocked path. Defaults to the session cwd.",
 				},
 				{
 					name: "run_in_background",
@@ -2640,8 +2583,7 @@ export const allActionsSpec = {
 						"If true, return a task_id immediately. Use TASK_OUTPUT to poll and TASK_STOP to terminate.",
 				},
 			],
-			descriptionCompressed:
-				"Run a shell command (foreground or background) within sandbox roots.",
+			descriptionCompressed: "Run a shell command (foreground or background).",
 			similes: ["SHELL", "EXEC", "RUN_COMMAND"],
 			exampleCalls: [
 				{
@@ -2662,7 +2604,7 @@ export const allActionsSpec = {
 		{
 			name: "BLOCK_UNTIL_TASK_COMPLETE",
 			description:
-				"Block websites until a specific todo is marked complete. Use this only when the unblock condition is finishing a task, workout, assignment, or todo, like 'block x.com until I finish my workout'. ",
+				"Create a website block rule gated on completion of a specific todo, so the named hosts stay blocked until that todo is marked done. Use when the unblock condition is finishing a task, workout, assignment, or todo (e.g. 'block x.com until I finish my workout'). When todoName is supplied with no matching active todo, the todo is created first; an optional unlockDurationMinutes re-locks the same hosts after the gate releases. Do not use for fixed-duration blocks ('for 2 hours') or generic focus blocks ('turn on social media blocking') — those belong to OWNER_WEBSITE_BLOCK.",
 			parameters: [
 				{
 					name: "websites",
@@ -2719,7 +2661,8 @@ export const allActionsSpec = {
 					descriptionCompressed: "Optional profile label for the block rule.",
 				},
 			],
-			descriptionCompressed: "Block websites until a named todo is completed.",
+			descriptionCompressed:
+				"block-websites-until-todo-complete: websites + todoId|todoName + optional unlockDurationMinutes",
 			similes: [
 				"BLOCK_SITES_UNTIL_TODO_DONE",
 				"BLOCK_WEBSITE_UNTIL_TASK",
@@ -3056,6 +2999,83 @@ export const allActionsSpec = {
 					},
 				},
 			],
+		},
+		{
+			name: "CANCEL_TASK",
+			description:
+				"Cancel a durable task and stop any associated task-agent sessions, preserving history and marking sessions or threads as canceled or interrupted.",
+			parameters: [
+				{
+					name: "threadId",
+					description: "Task thread ID",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Task thread ID",
+				},
+				{
+					name: "sessionId",
+					description: "Session ID",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Session ID",
+				},
+				{
+					name: "search",
+					description: "Search text for a matching task",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Search text for a matching task",
+				},
+				{
+					name: "all",
+					description: "Cancel all active tasks",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed: "Cancel all active tasks",
+				},
+				{
+					name: "reason",
+					description: "Cancellation reason",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Cancellation reason",
+				},
+			],
+			similes: [
+				"STOP_TASK",
+				"CANCEL_AGENT_TASK",
+				"CANCEL_TASK_AGENT",
+				"ABORT_TASK",
+				"KILL_TASK",
+				"STOP_SUBTASK",
+			],
+			exampleCalls: [
+				{
+					user: "Use CANCEL_TASK with the provided parameters.",
+					actions: ["CANCEL_TASK"],
+					params: {
+						CANCEL_TASK: {
+							threadId: "example",
+							sessionId: "example",
+							search: "example",
+							all: false,
+							reason: "example",
+						},
+					},
+				},
+			],
+			descriptionCompressed:
+				"Cancel a durable task and stop any associated task-agent sessions, preserving history and marking sessions or threads as canceled or interrupted.",
 		},
 		{
 			name: "CHAT_PUBLIC",
@@ -3734,59 +3754,95 @@ export const allActionsSpec = {
 			],
 		},
 		{
-			name: "DEACTIVATE_N8N_WORKFLOW",
-			description:
-				"Deactivate an n8n workflow to stop it from processing triggers and running automatically. Identifies workflows by ID, name, or semantic description in any language.",
+			name: "CREATE_WORKSPACE",
+			description: "Create a git workspace for coding tasks. ",
 			parameters: [
 				{
-					name: "workflowId",
-					description: "Optional exact n8n workflow id to deactivate.",
+					name: "repo",
+					description: "Git repository URL to clone.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed:
-						"Optional exact n8n workflow id to deactivate.",
+					descriptionCompressed: "Create git workspace for coding tasks.",
 				},
 				{
-					name: "workflowName",
-					description: "Optional workflow name to deactivate.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Optional workflow name to deactivate.",
-				},
-				{
-					name: "query",
+					name: "baseBranch",
 					description:
-						"Optional natural-language description of the workflow to deactivate.",
+						"Base branch to create feature branch from (default: main).",
 					required: false,
 					schema: {
 						type: "string",
 					},
 					descriptionCompressed:
-						"Optional natural-language description of the workflow to deactivate.",
+						"Base branch to create feature branch from (default: main).",
+				},
+				{
+					name: "useWorktree",
+					description: "Create a git worktree instead of a full clone.",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed:
+						"Create a git worktree instead of a full clone.",
+				},
+				{
+					name: "parentWorkspaceId",
+					description: "Parent workspace ID for worktree creation.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Parent workspace ID for worktree creation.",
 				},
 			],
 			descriptionCompressed:
-				"deactivate n8n workflow stop process trigger run automatically identify workflow ID, name, semantic description language",
+				"create git workspace cod task clone repository create git worktree isolat development",
 			similes: [
-				"DEACTIVATE_WORKFLOW",
-				"DISABLE_WORKFLOW",
-				"STOP_WORKFLOW",
-				"PAUSE_WORKFLOW",
-				"TURN_OFF_WORKFLOW",
+				"PROVISION_WORKSPACE",
+				"CLONE_REPO",
+				"SETUP_WORKSPACE",
+				"PREPARE_WORKSPACE",
 			],
 			exampleCalls: [
 				{
-					user: "Use DEACTIVATE_N8N_WORKFLOW with the provided parameters.",
-					actions: ["DEACTIVATE_N8N_WORKFLOW"],
+					user: "Use CREATE_WORKSPACE with the provided parameters.",
+					actions: ["CREATE_WORKSPACE"],
 					params: {
-						DEACTIVATE_N8N_WORKFLOW: {
-							workflowId: "example",
-							workflowName: "example",
-							query: "example",
+						CREATE_WORKSPACE: {
+							repo: "example",
+							baseBranch: "example",
+							useWorktree: false,
+							parentWorkspaceId: "example",
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "DELETE_LINEAR_COMMENT",
+			description: "Delete a Linear comment by id",
+			parameters: [
+				{
+					name: "commentId",
+					description: "Linear comment id to delete.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Linear comment id to delete.",
+				},
+			],
+			descriptionCompressed: "delete Linear comment id",
+			similes: ["remove-linear-comment", "erase-linear-comment"],
+			exampleCalls: [
+				{
+					user: "Use DELETE_LINEAR_COMMENT with the provided parameters.",
+					actions: ["DELETE_LINEAR_COMMENT"],
+					params: {
+						DELETE_LINEAR_COMMENT: {
+							commentId: "example",
 						},
 					},
 				},
@@ -3820,70 +3876,6 @@ export const allActionsSpec = {
 					params: {
 						DELETE_LINEAR_ISSUE: {
 							issueId: "example",
-						},
-					},
-				},
-			],
-		},
-		{
-			name: "DELETE_N8N_WORKFLOW",
-			description:
-				"Delete an n8n workflow permanently. This action cannot be undone. Identifies workflows by ID, name, or semantic description in any language.",
-			parameters: [
-				{
-					name: "workflowId",
-					description: "Optional exact n8n workflow id to delete.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Optional exact n8n workflow id to delete.",
-				},
-				{
-					name: "workflowName",
-					description: "Optional workflow name to delete.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Optional workflow name to delete.",
-				},
-				{
-					name: "query",
-					description:
-						"Optional natural-language description of the workflow to delete.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed:
-						"Optional natural-language description of the workflow to delete.",
-				},
-				{
-					name: "confirmed",
-					description: "Whether the user has confirmed permanent deletion.",
-					required: false,
-					schema: {
-						type: "boolean",
-						default: false,
-					},
-					descriptionCompressed:
-						"Whether user has confirmed permanent deletion.",
-				},
-			],
-			descriptionCompressed:
-				"delete n8n workflow permanently action cannot undone identify workflow ID, name, semantic description language",
-			similes: ["DELETE_WORKFLOW", "REMOVE_WORKFLOW", "DESTROY_WORKFLOW"],
-			exampleCalls: [
-				{
-					user: "Use DELETE_N8N_WORKFLOW with the provided parameters.",
-					actions: ["DELETE_N8N_WORKFLOW"],
-					params: {
-						DELETE_N8N_WORKFLOW: {
-							workflowId: "example",
-							workflowName: "example",
-							query: "example",
-							confirmed: false,
 						},
 					},
 				},
@@ -4686,104 +4678,6 @@ export const allActionsSpec = {
 			],
 		},
 		{
-			name: "FINALIZE_WORKSPACE",
-			description:
-				"Finalize workspace changes by committing, pushing, and optionally creating a pull request. ",
-			parameters: [
-				{
-					name: "workspaceId",
-					description:
-						"ID of the workspace to finalize. Uses current workspace if not specified.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed:
-						"Commit, push, opt. create PR for workspace changes.",
-				},
-				{
-					name: "commitMessage",
-					description: "Commit message for the changes.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Commit msg for the changes.",
-				},
-				{
-					name: "prTitle",
-					description: "Title for the pull request.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Title for the pull request.",
-				},
-				{
-					name: "prBody",
-					description: "Body/description for the pull request.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Body/description for the pull request.",
-				},
-				{
-					name: "baseBranch",
-					description: "Base branch for the PR (e.g., main, develop).",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed:
-						"Base branch for the PR (e. g. , main, develop).",
-				},
-				{
-					name: "draft",
-					description: "Create as draft PR.",
-					required: false,
-					schema: {
-						type: "boolean",
-					},
-					descriptionCompressed: "Create as draft PR.",
-				},
-				{
-					name: "skipPR",
-					description: "Skip PR creation, only commit and push.",
-					required: false,
-					schema: {
-						type: "boolean",
-					},
-					descriptionCompressed: "Skip PR creation, only commit and push.",
-				},
-			],
-			descriptionCompressed:
-				"finalize workspace change commit, push, optionally create pull request use after task agent complete task",
-			similes: [
-				"COMMIT_AND_PR",
-				"CREATE_PR",
-				"SUBMIT_CHANGES",
-				"FINISH_WORKSPACE",
-			],
-			exampleCalls: [
-				{
-					user: "Use FINALIZE_WORKSPACE with the provided parameters.",
-					actions: ["FINALIZE_WORKSPACE"],
-					params: {
-						FINALIZE_WORKSPACE: {
-							workspaceId: "example",
-							commitMessage: "example",
-							prTitle: "example",
-							prBody: "example",
-							baseBranch: "example",
-							draft: false,
-							skipPR: false,
-						},
-					},
-				},
-			],
-		},
-		{
 			name: "FORM_RESTORE",
 			description: "Restore a previously stashed form session",
 			parameters: [
@@ -4985,37 +4879,6 @@ export const allActionsSpec = {
 					params: {
 						GET_SKILL_DETAILS: {
 							slug: "example",
-						},
-					},
-				},
-			],
-		},
-		{
-			name: "GET_TAILSCALE_STATUS",
-			description: "Get the current status of the Tailscale tunnel",
-			parameters: [
-				{
-					name: "verbose",
-					description:
-						"When true, include backend provider details in the status text.",
-					required: false,
-					schema: {
-						type: "boolean",
-						default: false,
-					},
-					descriptionCompressed:
-						"When true, include backend provider details in the status text.",
-				},
-			],
-			descriptionCompressed: "get current status Tailscale tunnel",
-			similes: ["TAILSCALE_STATUS", "CHECK_TUNNEL", "TUNNEL_INFO"],
-			exampleCalls: [
-				{
-					user: "Use GET_TAILSCALE_STATUS with the provided parameters.",
-					actions: ["GET_TAILSCALE_STATUS"],
-					params: {
-						GET_TAILSCALE_STATUS: {
-							verbose: false,
 						},
 					},
 				},
@@ -5309,46 +5172,6 @@ export const allActionsSpec = {
 			],
 		},
 		{
-			name: "IMESSAGE_SEND_MESSAGE",
-			description: "Send a text message via iMessage (macOS only)",
-			parameters: [
-				{
-					name: "text",
-					description: "Message text to send.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "msg text to send.",
-				},
-				{
-					name: "to",
-					description: "Phone number, email address, or current conversation.",
-					required: false,
-					schema: {
-						type: "string",
-						default: "current",
-					},
-					descriptionCompressed:
-						"Phone number, email address, or current convo.",
-				},
-			],
-			descriptionCompressed: "Send iMessage (macOS).",
-			similes: ["SEND_IMESSAGE", "IMESSAGE_TEXT", "TEXT_IMESSAGE", "SEND_IMSG"],
-			exampleCalls: [
-				{
-					user: "Use IMESSAGE_SEND_MESSAGE with the provided parameters.",
-					actions: ["IMESSAGE_SEND_MESSAGE"],
-					params: {
-						IMESSAGE_SEND_MESSAGE: {
-							text: "example",
-							to: "current",
-						},
-					},
-				},
-			],
-		},
-		{
 			name: "INSTAGRAM_REPLY",
 			description:
 				"Reply on Instagram. mode=comment posts a comment on a media post (target=mediaId, text=comment). mode=dm sends a direct message to a thread (target=threadId, text=message).",
@@ -5444,9 +5267,64 @@ export const allActionsSpec = {
 			],
 		},
 		{
+			name: "LINEAR",
+			description:
+				"Manage Linear issues, comments, and activity. Operations: create_issue, get_issue, update_issue, delete_issue, create_comment, update_comment, delete_comment, list_comments, get_activity, clear_activity, search_issues. The op is inferred from the message text when not explicitly provided.",
+			parameters: [
+				{
+					name: "op",
+					description:
+						"Operation to perform. One of: create_issue, get_issue, update_issue, delete_issue, create_comment, update_comment, delete_comment, list_comments, get_activity, clear_activity, search_issues. Inferred from message text when omitted.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Operation to perform. One of: create_issue, get_issue, update_issue, delete_issue, create_comment, update_comment, delete_comment, list_comments...",
+				},
+			],
+			descriptionCompressed:
+				"Linear: create/get/update/delete issue, create/update/delete/list comment, search issues, get/clear activity.",
+			similes: [
+				"LINEAR_ISSUE",
+				"LINEAR_ISSUES",
+				"LINEAR_COMMENT",
+				"LINEAR_COMMENTS",
+				"LINEAR_WORKFLOW",
+				"LINEAR_ACTIVITY",
+				"LINEAR_SEARCH",
+				"CREATE_LINEAR_ISSUE",
+				"GET_LINEAR_ISSUE",
+				"UPDATE_LINEAR_ISSUE",
+				"DELETE_LINEAR_ISSUE",
+				"MANAGE_LINEAR_ISSUE",
+				"MANAGE_LINEAR_ISSUES",
+				"CREATE_LINEAR_COMMENT",
+				"COMMENT_LINEAR_ISSUE",
+				"UPDATE_LINEAR_COMMENT",
+				"DELETE_LINEAR_COMMENT",
+				"LIST_LINEAR_COMMENTS",
+				"GET_LINEAR_ACTIVITY",
+				"CLEAR_LINEAR_ACTIVITY",
+				"SEARCH_LINEAR_ISSUES",
+				"LINEAR_WORKFLOW_SEARCH",
+			],
+			exampleCalls: [
+				{
+					user: "Use LINEAR with the provided parameters.",
+					actions: ["LINEAR"],
+					params: {
+						LINEAR: {
+							op: "example",
+						},
+					},
+				},
+			],
+		},
+		{
 			name: "LIST_ACTIVE_BLOCKS",
 			description:
-				"List the live website blocker status and any active managed website block rules, including their gate type and gate target. Only use this for website/app blocking status. Do not use it for inbox blockers, message priority, morning briefs, night briefs, operating pictures, end-of-day reviews, or general executive-assistant triage.",
+				"Report the current website blocker state by combining the live OS-level hosts/SelfControl status (active hosts, end time, permission notes) with the LifeOps-managed block rules (id, gateType, websites, gate target — todo id, ISO deadline, or fixed duration). Toggle either source via includeLiveStatus / includeManagedRules. Only for website/app blocking status — do not use for inbox blockers, message priority, morning/night briefs, operating pictures, end-of-day reviews, or general executive-assistant triage.",
 			parameters: [
 				{
 					name: "includeLiveStatus",
@@ -5472,7 +5350,7 @@ export const allActionsSpec = {
 				},
 			],
 			descriptionCompressed:
-				"List live website blocker status and active block rules.",
+				"list-website-blocks: live hosts/SelfControl status + managed rules (gateType, target, websites)",
 			similes: [
 				"LIST_BLOCK_RULES",
 				"SHOW_ACTIVE_BLOCKS",
@@ -5495,21 +5373,7 @@ export const allActionsSpec = {
 			name: "LIST_AGENTS",
 			description:
 				"List active task agents together with current task progress so the main agent can keep the user updated while work continues asynchronously.",
-			parameters: [
-				{
-					name: "status",
-					description:
-						"Optional session/task status filter such as active, idle, completed, failed, or all.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed:
-						"Optional session/task status filter such as active, idle, completed, failed, or all.",
-				},
-			],
-			descriptionCompressed:
-				"List active task agents with progress for async status updates.",
+			parameters: [],
 			similes: [
 				"LIST_CODING_AGENTS",
 				"SHOW_CODING_AGENTS",
@@ -5520,13 +5384,48 @@ export const allActionsSpec = {
 				"LIST_SUB_AGENTS",
 				"SHOW_TASK_STATUS",
 			],
+			descriptionCompressed:
+				"List active task agents together with current task progress so the main agent can keep user updated while work continues asynchronously.",
+		},
+		{
+			name: "LIST_LINEAR_COMMENTS",
+			description: "List comments on a Linear issue",
+			parameters: [
+				{
+					name: "issueId",
+					description: "Linear issue id or identifier to list comments for.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Linear issue id or id to list comments for.",
+				},
+				{
+					name: "limit",
+					description:
+						"Maximum number of comments to return (default 25, max 100).",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed:
+						"max number of comments to return (default 25, max 100).",
+				},
+			],
+			descriptionCompressed: "list comment Linear issue",
+			similes: [
+				"get-linear-comments",
+				"show-linear-comments",
+				"fetch-linear-comments",
+			],
 			exampleCalls: [
 				{
-					user: "Use LIST_AGENTS with the provided parameters.",
-					actions: ["LIST_AGENTS"],
+					user: "Use LIST_LINEAR_COMMENTS with the provided parameters.",
+					actions: ["LIST_LINEAR_COMMENTS"],
 					params: {
-						LIST_AGENTS: {
-							status: "example",
+						LIST_LINEAR_COMMENTS: {
+							issueId: "example",
+							limit: 1,
 						},
 					},
 				},
@@ -6424,9 +6323,121 @@ export const allActionsSpec = {
 			],
 		},
 		{
+			name: "N8N",
+			description:
+				"Manage n8n workflows. Operations: create (build new), modify (edit existing), activate (enable), deactivate (disable), delete (with confirmation), executions (get run history).",
+			parameters: [
+				{
+					name: "op",
+					description:
+						"Operation: create, modify, activate, deactivate, delete, or executions. If omitted, inferred from message text.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Operation: create, modify, activate, deactivate, delete, or executions. If omitted, inferred from msg text.",
+				},
+				{
+					name: "workflowId",
+					description:
+						"Exact n8n workflow id. When omitted, the workflow is matched semantically.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Exact n8n workflow id. When omitted, the workflow is matched semantically.",
+				},
+				{
+					name: "workflowName",
+					description:
+						"Workflow name fragment for fuzzy matching (executions only).",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Workflow name fragment for fuzzy matching (executions only).",
+				},
+				{
+					name: "limit",
+					description:
+						"Max executions to return (executions only). Default 10.",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed:
+						"Max executions to return (executions only). Default 10.",
+				},
+				{
+					name: "description",
+					description:
+						"Natural-language description (create/modify only). If omitted, derived from message.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Natural-language description (create/modify only). If omitted, derived from msg.",
+				},
+			],
+			descriptionCompressed:
+				"n8n workflow: create, modify, activate, deactivate, delete, executions.",
+			similes: [
+				"WORKFLOW",
+				"N8N_WORKFLOW",
+				"CREATE_WORKFLOW",
+				"BUILD_WORKFLOW",
+				"GENERATE_WORKFLOW",
+				"CREATE_N8N_WORKFLOW",
+				"MODIFY_WORKFLOW",
+				"UPDATE_WORKFLOW",
+				"EDIT_WORKFLOW",
+				"MODIFY_EXISTING_N8N_WORKFLOW",
+				"ACTIVATE_WORKFLOW",
+				"DEACTIVATE_WORKFLOW",
+				"DELETE_WORKFLOW",
+				"ENABLE_WORKFLOW",
+				"DISABLE_WORKFLOW",
+				"STOP_WORKFLOW",
+				"PAUSE_WORKFLOW",
+				"TURN_ON_WORKFLOW",
+				"TURN_OFF_WORKFLOW",
+				"START_WORKFLOW",
+				"REMOVE_WORKFLOW",
+				"DESTROY_WORKFLOW",
+				"ACTIVATE_N8N_WORKFLOW",
+				"DEACTIVATE_N8N_WORKFLOW",
+				"DELETE_N8N_WORKFLOW",
+				"GET_EXECUTIONS",
+				"SHOW_EXECUTIONS",
+				"EXECUTION_HISTORY",
+				"WORKFLOW_RUNS",
+				"WORKFLOW_EXECUTIONS",
+				"GET_N8N_EXECUTIONS",
+			],
+			exampleCalls: [
+				{
+					user: "Use N8N with the provided parameters.",
+					actions: ["N8N"],
+					params: {
+						N8N: {
+							op: "example",
+							workflowId: "example",
+							workflowName: "example",
+							limit: 1,
+							description: "example",
+						},
+					},
+				},
+			],
+		},
+		{
 			name: "NOSTR_PUBLISH_NOTE",
 			description:
-				"Publish a Nostr text note (kind:1) to the configured relays. Use for short broadcast posts; use NOSTR_SEND_DM for private messages.",
+				"Publish a Nostr text note (kind:1) to the configured relays. Use for short broadcast posts; private messages should be sent via SEND_MESSAGE (which routes through the Nostr DM connector).",
 			parameters: [
 				{
 					name: "text",
@@ -6502,45 +6513,6 @@ export const allActionsSpec = {
 							name: "example",
 							about: "example",
 							picture: "example",
-						},
-					},
-				},
-			],
-		},
-		{
-			name: "NOSTR_SEND_DM",
-			description: "Send an encrypted direct message via Nostr (NIP-04)",
-			parameters: [
-				{
-					name: "text",
-					description: "Direct message text to send.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Direct msg text to send.",
-				},
-				{
-					name: "toPubkey",
-					description: "Recipient npub, hex pubkey, or current.",
-					required: false,
-					schema: {
-						type: "string",
-						default: "current",
-					},
-					descriptionCompressed: "Recipient npub, hex pubkey, or current.",
-				},
-			],
-			descriptionCompressed: "send encrypt direct message via Nostr (NIP-04)",
-			similes: ["SEND_NOSTR_DM", "NOSTR_MESSAGE", "NOSTR_TEXT", "DM_NOSTR"],
-			exampleCalls: [
-				{
-					user: "Use NOSTR_SEND_DM with the provided parameters.",
-					actions: ["NOSTR_SEND_DM"],
-					params: {
-						NOSTR_SEND_DM: {
-							text: "example",
-							toPubkey: "current",
 						},
 					},
 				},
@@ -7232,67 +7204,54 @@ export const allActionsSpec = {
 			],
 		},
 		{
-			name: "PROVISION_WORKSPACE",
-			description: "Create a git workspace for coding tasks. ",
+			name: "POST_TO_SOCIAL",
+			description:
+				"Publish a public post to a social network (X, Bluesky, Farcaster, Nostr). Platform is selected by the `platform` parameter (or inferred from the message text). Optional `replyTo` references the parent post id/uri/hash.",
 			parameters: [
 				{
-					name: "repo",
-					description: "Git repository URL to clone.",
+					name: "platform",
+					description: "Target social network: x, bluesky, farcaster, nostr.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed: "Create git workspace for coding tasks.",
+					descriptionCompressed:
+						"Target social network: x, bluesky, farcaster, nostr.",
 				},
 				{
-					name: "baseBranch",
+					name: "text",
 					description:
-						"Base branch to create feature branch from (default: main).",
+						"Post body. Falls back to the user message text when omitted.",
 					required: false,
 					schema: {
 						type: "string",
 					},
 					descriptionCompressed:
-						"Base branch to create feature branch from (default: main).",
+						"Post body. Falls back to user msg text when omitted.",
 				},
 				{
-					name: "useWorktree",
-					description: "Create a git worktree instead of a full clone.",
-					required: false,
-					schema: {
-						type: "boolean",
-					},
-					descriptionCompressed:
-						"Create a git worktree instead of a full clone.",
-				},
-				{
-					name: "parentWorkspaceId",
-					description: "Parent workspace ID for worktree creation.",
+					name: "replyTo",
+					description:
+						"Parent post id (X tweet id), uri (Bluesky), hash (Farcaster), or event id (Nostr). Optional.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed: "Parent workspace ID for worktree creation.",
+					descriptionCompressed:
+						"Parent post id (X tweet id), uri (Bluesky), hash (Farcaster), or event id (Nostr). Optional.",
 				},
 			],
 			descriptionCompressed:
-				"create git workspace cod task clone repository create git worktree isolat development",
-			similes: [
-				"CREATE_WORKSPACE",
-				"CLONE_REPO",
-				"SETUP_WORKSPACE",
-				"PREPARE_WORKSPACE",
-			],
+				"Post to social network: x, bluesky, farcaster, nostr.",
 			exampleCalls: [
 				{
-					user: "Use PROVISION_WORKSPACE with the provided parameters.",
-					actions: ["PROVISION_WORKSPACE"],
+					user: "Use POST_TO_SOCIAL with the provided parameters.",
+					actions: ["POST_TO_SOCIAL"],
 					params: {
-						PROVISION_WORKSPACE: {
-							repo: "example",
-							baseBranch: "example",
-							useWorktree: false,
-							parentWorkspaceId: "example",
+						POST_TO_SOCIAL: {
+							platform: "example",
+							text: "example",
+							replyTo: "example",
 						},
 					},
 				},
@@ -7607,6 +7566,115 @@ export const allActionsSpec = {
 			],
 		},
 		{
+			name: "RS_2004_WALK_TO",
+			description:
+				"Walk to a coordinate or named destination. Provide either destination: name OR x: N, z: N.",
+			parameters: [
+				{
+					name: "destination",
+					description: "Optional named destination (overrides x/z).",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Named destination.",
+				},
+				{
+					name: "x",
+					description: "Target world X coordinate.",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed: "Target x.",
+				},
+				{
+					name: "z",
+					description: "Target world Z coordinate.",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed: "Target z.",
+				},
+				{
+					name: "reason",
+					description: "Optional reason logged with the walk.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Walk reason.",
+				},
+			],
+			similes: ["MOVE_TO", "GOTO"],
+			exampleCalls: [
+				{
+					user: "Use RS_2004_WALK_TO with the provided parameters.",
+					actions: ["RS_2004_WALK_TO"],
+					params: {
+						RS_2004_WALK_TO: {
+							destination: "example",
+							x: 1,
+							z: 1,
+							reason: "example",
+						},
+					},
+				},
+			],
+			descriptionCompressed:
+				"Walk to a coordinate or named destination. Provide either destination: name OR x: N, z: N.",
+		},
+		{
+			name: "SCAPE_WALK_TO",
+			description:
+				"Walk the agent toward a specific world tile (x, z). Use this to move to banks, NPCs, resource nodes, or just to explore.",
+			parameters: [
+				{
+					name: "x",
+					description: "Target world X coordinate.",
+					required: true,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed: "Target x.",
+				},
+				{
+					name: "z",
+					description: "Target world Z coordinate.",
+					required: true,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed: "Target z.",
+				},
+				{
+					name: "run",
+					description: "Whether to run toward the target when possible.",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed: "Run toggle.",
+				},
+			],
+			descriptionCompressed: "Walk to coordinate.",
+			similes: ["MOVE_TO", "GO_TO", "TRAVEL_TO", "HEAD_TO"],
+			exampleCalls: [
+				{
+					user: "Use SCAPE_WALK_TO with the provided parameters.",
+					actions: ["SCAPE_WALK_TO"],
+					params: {
+						SCAPE_WALK_TO: {
+							x: 1,
+							z: 1,
+							run: false,
+						},
+					},
+				},
+			],
+		},
+		{
 			name: "SCHEDULE",
 			description:
 				"Owner-only. Inspect LifeOps passive schedule inference from local activity, screen-time, and optional health signals. ",
@@ -7881,64 +7949,54 @@ export const allActionsSpec = {
 		{
 			name: "SEND_TO_AGENT",
 			description:
-				"Send text input or key presses to a running task-agent session. ",
+				"Send text input or key presses to a running task-agent session. Use it to respond to prompts, provide feedback, continue a task, or assign a fresh tracked task to an existing agent.",
 			parameters: [
 				{
 					name: "sessionId",
-					description:
-						"ID of the task-agent session to send to. If not specified, uses the current session.",
+					description: "Target task-agent session ID",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed: "Send input/keypresses to running task agent.",
+					descriptionCompressed: "Target task-agent session ID",
 				},
 				{
 					name: "input",
-					description: "Text input to send to the running task agent.",
+					description: "Text to send to the agent",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed:
-						"Text input to send to the running task agent.",
+					descriptionCompressed: "Text to send to agent",
 				},
 				{
 					name: "task",
-					description:
-						"New tracked task to assign to the existing agent. This is also sent as the next input so provider status reflects the new assignment.",
+					description: "New task to assign to the agent",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed:
-						"New tracked task to assign to the existing agent. This is also sent as the next input so provider status reflects the new assignment.",
+					descriptionCompressed: "New task to assign to agent",
 				},
 				{
 					name: "label",
-					description:
-						"Optional label to use when tracking a newly assigned task on an existing agent.",
+					description: "Optional task label",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed:
-						"Optional label to use when tracking a newly assigned task on an existing agent.",
+					descriptionCompressed: "Optional task label",
 				},
 				{
 					name: "keys",
-					description:
-						"Special key sequence to send (e.g., 'Enter', 'Ctrl-C', 'y').",
+					description: "Key sequence to send",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed:
-						"Special key sequence to send (e. g. , 'Enter', 'Ctrl-C', 'y').",
+					descriptionCompressed: "Key sequence to send",
 				},
 			],
-			descriptionCompressed:
-				"send text input key press run task-agent session use respond agent prompt, provide feedback, continue task, assign fresh track task exist agent",
 			similes: [
 				"SEND_TO_CODING_AGENT",
 				"MESSAGE_CODING_AGENT",
@@ -7963,6 +8021,8 @@ export const allActionsSpec = {
 					},
 				},
 			],
+			descriptionCompressed:
+				"Send text input or key presses to a running task-agent session. Use it to respond to prompts, provide feedback, continue a task, or assign a fresh tracked...",
 		},
 		{
 			name: "SEND_X_POST",
@@ -8085,6 +8145,36 @@ export const allActionsSpec = {
 				"Set a recurring follow-up cadence threshold (in days) for a specific contact.",
 		},
 		{
+			name: "SHOPIFY",
+			description:
+				"Manage a Shopify store. Operations: products (CRUD on products), inventory (stock adjustments), orders (list/update orders), customers (CRUD on customers). Op is inferred from the message text when not explicitly provided. For read-only catalog browsing use SEARCH_SHOPIFY_STORE.",
+			parameters: [
+				{
+					name: "op",
+					description:
+						"Operation to perform. One of: products, inventory, orders, customers. Inferred from message text when omitted.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Operation to perform. One of: products, inventory, orders, customers. Inferred from msg text when omitted.",
+				},
+			],
+			descriptionCompressed: "Shopify: products, inventory, orders, customers.",
+			exampleCalls: [
+				{
+					user: "Use SHOPIFY with the provided parameters.",
+					actions: ["SHOPIFY"],
+					params: {
+						SHOPIFY: {
+							op: "example",
+						},
+					},
+				},
+			],
+		},
+		{
 			name: "SIGNAL_READ_RECENT_MESSAGES",
 			description:
 				"Read the most recent Signal messages across active conversations",
@@ -8116,6 +8206,37 @@ export const allActionsSpec = {
 					params: {
 						SIGNAL_READ_RECENT_MESSAGES: {
 							limit: 10,
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "SKILL",
+			description:
+				"Manage skill catalog. Operations: search (browse available skills), details (info about a specific skill), sync (refresh catalog from registry), toggle (enable/disable installed skill), install (install from registry), uninstall (remove non-bundled skill). For invoking an enabled skill, use USE_SKILL instead.",
+			parameters: [
+				{
+					name: "op",
+					description:
+						"Operation to perform. One of: search, details, sync, toggle, install, uninstall. Inferred from message text when omitted.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Operation to perform. One of: search, details, sync, toggle, install, uninstall. Inferred from msg text when omitted.",
+				},
+			],
+			descriptionCompressed:
+				"Skill catalog: search, details, sync, toggle, install, uninstall.",
+			exampleCalls: [
+				{
+					user: "Use SKILL with the provided parameters.",
+					actions: ["SKILL"],
+					params: {
+						SKILL: {
+							op: "example",
 						},
 					},
 				},
@@ -8214,39 +8335,6 @@ export const allActionsSpec = {
 			],
 			descriptionCompressed:
 				"Slack message ops: send, edit, delete, react, pin, unpin.",
-			similes: [
-				"SLACK_SEND_MESSAGE",
-				"SEND_SLACK_MESSAGE",
-				"POST_TO_SLACK",
-				"MESSAGE_SLACK",
-				"SLACK_POST",
-				"SEND_TO_CHANNEL",
-				"SLACK_EDIT_MESSAGE",
-				"UPDATE_SLACK_MESSAGE",
-				"MODIFY_MESSAGE",
-				"CHANGE_MESSAGE",
-				"SLACK_UPDATE",
-				"SLACK_DELETE_MESSAGE",
-				"REMOVE_SLACK_MESSAGE",
-				"DELETE_MESSAGE",
-				"SLACK_REMOVE",
-				"SLACK_REACT_TO_MESSAGE",
-				"ADD_SLACK_REACTION",
-				"REACT_SLACK",
-				"SLACK_EMOJI",
-				"ADD_EMOJI",
-				"REMOVE_REACTION",
-				"SLACK_PIN_MESSAGE",
-				"PIN_SLACK_MESSAGE",
-				"PIN_MESSAGE",
-				"SLACK_PIN",
-				"SAVE_MESSAGE",
-				"SLACK_UNPIN_MESSAGE",
-				"UNPIN_SLACK_MESSAGE",
-				"UNPIN_MESSAGE",
-				"SLACK_UNPIN",
-				"REMOVE_PIN",
-			],
 			exampleCalls: [
 				{
 					user: "Use SLACK_MESSAGE_OP with the provided parameters.",
@@ -8322,166 +8410,29 @@ export const allActionsSpec = {
 			],
 		},
 		{
-			name: "SPAWN_AGENT",
-			description:
-				"Spawn a specific task agent inside an existing workspace when you need direct control. ",
-			parameters: [
-				{
-					name: "agentType",
-					description:
-						"Specific task-agent framework to spawn. Options: claude (Claude Code), codex (OpenAI Codex), gemini (Google Gemini), aider, pi, shell (generic shell). ",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed:
-						"Specific task-agent framework to spawn. Options: claude (Claude Code), codex (OpenAI Codex), gemini (Google Gemini), aider, pi, shell (generic shell).",
-				},
-				{
-					name: "workdir",
-					description:
-						"Working directory for the agent. Defaults to current directory.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed:
-						"Spawn task agent in existing workspace for direct control.",
-				},
-				{
-					name: "task",
-					description:
-						"Open-ended task or prompt to send to the task agent once spawned.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed:
-						"Open-ended task or prompt to send to the task agent once spawned.",
-				},
-				{
-					name: "memoryContent",
-					description:
-						"Instructions or shared context to write to the task agent's memory file before spawning.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed:
-						"Instructions or shared context to write to the task agent's memory file before spawning.",
-				},
-				{
-					name: "approvalPreset",
-					description:
-						"OPTIONAL permission preset. Leave UNSET for normal coding/research tasks — the runtime defaults to 'autonomous' which gives the agent full tools including shell, the helpers it needs to work effectively, and standard --dangerously-skip-permissions (the orchestrator runs in a sandbox so this is safe). Only set this when the user EXPLICITLY asks for a constrained agent: 'readonly' for a true audit-only review (no shell, no writes, no web), 'standard' or 'permissive' for unusual approval flows. Picking 'readonly' for normal tasks breaks bash helper scripts and is almost never what the user wants.",
-					required: false,
-					schema: {
-						type: "string",
-						enum: ["readonly", "standard", "permissive", "autonomous"],
-					},
-					descriptionCompressed:
-						"OPTIONAL permission preset. Leave UNSET for normal coding/research tasks - the runtime defaults to 'autonomous' which gives agent full tools including shell...",
-				},
-				{
-					name: "keepAliveAfterComplete",
-					description:
-						"Keep the spawned task-agent session alive after a completed turn so it can receive another tracked task.",
-					required: false,
-					schema: {
-						type: "boolean",
-					},
-					descriptionCompressed:
-						"Keep the spawned task-agent session alive after a completed turn so it can receive another tracked task.",
-				},
-			],
-			descriptionCompressed:
-				"Spawn task agent in existing workspace for async coding/research; returns session id for follow-up.",
-			similes: [
-				"SPAWN_CODING_AGENT",
-				"START_CODING_AGENT",
-				"LAUNCH_CODING_AGENT",
-				"CREATE_CODING_AGENT",
-				"SPAWN_CODER",
-				"RUN_CODING_AGENT",
-				"SPAWN_SUB_AGENT",
-				"START_TASK_AGENT",
-				"CREATE_AGENT",
-			],
-			exampleCalls: [
-				{
-					user: "Use SPAWN_AGENT with the provided parameters.",
-					actions: ["SPAWN_AGENT"],
-					params: {
-						SPAWN_AGENT: {
-							agentType: "example",
-							workdir: "example",
-							task: "example",
-							memoryContent: "example",
-							approvalPreset: "readonly",
-							keepAliveAfterComplete: false,
-						},
-					},
-				},
-			],
-		},
-		{
-			name: "START_TAILSCALE",
-			description:
-				"Start a Tailscale tunnel exposing a local port to your tailnet (or the public internet via Funnel)",
-			parameters: [
-				{
-					name: "port",
-					description: "Local port to expose through the Tailscale tunnel.",
-					required: false,
-					schema: {
-						type: "number",
-					},
-					descriptionCompressed:
-						"Local port to expose through the Tailscale tunnel.",
-				},
-			],
-			descriptionCompressed:
-				"start Tailscale tunnel expose local port tailnet (public internet via Funnel)",
-			similes: ["START_TUNNEL", "OPEN_TUNNEL", "CREATE_TUNNEL", "TAILSCALE_UP"],
-			exampleCalls: [
-				{
-					user: "Use START_TAILSCALE with the provided parameters.",
-					actions: ["START_TAILSCALE"],
-					params: {
-						START_TAILSCALE: {
-							port: 1,
-						},
-					},
-				},
-			],
-		},
-		{
 			name: "STOP_AGENT",
-			description: "Stop a running task-agent session. ",
+			description:
+				"Stop a running task-agent session, terminating the session and cleaning up resources.",
 			parameters: [
 				{
 					name: "sessionId",
-					description:
-						"ID of the session to stop. If not specified, stops the current session.",
+					description: "Session ID to stop",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed: "Stop running task agent, cleanup resources.",
+					descriptionCompressed: "Session ID to stop",
 				},
 				{
 					name: "all",
-					description: "If true, stop all active task-agent sessions.",
+					description: "Stop all active sessions",
 					required: false,
 					schema: {
 						type: "boolean",
 					},
-					descriptionCompressed:
-						"If true, stop all active task-agent sessions.",
+					descriptionCompressed: "Stop all active sessions",
 				},
 			],
-			descriptionCompressed:
-				"stop run task-agent session terminate PTY session clean up resource",
 			similes: [
 				"STOP_CODING_AGENT",
 				"KILL_CODING_AGENT",
@@ -8503,13 +8454,107 @@ export const allActionsSpec = {
 					},
 				},
 			],
+			descriptionCompressed:
+				"Stop a running task-agent session, terminating the session and cleaning up resources.",
 		},
 		{
-			name: "STOP_TAILSCALE",
-			description: "Stop the running Tailscale tunnel",
-			parameters: [],
-			descriptionCompressed: "stop run Tailscale tunnel",
-			similes: ["STOP_TUNNEL", "CLOSE_TUNNEL", "TAILSCALE_DOWN"],
+			name: "SUBMIT_WORKSPACE",
+			description:
+				"Finalize workspace changes by committing, pushing, and optionally creating a pull request. ",
+			parameters: [
+				{
+					name: "workspaceId",
+					description:
+						"ID of the workspace to finalize. Uses current workspace if not specified.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Commit, push, opt. create PR for workspace changes.",
+				},
+				{
+					name: "commitMessage",
+					description: "Commit message for the changes.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Commit msg for the changes.",
+				},
+				{
+					name: "prTitle",
+					description: "Title for the pull request.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Title for the pull request.",
+				},
+				{
+					name: "prBody",
+					description: "Body/description for the pull request.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Body/description for the pull request.",
+				},
+				{
+					name: "baseBranch",
+					description: "Base branch for the PR (e.g., main, develop).",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Base branch for the PR (e. g. , main, develop).",
+				},
+				{
+					name: "draft",
+					description: "Create as draft PR.",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed: "Create as draft PR.",
+				},
+				{
+					name: "skipPR",
+					description: "Skip PR creation, only commit and push.",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed: "Skip PR creation, only commit and push.",
+				},
+			],
+			descriptionCompressed:
+				"finalize workspace change commit, push, optionally create pull request use after task agent complete task",
+			similes: [
+				"FINALIZE_WORKSPACE",
+				"COMMIT_AND_PR",
+				"CREATE_PR",
+				"SUBMIT_CHANGES",
+				"FINISH_WORKSPACE",
+			],
+			exampleCalls: [
+				{
+					user: "Use SUBMIT_WORKSPACE with the provided parameters.",
+					actions: ["SUBMIT_WORKSPACE"],
+					params: {
+						SUBMIT_WORKSPACE: {
+							workspaceId: "example",
+							commitMessage: "example",
+							prTitle: "example",
+							prBody: "example",
+							baseBranch: "example",
+							draft: false,
+							skipPR: false,
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "SUMMARIZE_FEED",
@@ -8591,18 +8636,6 @@ export const allActionsSpec = {
 				},
 			],
 			descriptionCompressed: "Tailscale: start tunnel, stop tunnel.",
-			similes: [
-				"TAILSCALE_OP",
-				"START_TAILSCALE",
-				"STOP_TAILSCALE",
-				"START_TUNNEL",
-				"STOP_TUNNEL",
-				"OPEN_TUNNEL",
-				"CLOSE_TUNNEL",
-				"CREATE_TUNNEL",
-				"TAILSCALE_UP",
-				"TAILSCALE_DOWN",
-			],
 			exampleCalls: [
 				{
 					user: "Use TAILSCALE with the provided parameters.",
@@ -8619,7 +8652,7 @@ export const allActionsSpec = {
 		{
 			name: "TASK_CONTROL",
 			description:
-				"Pause, stop, resume, continue, archive, or reopen a coordinator task thread while preserving the durable thread history.",
+				"Apply a control operation to an agent-orchestrator coordinator task thread while preserving durable thread history. Operations: pause (suspend with optional note), stop (halt and keep history), resume (re-attach a session, optional follow-up instruction + agentType override), continue (send a follow-up instruction to the existing or a new session), archive (hide from active lists), reopen (restore from archive). The target thread is resolved from threadId, sessionId, or a free-text search; resume/continue accept an optional instruction.",
 			parameters: [
 				{
 					name: "operation",
@@ -8693,7 +8726,7 @@ export const allActionsSpec = {
 				},
 			],
 			descriptionCompressed:
-				"Pause/stop/resume/archive/reopen coordinator task thread.",
+				"task-control:op=pause|stop|resume|continue|archive|reopen coordinator-task-thread (threadId|sessionId|search; +note|instruction|agentType)",
 			similes: [
 				"CONTROL_TASK",
 				"PAUSE_TASK",
@@ -8724,7 +8757,7 @@ export const allActionsSpec = {
 		{
 			name: "TASK_HISTORY",
 			description:
-				"Query coordinator task history without stuffing raw transcripts into model context. Use this for active work, yesterday/last-week summaries, topic search, counts, and thread detail lookup.",
+				"Query the agent-orchestrator coordinator's task threads as structured summaries (status, latestActivityAt, optional summary) without loading raw transcripts. Pick metric=list (default), count, or detail; narrow with window=active|today|yesterday|last_7_days|last_30_days, statuses, free-text search, includeArchived, and limit. Use for 'what am I working on right now', date-range summaries, topic search, task counts, or a single thread's detail — never to dump raw conversation history into context.",
 			parameters: [
 				{
 					name: "metric",
@@ -8795,7 +8828,7 @@ export const allActionsSpec = {
 				},
 			],
 			descriptionCompressed:
-				"Query task history: active work, summaries, search, thread details.",
+				"task-history:metric=list|count|detail + window + statuses + search + limit (no raw transcripts)",
 			similes: [
 				"LIST_TASK_HISTORY",
 				"GET_TASK_HISTORY",
@@ -9085,7 +9118,7 @@ export const allActionsSpec = {
 		{
 			name: "TODO_WRITE",
 			description:
-				"Replace the conversation's todo list with the provided array. Each todo has content, status (pending|in_progress|completed), and an optional activeForm describing the in-progress phrasing. The full list is replaced on every call. Use to plan multi-step work and track progress within a session.",
+				"Replace the per-conversation coding-agent todo list (keyed by roomId, kept in process memory) with the provided array. Each item is { id?: string, content: string, status: pending|in_progress|completed, activeForm?: string }; missing ids are auto-generated, missing activeForm falls back to content. The full list is overwritten on every call — pass the complete updated list, not a delta. Use to plan multi-step coding work and track progress within a session.",
 			parameters: [
 				{
 					name: "todos",
@@ -9118,7 +9151,7 @@ export const allActionsSpec = {
 				},
 			],
 			descriptionCompressed:
-				"Replace conversation todo list with {content,status,activeForm}[].",
+				"todo-write:replace conversation list [{id?,content,status:pending|in_progress|completed,activeForm?}]",
 			similes: ["UPDATE_TODOS", "SET_TODOS"],
 			exampleCalls: [
 				{
@@ -9225,50 +9258,6 @@ export const allActionsSpec = {
 			],
 		},
 		{
-			name: "TWITCH_SEND_MESSAGE",
-			description: "Send a message to a Twitch channel",
-			parameters: [
-				{
-					name: "text",
-					description: "Chat message text to send.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Chat msg text to send.",
-				},
-				{
-					name: "channel",
-					description: "Twitch channel name, without #, or current.",
-					required: false,
-					schema: {
-						type: "string",
-						default: "current",
-					},
-					descriptionCompressed: "Twitch channel name, without #, or current.",
-				},
-			],
-			descriptionCompressed: "send message Twitch channel",
-			similes: [
-				"SEND_TWITCH_MESSAGE",
-				"TWITCH_CHAT",
-				"CHAT_TWITCH",
-				"SAY_IN_TWITCH",
-			],
-			exampleCalls: [
-				{
-					user: "Use TWITCH_SEND_MESSAGE with the provided parameters.",
-					actions: ["TWITCH_SEND_MESSAGE"],
-					params: {
-						TWITCH_SEND_MESSAGE: {
-							text: "example",
-							channel: "current",
-						},
-					},
-				},
-			],
-		},
-		{
 			name: "UNINSTALL_SKILL",
 			description:
 				"Uninstall a non-bundled skill. Bundled skills cannot be removed. ",
@@ -9298,72 +9287,53 @@ export const allActionsSpec = {
 			],
 		},
 		{
+			name: "UPDATE_LINEAR_COMMENT",
+			description: "Update (edit) the body of an existing Linear comment",
+			parameters: [
+				{
+					name: "commentId",
+					description: "Linear comment id to update.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Linear comment id to update.",
+				},
+				{
+					name: "body",
+					description: "New comment body text.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "New comment body text.",
+				},
+			],
+			descriptionCompressed: "update (edit) body exist Linear comment",
+			similes: [
+				"edit-linear-comment",
+				"modify-linear-comment",
+				"change-linear-comment",
+			],
+			exampleCalls: [
+				{
+					user: "Use UPDATE_LINEAR_COMMENT with the provided parameters.",
+					actions: ["UPDATE_LINEAR_COMMENT"],
+					params: {
+						UPDATE_LINEAR_COMMENT: {
+							commentId: "example",
+							body: "example",
+						},
+					},
+				},
+			],
+		},
+		{
 			name: "USE_SKILL",
 			description:
 				"Invoke an enabled skill by slug. The skill's instructions or script run and the result returns to the conversation.",
 			parameters: [],
 			descriptionCompressed: "Invoke an enabled skill by slug.",
-			similes: ["INVOKE_SKILL", "EXECUTE_SKILL", "RUN_SKILL", "CALL_SKILL"],
-		},
-		{
-			name: "WALK_TO",
-			description:
-				"Walk to a coordinate or named destination. Provide either destination: name OR x: N, z: N.",
-			parameters: [
-				{
-					name: "destination",
-					description: "Optional named destination (overrides x/z).",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Named destination.",
-				},
-				{
-					name: "x",
-					description: "Target world X coordinate.",
-					required: false,
-					schema: {
-						type: "number",
-					},
-					descriptionCompressed: "Target x.",
-				},
-				{
-					name: "z",
-					description: "Target world Z coordinate.",
-					required: false,
-					schema: {
-						type: "number",
-					},
-					descriptionCompressed: "Target z.",
-				},
-				{
-					name: "reason",
-					description: "Optional reason logged with the walk.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Walk reason.",
-				},
-			],
-			similes: ["MOVE_TO", "GOTO"],
-			exampleCalls: [
-				{
-					user: "Use WALK_TO with the provided parameters.",
-					actions: ["WALK_TO"],
-					params: {
-						WALK_TO: {
-							destination: "example",
-							x: 1,
-							z: 1,
-							reason: "example",
-						},
-					},
-				},
-			],
-			descriptionCompressed:
-				"Walk to a coordinate or named destination. Provide either destination: name OR x: N, z: N.",
 		},
 		{
 			name: "WALLET_PREPARE",
@@ -9535,65 +9505,7 @@ export const allActionsSpec = {
 			],
 		},
 		{
-			name: "WEB_SEARCH",
-			description:
-				"Run a web search and return ranked results. Stub in v1: no provider is wired in this plugin, so the action returns a placeholder success that echoes the query and any domain filters. Wire a Brave/Bing/Tavily backend before relying on this for real results.",
-			parameters: [
-				{
-					name: "query",
-					description: "Search query string.",
-					required: true,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Search query string.",
-				},
-				{
-					name: "allowed_domains",
-					description: "Optional list of domains to restrict results to.",
-					required: false,
-					schema: {
-						type: "array",
-						items: {
-							type: "string",
-						},
-					},
-					descriptionCompressed:
-						"Optional list of domains to restrict results to.",
-				},
-				{
-					name: "blocked_domains",
-					description: "Optional list of domains to exclude from results.",
-					required: false,
-					schema: {
-						type: "array",
-						items: {
-							type: "string",
-						},
-					},
-					descriptionCompressed:
-						"Optional list of domains to exclude from results.",
-				},
-			],
-			descriptionCompressed:
-				"Web search (stub — no backend configured; echoes query + filters).",
-			similes: ["SEARCH_WEB", "GOOGLE", "BING"],
-			exampleCalls: [
-				{
-					user: "Use WEB_SEARCH with the provided parameters.",
-					actions: ["WEB_SEARCH"],
-					params: {
-						WEB_SEARCH: {
-							query: "example",
-							allowed_domains: "example",
-							blocked_domains: "example",
-						},
-					},
-				},
-			],
-		},
-		{
-			name: "WORKFLOW_LIFECYCLE_OP",
+			name: "WORKFLOW",
 			description:
 				'n8n workflow lifecycle operation. Pass `op` ("activate", "deactivate", or "delete") and optionally `workflowId`. Identifies workflows by ID, name, or semantic description.',
 			parameters: [
@@ -9641,10 +9553,10 @@ export const allActionsSpec = {
 			],
 			exampleCalls: [
 				{
-					user: "Use WORKFLOW_LIFECYCLE_OP with the provided parameters.",
-					actions: ["WORKFLOW_LIFECYCLE_OP"],
+					user: "Use WORKFLOW with the provided parameters.",
+					actions: ["WORKFLOW"],
 					params: {
-						WORKFLOW_LIFECYCLE_OP: {
+						WORKFLOW: {
 							op: "example",
 							workflowId: "example",
 						},

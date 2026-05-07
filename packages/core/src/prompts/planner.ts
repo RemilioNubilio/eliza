@@ -1,9 +1,9 @@
 import type { JSONSchema } from "../types/model";
 
-export const v5PlannerTemplate = `task: Plan the next native tool calls for the current ContextObject.
+export const v5PlannerTemplate = `task: Plan the next native tool calls.
 
 rules:
-- use only tools exposed in the current context object
+- use only tools from the tools array exposed in the current context object
 - plan the smallest grounded queue of useful tool calls
 - include arguments only when grounded in the user request or prior tool results
 - the task is not complete while the user still needs live/current/external data, filesystem/runtime state, command output, repo work, app builds, PR work, deployment, verification, or another side effect and a relevant exposed tool can attempt it
@@ -36,10 +36,12 @@ export const v5PlannerSchema: JSONSchema = {
 				properties: {
 					id: { type: "string" },
 					name: { type: "string" },
-					args: {
-						type: "object",
-						additionalProperties: false,
-					},
+					// Tool args are arbitrary per-tool. Permissive object schema —
+					// no `additionalProperties: false`, no empty `properties: {}`.
+					// Strict-grammar providers (Cerebras, etc.) reject the empty
+					// shape with `Object fields require at least one of:
+					// 'properties' or 'anyOf' with a list of possible properties`.
+					args: { type: "object" },
 				},
 				required: ["name"],
 			},

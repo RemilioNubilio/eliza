@@ -163,9 +163,19 @@ async function dispatchRoute(
 
   const result =
     (await route.action.handler(runtime, message, state, options as HandlerOptions, callback)) ??
-    ({ success: true } as ActionResult);
+    ({
+      success: true,
+      text: `${routerName} routed to ${route.action.name}.`,
+      data: {},
+    } as ActionResult);
+  const text =
+    typeof result.text === "string" && result.text.length > 0
+      ? result.text
+      : `${routerName} routed to ${route.action.name}.`;
   return {
     ...result,
+    success: result.success ?? true,
+    text,
     data: {
       ...(typeof result.data === "object" && result.data ? result.data : {}),
       actionName: routerName,
@@ -189,9 +199,10 @@ export const linearIssueRouterAction: RouterAction = {
   name: "LINEAR_ISSUE",
   description: "Route Linear issue operations: create, get, update, or delete issues.",
   descriptionCompressed: "route Linear issue create get update delete",
-  similes: ["LINEAR_ISSUES", "MANAGE_LINEAR_ISSUE", "MANAGE_LINEAR_ISSUES"],
+  similes: [],
   contexts: ["general", "automation", "knowledge", LINEAR_ISSUE_CONTEXT],
   actionGroup: { contexts: [LINEAR_ISSUE_CONTEXT] },
+  roleGate: { minRole: "USER" },
   validate: (runtime, message) =>
     validateRouter(runtime, message, issueRoutes, /\b(linear|issue|bug|task|ticket|[a-z]+-\d+)\b/i),
   handler: (runtime, message, state, options, callback) =>
@@ -225,9 +236,10 @@ export const linearCommentRouterAction: RouterAction = {
   name: "LINEAR_COMMENT",
   description: "Route Linear comment operations for issues.",
   descriptionCompressed: "route Linear issue comment create reply note",
-  similes: ["LINEAR_COMMENTS", "COMMENT_LINEAR_ISSUE"],
+  similes: [],
   contexts: ["general", "automation", LINEAR_COMMENT_CONTEXT],
   actionGroup: { contexts: [LINEAR_COMMENT_CONTEXT] },
+  roleGate: { minRole: "USER" },
   validate: (runtime, message) =>
     validateRouter(runtime, message, commentRoutes, /\b(comment|reply|note|tell)\b/i),
   handler: (runtime, message, state, options, callback) =>
@@ -261,9 +273,10 @@ export const linearWorkflowRouterAction: RouterAction = {
   name: "LINEAR_WORKFLOW",
   description: "Route Linear workflow, activity, and issue search operations.",
   descriptionCompressed: "route Linear workflow activity search issue category",
-  similes: ["LINEAR_ACTIVITY", "LINEAR_SEARCH", "LINEAR_WORKFLOW_SEARCH"],
+  similes: [],
   contexts: ["general", "automation", "knowledge", LINEAR_WORKFLOW_CONTEXT],
   actionGroup: { contexts: [LINEAR_WORKFLOW_CONTEXT] },
+  roleGate: { minRole: "USER" },
   validate: (runtime, message) =>
     validateRouter(runtime, message, workflowRoutes, /\b(linear|activity|search|issues?|bugs?)\b/i),
   handler: (runtime, message, state, options, callback) =>

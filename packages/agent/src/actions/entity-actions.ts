@@ -1,13 +1,19 @@
 import type {
   Action,
   ActionExample,
+  Entity,
   HandlerOptions,
   IAgentRuntime,
+  Metadata,
   SearchCategoryRegistration,
   UUID,
 } from "@elizaos/core";
-import { logger, ModelType, parseJSONObjectFromText } from "@elizaos/core";
-import { hasAdminAccess } from "../security/access.js";
+import {
+  logger,
+  ModelType,
+  parseJSONObjectFromText,
+  stringToUuid,
+} from "@elizaos/core";
 import type {
   RelationshipsGraphService,
   RelationshipsPersonDetail,
@@ -152,7 +158,7 @@ const ENTITY_SEARCH_CATEGORY: SearchCategoryRegistration = {
   category: "entities",
   label: "Rolodex",
   description: "Search contacts and cross-platform identities.",
-  contexts: ["social", "knowledge"],
+  contexts: ["social_posting", "knowledge"],
   filters: [
     {
       name: "platform",
@@ -183,10 +189,11 @@ export function registerEntitySearchCategory(runtime: IAgentRuntime): void {
 }
 
 export const searchEntityAction: Action = {
-  name: "SEARCH_ENTITY",
+  name: "SEARCH_CONTACT",
   contexts: ["contacts", "messaging", "knowledge"],
   roleGate: { minRole: "ADMIN" },
   similes: [
+    "SEARCH_ENTITY",
     "FIND_PERSON",
     "SEARCH_CONTACTS",
     "LOOKUP_USER",
@@ -202,21 +209,12 @@ export const searchEntityAction: Action = {
 
   validate: async (runtime, message, state) => {
     registerEntitySearchCategory(runtime);
-    if (!(await hasAdminAccess(runtime, message))) return false;
     void hasContextSignalSyncForKey(message, state, "search_entity");
     return false;
   },
 
   handler: async (runtime, message, state, options) => {
     registerEntitySearchCategory(runtime);
-    if (!(await hasAdminAccess(runtime, message))) {
-      return {
-        text: "Permission denied.",
-        success: false,
-        values: { success: false, error: "PERMISSION_DENIED" },
-        data: { actionName: "SEARCH_ENTITY" },
-      };
-    }
 
     const rawParams = ((options as HandlerOptions | undefined)?.parameters ??
       {}) as SearchEntityParams;
@@ -224,7 +222,7 @@ export const searchEntityAction: Action = {
       runtime,
       message,
       state,
-      actionName: "SEARCH_ENTITY",
+      actionName: "SEARCH_CONTACT",
       actionDescription: searchEntityAction.description ?? "",
       paramSchema: searchEntityAction.parameters ?? [],
       existingParams: rawParams,
@@ -235,10 +233,10 @@ export const searchEntityAction: Action = {
 
     if (!query || typeof query !== "string" || query.trim().length === 0) {
       return {
-        text: "SEARCH_ENTITY requires a non-empty query parameter.",
+        text: "SEARCH_CONTACT requires a non-empty query parameter.",
         success: false,
         values: { success: false, error: "INVALID_PARAMETERS" },
-        data: { actionName: "SEARCH_ENTITY" },
+        data: { actionName: "SEARCH_CONTACT" },
       };
     }
 
@@ -248,7 +246,7 @@ export const searchEntityAction: Action = {
         text: "Relationships service not available.",
         success: false,
         values: { success: false, error: "SERVICE_NOT_FOUND" },
-        data: { actionName: "SEARCH_ENTITY" },
+        data: { actionName: "SEARCH_CONTACT" },
       };
     }
 
@@ -264,7 +262,7 @@ export const searchEntityAction: Action = {
           text: `No contacts found matching "${query}"${platform ? ` on ${platform}` : ""}.`,
           success: true,
           values: { success: true, resultCount: 0 },
-          data: { actionName: "SEARCH_ENTITY", query, platform },
+          data: { actionName: "SEARCH_CONTACT", query, platform },
         };
       }
 
@@ -283,14 +281,14 @@ export const searchEntityAction: Action = {
 
       const header = `Search results for "${query}" | ${snapshot.people.length} contacts found`;
       const footer =
-        "\nUse READ_ENTITY with an entityId to see full details (facts, conversations, relationships).\nTo save results to clipboard, use CLIPBOARD_WRITE.";
+        "\nUse READ_CONTACT with an entityId to see full details (facts, conversations, relationships).\nTo save results to clipboard, use CLIPBOARD_WRITE.";
 
       return {
         text: `${header}\n${"─".repeat(60)}\n${lines.join("\n")}\n${footer}`,
         success: true,
         values: { success: true, resultCount: snapshot.people.length },
         data: {
-          actionName: "SEARCH_ENTITY",
+          actionName: "SEARCH_CONTACT",
           query,
           platform,
           results: snapshot.people.map((p, i) => ({
@@ -304,12 +302,12 @@ export const searchEntityAction: Action = {
       };
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      logger.error("[SEARCH_ENTITY] Error:", errMsg);
+      logger.error("[SEARCH_CONTACT] Error:", errMsg);
       return {
         text: `Failed to search contacts: ${errMsg}`,
         success: false,
         values: { success: false, error: "SEARCH_FAILED" },
-        data: { actionName: "SEARCH_ENTITY", query },
+        data: { actionName: "SEARCH_CONTACT", query },
       };
     }
   },
@@ -377,45 +375,35 @@ type ReadEntityParams = {
 };
 
 export const readEntityAction: Action = {
-  name: "READ_ENTITY",
+  name: "READ_CONTACT",
   contexts: ["contacts", "messaging", "knowledge"],
   roleGate: { minRole: "ADMIN" },
   similes: [
+    "READ_ENTITY",
     "VIEW_PERSON",
     "GET_CONTACT",
     "VIEW_CONTACT",
     "PERSON_DETAILS",
-    "READ_CONTACT",
   ],
   description:
     "Read full details about a person: identity, all facts, recent conversations, and relationships. " +
-    "Look up by entity ID (from SEARCH_ENTITY results) or by name. " +
+    "Look up by entity ID (from SEARCH_CONTACT results) or by name. " +
     "Full output can be saved to clipboard.",
   descriptionCompressed:
-    "read full detail person: identity, fact, recent conversation, relationship look up entity ID (SEARCH_ENTITY result) name full output save clipboard",
+    "read full detail person: identity, fact, recent conversation, relationship look up entity ID (SEARCH_CONTACT result) name full output save clipboard",
 
-  validate: async (runtime, message, state) => {
-    if (!(await hasAdminAccess(runtime, message))) return false;
+  validate: async (_runtime, message, state) => {
     return hasContextSignalSyncForKey(message, state, "search_entity");
   },
 
   handler: async (runtime, message, state, options) => {
-    if (!(await hasAdminAccess(runtime, message))) {
-      return {
-        text: "Permission denied.",
-        success: false,
-        values: { success: false, error: "PERMISSION_DENIED" },
-        data: { actionName: "READ_ENTITY" },
-      };
-    }
-
     const rawParams = ((options as HandlerOptions | undefined)?.parameters ??
       {}) as ReadEntityParams;
     const params = (await extractActionParamsViaLlm<ReadEntityParams>({
       runtime,
       message,
       state,
-      actionName: "READ_ENTITY",
+      actionName: "READ_CONTACT",
       actionDescription: readEntityAction.description ?? "",
       paramSchema: readEntityAction.parameters ?? [],
       existingParams: rawParams,
@@ -425,10 +413,10 @@ export const readEntityAction: Action = {
 
     if (!entityId && !name) {
       return {
-        text: "READ_ENTITY requires either entityId or name parameter.",
+        text: "READ_CONTACT requires either entityId or name parameter.",
         success: false,
         values: { success: false, error: "INVALID_PARAMETERS" },
-        data: { actionName: "READ_ENTITY" },
+        data: { actionName: "READ_CONTACT" },
       };
     }
 
@@ -438,7 +426,7 @@ export const readEntityAction: Action = {
         text: "Relationships service not available.",
         success: false,
         values: { success: false, error: "SERVICE_NOT_FOUND" },
-        data: { actionName: "READ_ENTITY" },
+        data: { actionName: "READ_CONTACT" },
       };
     }
 
@@ -458,10 +446,10 @@ export const readEntityAction: Action = {
 
       if (!resolvedEntityId) {
         return {
-          text: `Could not find entity${name ? ` named "${name}"` : ""}. Try SEARCH_ENTITY first.`,
+          text: `Could not find entity${name ? ` named "${name}"` : ""}. Try SEARCH_CONTACT first.`,
           success: false,
           values: { success: false, error: "ENTITY_NOT_FOUND" },
-          data: { actionName: "READ_ENTITY", entityId, name },
+          data: { actionName: "READ_CONTACT", entityId, name },
         };
       }
 
@@ -472,7 +460,7 @@ export const readEntityAction: Action = {
           text: `No details found for entity ${resolvedEntityId}.`,
           success: false,
           values: { success: false, error: "ENTITY_NOT_FOUND" },
-          data: { actionName: "READ_ENTITY", entityId: resolvedEntityId },
+          data: { actionName: "READ_CONTACT", entityId: resolvedEntityId },
         };
       }
 
@@ -488,7 +476,7 @@ export const readEntityAction: Action = {
           displayName: detail.displayName,
         },
         data: {
-          actionName: "READ_ENTITY",
+          actionName: "READ_CONTACT",
           entityId: resolvedEntityId,
           detail: {
             displayName: detail.displayName,
@@ -501,12 +489,12 @@ export const readEntityAction: Action = {
       };
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      logger.error("[READ_ENTITY] Error:", errMsg);
+      logger.error("[READ_CONTACT] Error:", errMsg);
       return {
         text: `Failed to read entity details: ${errMsg}`,
         success: false,
         values: { success: false, error: "READ_FAILED" },
-        data: { actionName: "READ_ENTITY", entityId, name },
+        data: { actionName: "READ_CONTACT", entityId, name },
       };
     }
   },
@@ -515,7 +503,7 @@ export const readEntityAction: Action = {
     {
       name: "entityId",
       description:
-        "Entity ID to look up (from SEARCH_ENTITY results). Preferred over name.",
+        "Entity ID to look up (from SEARCH_CONTACT results). Preferred over name.",
       required: false,
       schema: { type: "string" as const },
     },
@@ -651,13 +639,13 @@ function isLikelyUuid(value: string | undefined): value is UUID {
 }
 
 export const linkEntityAction: Action = {
-  name: "LINK_ENTITY",
+  name: "LINK_CONTACT",
   contexts: ["contacts", "messaging", "knowledge"],
   roleGate: { minRole: "ADMIN" },
   similes: [
+    "LINK_ENTITY",
     "MERGE_CONTACT",
     "MERGE_ENTITY",
-    "LINK_CONTACT",
     "LINK_IDENTITIES",
     "COMBINE_CONTACTS",
   ],
@@ -668,28 +656,18 @@ export const linkEntityAction: Action = {
   descriptionCompressed:
     "propose (optionally confirm) merge two rolodex entity represent same person different platform require owner/admin access work language intent extract LLM",
 
-  validate: async (runtime, message, state) => {
-    if (!(await hasAdminAccess(runtime, message))) return false;
+  validate: async (_runtime, message, state) => {
     return hasContextSignalSyncForKey(message, state, "link_entity");
   },
 
   handler: async (runtime, message, _state, options) => {
-    if (!(await hasAdminAccess(runtime, message))) {
-      return {
-        text: "Permission denied.",
-        success: false,
-        values: { success: false, error: "PERMISSION_DENIED" },
-        data: { actionName: "LINK_ENTITY" },
-      };
-    }
-
     const graphService = await getGraphService(runtime);
     if (!graphService) {
       return {
         text: "Relationships service not available.",
         success: false,
         values: { success: false, error: "SERVICE_NOT_FOUND" },
-        data: { actionName: "LINK_ENTITY" },
+        data: { actionName: "LINK_CONTACT" },
       };
     }
 
@@ -746,17 +724,17 @@ export const linkEntityAction: Action = {
         }
       } catch (err) {
         logger.warn(
-          `[LINK_ENTITY] LLM extraction failed: ${err instanceof Error ? err.message : String(err)}`,
+          `[LINK_CONTACT] LLM extraction failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
 
     if (!entityA || !entityB) {
       return {
-        text: "LINK_ENTITY needs two entity IDs. Use SEARCH_ENTITY to find them first.",
+        text: "LINK_CONTACT needs two entity IDs. Use SEARCH_CONTACT to find them first.",
         success: false,
         values: { success: false, error: "INVALID_PARAMETERS" },
-        data: { actionName: "LINK_ENTITY", entityA, entityB },
+        data: { actionName: "LINK_CONTACT", entityA, entityB },
       };
     }
 
@@ -765,14 +743,14 @@ export const linkEntityAction: Action = {
         text: "Cannot link an entity to itself.",
         success: false,
         values: { success: false, error: "INVALID_PARAMETERS" },
-        data: { actionName: "LINK_ENTITY", entityA, entityB },
+        data: { actionName: "LINK_CONTACT", entityA, entityB },
       };
     }
 
     try {
       const evidence: Record<string, unknown> = {
         notes: reason || "user-requested manual link",
-        source: "LINK_ENTITY",
+        source: "LINK_CONTACT",
         userMessageId: message.id,
       };
       const candidateId = await graphService.proposeMerge(
@@ -791,7 +769,7 @@ export const linkEntityAction: Action = {
             applied: false,
           },
           data: {
-            actionName: "LINK_ENTITY",
+            actionName: "LINK_CONTACT",
             entityA,
             entityB,
             candidateId,
@@ -810,7 +788,7 @@ export const linkEntityAction: Action = {
           applied: true,
         },
         data: {
-          actionName: "LINK_ENTITY",
+          actionName: "LINK_CONTACT",
           entityA,
           entityB,
           candidateId,
@@ -819,12 +797,12 @@ export const linkEntityAction: Action = {
       };
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      logger.error("[LINK_ENTITY] Error:", errMsg);
+      logger.error("[LINK_CONTACT] Error:", errMsg);
       return {
         text: `Failed to link entities: ${errMsg}`,
         success: false,
         values: { success: false, error: "LINK_FAILED" },
-        data: { actionName: "LINK_ENTITY", entityA, entityB },
+        data: { actionName: "LINK_CONTACT", entityA, entityB },
       };
     }
   },
@@ -902,10 +880,11 @@ type ResolveMergeCandidateParams = {
 };
 
 export const resolveMergeCandidateAction: Action = {
-  name: "RESOLVE_MERGE_CANDIDATE",
+  name: "MERGE_CONTACT",
   contexts: ["contacts", "messaging", "knowledge", "admin"],
   roleGate: { minRole: "ADMIN" },
   similes: [
+    "RESOLVE_MERGE_CANDIDATE",
     "ACCEPT_MERGE_CANDIDATE",
     "REJECT_MERGE_CANDIDATE",
     "DECIDE_MERGE_CANDIDATE",
@@ -917,9 +896,7 @@ export const resolveMergeCandidateAction: Action = {
   descriptionCompressed:
     "accept reject pend identity-merge candidate id owner/admin",
 
-  validate: async (runtime, message) => {
-    return hasAdminAccess(runtime, message);
-  },
+  validate: async () => true,
 
   parameters: [
     {
@@ -940,16 +917,7 @@ export const resolveMergeCandidateAction: Action = {
     },
   ],
 
-  handler: async (runtime, message, _state, options) => {
-    if (!(await hasAdminAccess(runtime, message))) {
-      return {
-        text: "Permission denied.",
-        success: false,
-        values: { success: false, error: "PERMISSION_DENIED" },
-        data: { actionName: "RESOLVE_MERGE_CANDIDATE" },
-      };
-    }
-
+  handler: async (runtime, _message, _state, options) => {
     const params = ((options as HandlerOptions | undefined)?.parameters ??
       {}) as ResolveMergeCandidateParams;
     const candidateId =
@@ -958,18 +926,18 @@ export const resolveMergeCandidateAction: Action = {
 
     if (!candidateId) {
       return {
-        text: "RESOLVE_MERGE_CANDIDATE requires a candidateId parameter.",
+        text: "MERGE_CONTACT requires a candidateId parameter.",
         success: false,
         values: { success: false, error: "INVALID_PARAMETERS" },
-        data: { actionName: "RESOLVE_MERGE_CANDIDATE" },
+        data: { actionName: "MERGE_CONTACT" },
       };
     }
     if (action !== "accept" && action !== "reject") {
       return {
-        text: 'RESOLVE_MERGE_CANDIDATE action must be "accept" or "reject".',
+        text: 'MERGE_CONTACT action must be "accept" or "reject".',
         success: false,
         values: { success: false, error: "INVALID_PARAMETERS" },
-        data: { actionName: "RESOLVE_MERGE_CANDIDATE", candidateId },
+        data: { actionName: "MERGE_CONTACT", candidateId },
       };
     }
 
@@ -979,7 +947,7 @@ export const resolveMergeCandidateAction: Action = {
         text: "Relationships service not available.",
         success: false,
         values: { success: false, error: "SERVICE_NOT_FOUND" },
-        data: { actionName: "RESOLVE_MERGE_CANDIDATE", candidateId, action },
+        data: { actionName: "MERGE_CONTACT", candidateId, action },
       };
     }
 
@@ -997,7 +965,7 @@ export const resolveMergeCandidateAction: Action = {
         success: true,
         values: { success: true, candidateId, action },
         data: {
-          actionName: "RESOLVE_MERGE_CANDIDATE",
+          actionName: "MERGE_CONTACT",
           candidateId,
           action,
           status: action,
@@ -1005,12 +973,12 @@ export const resolveMergeCandidateAction: Action = {
       };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      logger.error("[RESOLVE_MERGE_CANDIDATE] Error:", errMsg);
+      logger.error("[MERGE_CONTACT] Error:", errMsg);
       return {
         text: `Failed to ${action} merge candidate ${candidateId}: ${errMsg}`,
         success: false,
         values: { success: false, error: "RESOLVE_FAILED" },
-        data: { actionName: "RESOLVE_MERGE_CANDIDATE", candidateId, action },
+        data: { actionName: "MERGE_CONTACT", candidateId, action },
       };
     }
   },
@@ -1087,10 +1055,11 @@ function clampActivityOffset(value: number | undefined): number {
 }
 
 export const getRelationshipActivityAction: Action = {
-  name: "GET_RELATIONSHIP_ACTIVITY",
+  name: "CONTACT_ACTIVITY",
   contexts: ["contacts", "messaging", "knowledge"],
   roleGate: { minRole: "ADMIN" },
   similes: [
+    "GET_RELATIONSHIP_ACTIVITY",
     "RELATIONSHIPS_ACTIVITY",
     "LIST_RELATIONSHIP_ACTIVITY",
     "RECENT_ROLODEX_ACTIVITY",
@@ -1101,9 +1070,7 @@ export const getRelationshipActivityAction: Action = {
   descriptionCompressed:
     "return recent relationship/identity/fact activity timeline, paginat mirror Relationships activity feed desktop app",
 
-  validate: async (runtime, message) => {
-    return hasAdminAccess(runtime, message);
-  },
+  validate: async () => true,
 
   parameters: [
     {
@@ -1120,16 +1087,7 @@ export const getRelationshipActivityAction: Action = {
     },
   ],
 
-  handler: async (runtime, message, _state, options) => {
-    if (!(await hasAdminAccess(runtime, message))) {
-      return {
-        text: "Permission denied.",
-        success: false,
-        values: { success: false, error: "PERMISSION_DENIED" },
-        data: { actionName: "GET_RELATIONSHIP_ACTIVITY" },
-      };
-    }
-
+  handler: async (runtime, _message, _state, options) => {
     const params = ((options as HandlerOptions | undefined)?.parameters ??
       {}) as GetRelationshipActivityParams;
     const limit = clampActivityLimit(params.limit);
@@ -1141,7 +1099,7 @@ export const getRelationshipActivityAction: Action = {
         text: "Relationships service not available.",
         success: false,
         values: { success: false, error: "SERVICE_NOT_FOUND" },
-        data: { actionName: "GET_RELATIONSHIP_ACTIVITY" },
+        data: { actionName: "CONTACT_ACTIVITY" },
       };
     }
 
@@ -1260,7 +1218,7 @@ export const getRelationshipActivityAction: Action = {
         success: true,
         values: { success: true, total, count: slice.length, offset, limit },
         data: {
-          actionName: "GET_RELATIONSHIP_ACTIVITY",
+          actionName: "CONTACT_ACTIVITY",
           activity: slice,
           total,
           count: slice.length,
@@ -1271,12 +1229,12 @@ export const getRelationshipActivityAction: Action = {
       };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      logger.error("[GET_RELATIONSHIP_ACTIVITY] Error:", errMsg);
+      logger.error("[CONTACT_ACTIVITY] Error:", errMsg);
       return {
         text: `Failed to load relationship activity: ${errMsg}`,
         success: false,
         values: { success: false, error: "ACTIVITY_FAILED" },
-        data: { actionName: "GET_RELATIONSHIP_ACTIVITY" },
+        data: { actionName: "CONTACT_ACTIVITY" },
       };
     }
   },
@@ -1293,6 +1251,404 @@ export const getRelationshipActivityAction: Action = {
         name: "{{agentName}}",
         content: {
           text: "Relationships activity | 25/40 items shown (offset 0, limit 25)\n  1 | [relationship] Jill Park ↔ Marco Pierre — friends · positive · strength 0.72 · 14 interactions · 2026-04-22T...",
+        },
+      },
+    ],
+  ] as ActionExample[][],
+};
+
+// ---------------------------------------------------------------------------
+// CREATE_CONTACT
+// ---------------------------------------------------------------------------
+
+type CreateContactParams = {
+  name?: string;
+  email?: string;
+  phone?: string;
+  notes?: string;
+};
+
+export const createContactAction: Action = {
+  name: "CREATE_CONTACT",
+  contexts: ["contacts", "messaging", "knowledge"],
+  roleGate: { minRole: "ADMIN" },
+  similes: ["ADD_CONTACT", "NEW_CONTACT", "SAVE_CONTACT", "STORE_CONTACT"],
+  description:
+    "Create a new contact (entity) in the Rolodex. Provide at minimum a name. " +
+    "Returns the new entity id.",
+  descriptionCompressed:
+    "create new contact (entity) Rolodex provide name return new entity id",
+
+  validate: async () => true,
+
+  handler: async (runtime, _message, _state, options) => {
+    const params = ((options as HandlerOptions | undefined)?.parameters ??
+      {}) as CreateContactParams;
+
+    const name = typeof params.name === "string" ? params.name.trim() : "";
+    if (!name) {
+      return {
+        text: "CREATE_CONTACT requires a name.",
+        success: false,
+        values: { success: false, error: "INVALID_PARAMETERS" },
+        data: { actionName: "CREATE_CONTACT" },
+      };
+    }
+
+    const metadata: Metadata = {};
+    if (typeof params.email === "string" && params.email.trim())
+      metadata.email = params.email.trim();
+    if (typeof params.phone === "string" && params.phone.trim())
+      metadata.phone = params.phone.trim();
+    if (typeof params.notes === "string" && params.notes.trim())
+      metadata.notes = params.notes.trim();
+
+    const entityId = stringToUuid(
+      `contact-${runtime.agentId}-${name}-${Date.now()}`,
+    ) as UUID;
+
+    const entity: Entity = {
+      id: entityId,
+      names: [name],
+      agentId: runtime.agentId as UUID,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+    };
+
+    try {
+      const ok = await runtime.createEntity(entity);
+      if (!ok) {
+        return {
+          text: `Failed to create contact "${name}".`,
+          success: false,
+          values: { success: false, error: "CREATE_FAILED" },
+          data: { actionName: "CREATE_CONTACT", name },
+        };
+      }
+      return {
+        text: `Created contact "${name}" (entityId: ${entityId}).`,
+        success: true,
+        values: { success: true, entityId, name },
+        data: { actionName: "CREATE_CONTACT", entityId, name, metadata },
+      };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error("[CREATE_CONTACT] Error:", errMsg);
+      return {
+        text: `Failed to create contact: ${errMsg}`,
+        success: false,
+        values: { success: false, error: "CREATE_FAILED" },
+        data: { actionName: "CREATE_CONTACT", name },
+      };
+    }
+  },
+
+  parameters: [
+    {
+      name: "name",
+      description: "Full name of the contact (required).",
+      required: true,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "email",
+      description: "Email address (optional).",
+      required: false,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "phone",
+      description: "Phone number (optional).",
+      required: false,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "notes",
+      description: "Free-text notes about the contact (optional).",
+      required: false,
+      schema: { type: "string" as const },
+    },
+  ],
+  examples: [
+    [
+      {
+        name: "{{name1}}",
+        content: { text: "Add a contact: Jill Park, jill@acme.com." },
+      },
+      {
+        name: "{{agentName}}",
+        content: {
+          text: 'Created contact "Jill Park" (entityId: ...).',
+          action: "CREATE_CONTACT",
+        },
+      },
+    ],
+  ] as ActionExample[][],
+};
+
+// ---------------------------------------------------------------------------
+// UPDATE_CONTACT
+// ---------------------------------------------------------------------------
+
+type UpdateContactParams = {
+  id?: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  notes?: string;
+};
+
+export const updateContactAction: Action = {
+  name: "UPDATE_CONTACT",
+  contexts: ["contacts", "messaging", "knowledge"],
+  roleGate: { minRole: "ADMIN" },
+  similes: [
+    "EDIT_CONTACT",
+    "MODIFY_CONTACT",
+    "PATCH_CONTACT",
+    "CHANGE_CONTACT",
+  ],
+  description:
+    "Update an existing contact's name, email, phone, or notes. " +
+    "Requires the entity id (from SEARCH_CONTACT or CREATE_CONTACT). " +
+    "Returns the updated record.",
+  descriptionCompressed:
+    "update exist contact name, email, phone, notes require entity id return updated record",
+
+  validate: async () => true,
+
+  handler: async (runtime, _message, _state, options) => {
+    const params = ((options as HandlerOptions | undefined)?.parameters ??
+      {}) as UpdateContactParams;
+
+    const id = typeof params.id === "string" ? params.id.trim() : "";
+    if (!id) {
+      return {
+        text: "UPDATE_CONTACT requires an id parameter.",
+        success: false,
+        values: { success: false, error: "INVALID_PARAMETERS" },
+        data: { actionName: "UPDATE_CONTACT" },
+      };
+    }
+
+    let existing: Entity | null = null;
+    try {
+      existing = await runtime.getEntityById(id as UUID);
+    } catch {
+      // fall through to null check
+    }
+
+    if (!existing) {
+      return {
+        text: `Contact ${id} was not found.`,
+        success: false,
+        values: { success: false, error: "NOT_FOUND" },
+        data: { actionName: "UPDATE_CONTACT", id },
+      };
+    }
+
+    const updated: Entity = { ...existing };
+
+    if (typeof params.name === "string" && params.name.trim()) {
+      const newName = params.name.trim();
+      updated.names = [
+        newName,
+        ...(existing.names ?? []).filter((n) => n !== newName),
+      ];
+    }
+
+    const existingMeta: Metadata =
+      existing.metadata && typeof existing.metadata === "object"
+        ? { ...(existing.metadata as Metadata) }
+        : {};
+
+    if (typeof params.email === "string" && params.email.trim())
+      existingMeta.email = params.email.trim();
+    if (typeof params.phone === "string" && params.phone.trim())
+      existingMeta.phone = params.phone.trim();
+    if (typeof params.notes === "string" && params.notes.trim())
+      existingMeta.notes = params.notes.trim();
+
+    updated.metadata = existingMeta;
+
+    try {
+      await runtime.updateEntity(updated);
+      return {
+        text: `Updated contact ${id}.`,
+        success: true,
+        values: { success: true, id },
+        data: {
+          actionName: "UPDATE_CONTACT",
+          id,
+          names: updated.names,
+          metadata: existingMeta,
+        },
+      };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error("[UPDATE_CONTACT] Error:", errMsg);
+      return {
+        text: `Failed to update contact: ${errMsg}`,
+        success: false,
+        values: { success: false, error: "UPDATE_FAILED" },
+        data: { actionName: "UPDATE_CONTACT", id },
+      };
+    }
+  },
+
+  parameters: [
+    {
+      name: "id",
+      description: "Entity id of the contact to update (required).",
+      required: true,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "name",
+      description: "New display name (optional).",
+      required: false,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "email",
+      description: "New email address (optional).",
+      required: false,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "phone",
+      description: "New phone number (optional).",
+      required: false,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "notes",
+      description: "Updated notes (optional).",
+      required: false,
+      schema: { type: "string" as const },
+    },
+  ],
+  examples: [
+    [
+      {
+        name: "{{name1}}",
+        content: { text: "Update Jill Park's email to jill@newco.com." },
+      },
+      {
+        name: "{{agentName}}",
+        content: {
+          text: "Updated contact 9f1c3a22-...",
+          action: "UPDATE_CONTACT",
+        },
+      },
+    ],
+  ] as ActionExample[][],
+};
+
+// ---------------------------------------------------------------------------
+// DELETE_CONTACT
+// ---------------------------------------------------------------------------
+
+type DeleteContactParams = {
+  id?: string;
+  confirm?: boolean;
+};
+
+type RuntimeWithDeleteEntities = IAgentRuntime & {
+  deleteEntities?: (ids: UUID[]) => Promise<void>;
+};
+
+export const deleteContactAction: Action = {
+  name: "DELETE_CONTACT",
+  contexts: ["contacts", "messaging", "knowledge"],
+  roleGate: { minRole: "ADMIN" },
+  similes: ["REMOVE_CONTACT", "ERASE_CONTACT", "DROP_CONTACT"],
+  description:
+    "Permanently delete a contact entity from the Rolodex. " +
+    "Requires the entity id and confirm:true. " +
+    "This is irreversible — prefer UPDATE_CONTACT to mark someone inactive.",
+  descriptionCompressed:
+    "permanently delete contact entity Rolodex require entity id confirm irreversible prefer UPDATE_CONTACT mark inactive",
+
+  validate: async () => true,
+
+  handler: async (runtime, _message, _state, options) => {
+    const params = ((options as HandlerOptions | undefined)?.parameters ??
+      {}) as DeleteContactParams;
+
+    const id = typeof params.id === "string" ? params.id.trim() : "";
+    if (!id) {
+      return {
+        text: "DELETE_CONTACT requires an id parameter.",
+        success: false,
+        values: { success: false, error: "INVALID_PARAMETERS" },
+        data: { actionName: "DELETE_CONTACT" },
+      };
+    }
+
+    if (params.confirm !== true) {
+      return {
+        text: "Refusing to delete: pass confirm:true to acknowledge this destructive action.",
+        success: false,
+        values: { success: false, error: "CONFIRMATION_REQUIRED" },
+        data: { actionName: "DELETE_CONTACT", id },
+      };
+    }
+
+    const rt = runtime as RuntimeWithDeleteEntities;
+    if (typeof rt.deleteEntities !== "function") {
+      return {
+        text: "DELETE_CONTACT: deleteEntities is not supported by this runtime version.",
+        success: false,
+        values: { success: false, error: "NOT_SUPPORTED" },
+        data: { actionName: "DELETE_CONTACT", id },
+      };
+    }
+
+    try {
+      await rt.deleteEntities([id as UUID]);
+      return {
+        text: `Deleted contact ${id}.`,
+        success: true,
+        values: { success: true, id },
+        data: { actionName: "DELETE_CONTACT", id },
+      };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error("[DELETE_CONTACT] Error:", errMsg);
+      return {
+        text: `Failed to delete contact: ${errMsg}`,
+        success: false,
+        values: { success: false, error: "DELETE_FAILED" },
+        data: { actionName: "DELETE_CONTACT", id },
+      };
+    }
+  },
+
+  parameters: [
+    {
+      name: "id",
+      description: "Entity id of the contact to delete (required).",
+      required: true,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "confirm",
+      description: "Must be true to proceed with deletion.",
+      required: true,
+      schema: { type: "boolean" as const },
+    },
+  ],
+  examples: [
+    [
+      {
+        name: "{{name1}}",
+        content: { text: "Delete contact 9f1c3a22-... (confirmed)." },
+      },
+      {
+        name: "{{agentName}}",
+        content: {
+          text: "Deleted contact 9f1c3a22-...",
+          action: "DELETE_CONTACT",
         },
       },
     ],

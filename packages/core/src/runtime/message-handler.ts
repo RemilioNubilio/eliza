@@ -66,18 +66,24 @@ export function parseMessageHandlerOutput(
 		plan: {
 			contexts,
 			reply,
+			...(typeof plan.simple === "boolean" ||
+			typeof (parsed as { simple?: unknown }).simple === "boolean"
+				? {
+						simple:
+							typeof plan.simple === "boolean"
+								? plan.simple
+								: ((parsed as { simple?: boolean }).simple as boolean),
+					}
+				: {}),
 		},
-		action: processMessage,
-		contexts,
 		thought: typeof parsed.thought === "string" ? parsed.thought : "",
-		reply,
 	};
 }
 
 export function routeMessageHandlerOutput(
 	output: V5MessageHandlerOutput,
 ): MessageHandlerRoute {
-	const processMessage = output.processMessage ?? output.action;
+	const processMessage = output.processMessage;
 	if (processMessage === "IGNORE") {
 		return { type: "ignored", output };
 	}
@@ -85,7 +91,8 @@ export function routeMessageHandlerOutput(
 		return { type: "stopped", output };
 	}
 
-	const allContexts = [...(output.plan?.contexts ?? output.contexts ?? [])];
+	const legacyContexts = (output as { contexts?: AgentContext[] }).contexts;
+	const allContexts = [...(output.plan?.contexts ?? legacyContexts ?? [])];
 	const explicitlyNonSimple =
 		(output.plan as { simple?: unknown } | undefined)?.simple === false ||
 		(output as { simple?: unknown }).simple === false;
@@ -122,7 +129,7 @@ export function routeMessageHandlerOutput(
 }
 
 export function getMessageHandlerReply(output: V5MessageHandlerOutput): string {
-	return String(output.plan?.reply ?? output.reply ?? "").trim();
+	return String(output.plan?.reply ?? "").trim();
 }
 
 function normalizeMessageHandlerAction(value: unknown): MessageHandlerAction {

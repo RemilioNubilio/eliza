@@ -21,6 +21,7 @@
 
 import { v4 } from "uuid";
 import type {
+	Action,
 	ActionResult,
 	Evaluator,
 	IAgentRuntime,
@@ -29,7 +30,7 @@ import type {
 	State,
 	UUID,
 } from "../../../types/index.ts";
-import { ModelType } from "../../../types/index.ts";
+import { ActionMode, ModelType } from "../../../types/index.ts";
 import type {
 	CurrentFactCategory,
 	CustomMetadata,
@@ -543,7 +544,6 @@ async function insertFact(
 	args: InsertFactArgs,
 ): Promise<UUID | null> {
 	const factId = asUUID(v4());
-	const evidenceIds: UUID[] = ctx.message.id ? [ctx.message.id] : [];
 	const verificationStatus: FactVerificationStatus =
 		args.verificationStatus ?? "self_reported";
 	const metadata: MemoryMetadata = {
@@ -551,7 +551,6 @@ async function insertFact(
 		source: "fact_extractor",
 		confidence: NEW_FACT_CONFIDENCE,
 		lastConfirmedAt: nowIso(),
-		evidenceMessageIds: evidenceIds,
 		kind: args.kind,
 		category: args.category,
 		structuredFields: toJsonObject(args.structuredFields),
@@ -604,9 +603,6 @@ function preserveFactMetadata(fact: Memory): CustomMetadata {
 		...(typeof meta.lastReinforced === "string"
 			? { lastReinforced: meta.lastReinforced }
 			: {}),
-		...(Array.isArray(meta.evidenceMessageIds)
-			? { evidenceMessageIds: [...meta.evidenceMessageIds] }
-			: {}),
 		...(typeof meta.sourceTrajectoryId === "string"
 			? { sourceTrajectoryId: meta.sourceTrajectoryId }
 			: {}),
@@ -629,19 +625,11 @@ async function applyStrengthenForMemory(
 	fact: Memory,
 ): Promise<void> {
 	if (!fact.id) return;
-	const meta = readFactMetadata(fact);
 	const nextConfidence = clamp01(pickFactConfidence(fact) + STRENGTHEN_DELTA);
-	const evidence = Array.isArray(meta.evidenceMessageIds)
-		? [...meta.evidenceMessageIds]
-		: [];
-	if (ctx.message.id && !evidence.includes(ctx.message.id)) {
-		evidence.push(ctx.message.id);
-	}
 	const nextMeta: CustomMetadata = {
 		...preserveFactMetadata(fact),
 		confidence: nextConfidence,
 		lastConfirmedAt: nowIso(),
-		evidenceMessageIds: evidence,
 	};
 	await ctx.runtime.updateMemory({ id: fact.id, metadata: nextMeta });
 }
@@ -876,10 +864,30 @@ async function handler(
 	};
 }
 
-export const factExtractorEvaluator: Evaluator = {
+/**
+ * Fact extraction as an `ALWAYS_AFTER` action (replaces the legacy evaluator).
+ * Migration target: fold into Stage 1 messageHandler so its single LLM call
+ * also returns factOps[].
+ */
+export const factExtractorAction: Action = {
 	name: "FACT_EXTRACTOR",
 	description:
 		"Single-call fact extractor: classifies and reconciles user claims into the two-store fact memory (durable + current) per message.",
+	similes: ["EXTRACT_FACTS", "FACT_CLASSIFIER", "FACT_OPS"],
+	mode: ActionMode.ALWAYS_AFTER,
+	modePriority: 50,
+	examples: [],
+	validate: validate as Action["validate"],
+	handler: handler as Action["handler"],
+};
+
+/**
+ * @deprecated Re-exported as an evaluator only so legacy registrations don't
+ * break during migration. New code should register `factExtractorAction`.
+ */
+export const factExtractorEvaluator: Evaluator = {
+	name: "FACT_EXTRACTOR",
+	description: factExtractorAction.description,
 	similes: ["EXTRACT_FACTS", "FACT_CLASSIFIER", "FACT_OPS"],
 	alwaysRun: false,
 	examples: [],

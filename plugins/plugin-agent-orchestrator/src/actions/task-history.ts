@@ -13,6 +13,18 @@ import type {
   TaskThreadStatus,
 } from "../services/task-registry.js";
 
+const deprecatedActionWarnings = new Set<string>();
+
+function warnDeprecatedSpawnSurface(
+  actionName: string,
+  replacement: string,
+): void {
+  if (deprecatedActionWarnings.has(actionName)) return;
+  deprecatedActionWarnings.add(actionName);
+  console.warn(
+    `[plugin-agent-orchestrator] ${actionName} is deprecated. Use ${replacement} from @elizaos/plugin-acpx instead.`,
+  );
+}
 type HistoryMetric = "list" | "count" | "detail";
 type HistoryWindow =
   | "active"
@@ -183,6 +195,10 @@ function renderThreadLine(entry: {
   return `- ${entry.title} [${entry.status}] (${activity})${entry.summary ? `: ${entry.summary}` : ""}`;
 }
 
+/**
+ * @deprecated The plugin-agent-orchestrator PTY spawn surface is deprecated.
+ * Use @elizaos/plugin-acpx session history/list actions instead. This action remains during the migration window.
+ */
 export const taskHistoryAction: Action = {
   name: "TASK_HISTORY",
   contexts: ["tasks", "automation", "agent_internal"],
@@ -196,9 +212,9 @@ export const taskHistoryAction: Action = {
     "TASK_STATUS_HISTORY",
   ],
   description:
-    "Query coordinator task history without stuffing raw transcripts into model context. Use this for active work, yesterday/last-week summaries, topic search, counts, and thread detail lookup.",
+    "Query the agent-orchestrator coordinator's task threads as structured summaries (status, latestActivityAt, optional summary) without loading raw transcripts. Pick metric=list (default), count, or detail; narrow with window=active|today|yesterday|last_7_days|last_30_days, statuses, free-text search, includeArchived, and limit. Use for 'what am I working on right now', date-range summaries, topic search, task counts, or a single thread's detail — never to dump raw conversation history into context.",
   descriptionCompressed:
-    "Query task history: active work, summaries, search, thread details.",
+    "task-history:metric=list|count|detail + window + statuses + search + limit (no raw transcripts)",
   examples: [
     [
       {
@@ -239,6 +255,10 @@ export const taskHistoryAction: Action = {
     options?: HandlerOptions,
     callback?: HandlerCallback,
   ): Promise<ActionResult | undefined> => {
+    warnDeprecatedSpawnSurface(
+      "taskHistoryAction",
+      "@elizaos/plugin-acpx session history/list actions",
+    );
     const access = await requireTaskAgentAccess(runtime, message, "interact");
     if (!access.allowed) {
       if (callback) {

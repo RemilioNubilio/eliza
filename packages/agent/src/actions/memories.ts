@@ -1,15 +1,22 @@
 /**
  * Memory introspection actions.
  *
- * RECALL_MEMORY_FILTERED → GET /api/memories/browse or /api/memories/by-entity/:id
- * FORGET_MEMORY          → DELETE /api/memories/:id
- * EDIT_MEMORY            → PATCH /api/memories/:id (server re-embeds)
+ * CREATE_MEMORY   (new)                         → runtime.createMemory (direct)
+ * SEARCH_MEMORIES (was RECALL_MEMORY_FILTERED) → GET /api/memories/browse or /api/memories/by-entity/:id
+ * DELETE_MEMORY   (was FORGET_MEMORY)          → DELETE /api/memories/:id
+ * UPDATE_MEMORY   (was EDIT_MEMORY)            → PATCH /api/memories/:id (server re-embeds)
  */
 
-import type { Action, ActionResult, HandlerOptions } from "@elizaos/core";
-import { logger } from "@elizaos/core";
+import type {
+  Action,
+  ActionResult,
+  HandlerOptions,
+  IAgentRuntime,
+  Memory,
+  UUID,
+} from "@elizaos/core";
+import { logger, stringToUuid } from "@elizaos/core";
 import { resolveServerOnlyPort } from "@elizaos/shared";
-import { hasOwnerAccess } from "../security/access.js";
 
 function getApiBase(): string {
   return `http://localhost:${resolveServerOnlyPort(process.env)}`;
@@ -17,6 +24,160 @@ function getApiBase(): string {
 
 const MEMORY_TYPES = ["messages", "memories", "facts", "documents"] as const;
 type MemoryType = (typeof MEMORY_TYPES)[number];
+
+// ---------------------------------------------------------------------------
+// CREATE_MEMORY
+// ---------------------------------------------------------------------------
+
+interface CreateMemoryParams {
+  text?: string;
+  kind?: string;
+  tags?: string[];
+}
+
+export const createMemoryAction: Action = {
+  name: "CREATE_MEMORY",
+  contexts: ["memory", "knowledge", "agent_internal"],
+  roleGate: { minRole: "OWNER" },
+  similes: [
+    "MEMORIZE",
+    "REMEMBER_THIS",
+    "STORE_MEMORY",
+    "WRITE_MEMORY",
+    "SAVE_MEMORY",
+  ],
+  description:
+    "Store a new memory record. Use to remember a fact, preference, or note for future reference.",
+  descriptionCompressed:
+    "store new memory record remember fact, preference, note future reference",
+  validate: async () => true,
+  handler: async (
+    runtime: IAgentRuntime,
+    _message,
+    _state,
+    options,
+  ): Promise<ActionResult> => {
+    const params = (options as HandlerOptions | undefined)?.parameters as
+      | CreateMemoryParams
+      | undefined;
+
+    const text = typeof params?.text === "string" ? params.text.trim() : "";
+    if (!text) {
+      return {
+        success: false,
+        text: "text is required.",
+        values: { error: "MISSING_TEXT" },
+      };
+    }
+
+    const kind =
+      typeof params?.kind === "string" && params.kind.trim()
+        ? params.kind.trim()
+        : undefined;
+    const tags = Array.isArray(params?.tags)
+      ? params.tags.filter(
+          (t): t is string => typeof t === "string" && t.trim().length > 0,
+        )
+      : [];
+
+    const agentId = runtime.agentId as UUID;
+    const roomId = stringToUuid(
+      `${runtime.character?.name ?? "eliza"}-manual-memories-room`,
+    ) as UUID;
+
+    const memoryId = crypto.randomUUID() as UUID;
+    const createdAt = Date.now();
+
+    const content: Record<string, unknown> = { text, source: "CREATE_MEMORY" };
+    if (kind) content.kind = kind;
+    if (tags.length > 0) content.tags = tags;
+
+    try {
+      await runtime.ensureRoomExists({
+        id: roomId,
+        agentId,
+        name: "manual-memories",
+        source: "agent",
+        type: "DM" as unknown as import("@elizaos/core").ChannelType,
+        worldId: stringToUuid(`${agentId}-manual-memories-world`) as UUID,
+      });
+    } catch {
+      // Room may already exist — not fatal.
+    }
+
+    try {
+      await runtime.createMemory(
+        {
+          id: memoryId,
+          entityId: agentId,
+          agentId,
+          roomId,
+          content,
+          createdAt,
+        } as Memory,
+        "memories",
+      );
+
+      return {
+        success: true,
+        text: `Stored memory ${memoryId}.`,
+        values: { memoryId, kind: kind ?? null, tagCount: tags.length },
+        data: {
+          actionName: "CREATE_MEMORY",
+          memoryId,
+          text,
+          kind: kind ?? null,
+          tags,
+          createdAt,
+        },
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[create-memory] failed: ${msg}`);
+      return { success: false, text: `Failed to store memory: ${msg}` };
+    }
+  },
+  parameters: [
+    {
+      name: "text",
+      description: "The content of the memory to store.",
+      required: true,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "kind",
+      description:
+        'Optional category label, e.g. "fact", "preference", "note".',
+      required: false,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "tags",
+      description: "Optional list of string tags for retrieval.",
+      required: false,
+      schema: { type: "array" as const, items: { type: "string" as const } },
+    },
+  ],
+  examples: [
+    [
+      {
+        name: "{{name1}}",
+        content: { text: "Remember that I prefer dark mode." },
+      },
+      {
+        name: "{{agentName}}",
+        content: {
+          text: "Stored memory abc-123.",
+          action: "CREATE_MEMORY",
+        },
+      },
+    ],
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// SEARCH_MEMORIES (was RECALL_MEMORY_FILTERED)
+// ---------------------------------------------------------------------------
 
 interface RecallMemoryParams {
   type?: MemoryType;
@@ -43,23 +204,26 @@ interface MemoryBrowseResponseShape {
 }
 
 export const recallMemoryFilteredAction: Action = {
-  name: "RECALL_MEMORY_FILTERED",
+  name: "SEARCH_MEMORIES",
   contexts: ["memory", "knowledge", "agent_internal"],
   roleGate: { minRole: "OWNER" },
-  similes: ["BROWSE_MEMORIES", "FILTER_MEMORIES", "FIND_MEMORIES"],
+  similes: [
+    "RECALL_MEMORY_FILTERED",
+    "BROWSE_MEMORIES",
+    "FILTER_MEMORIES",
+    "FIND_MEMORIES",
+  ],
   description:
     "Recall memories filtered by type, entityId, roomId, or text query. Routes to /api/memories/by-entity when entityId is supplied; otherwise /api/memories/browse.",
   descriptionCompressed:
     "recall memory filter type, entityid, roomid, text query route / api/memories/by-entity entityid suppli; otherwise / api/memories/browse",
-  validate: async (runtime, message) => hasOwnerAccess(runtime, message),
-  handler: async (runtime, message, _state, options): Promise<ActionResult> => {
-    if (!(await hasOwnerAccess(runtime, message))) {
-      return {
-        success: false,
-        text: "Permission denied: only the owner may inspect memories.",
-      };
-    }
-
+  validate: async () => true,
+  handler: async (
+    _runtime,
+    _message,
+    _state,
+    options,
+  ): Promise<ActionResult> => {
     const params = (options as HandlerOptions | undefined)?.parameters as
       | RecallMemoryParams
       | undefined;
@@ -114,7 +278,7 @@ export const recallMemoryFilteredAction: Action = {
         ].join("\n"),
         values: { count: memories.length, total: data.total ?? null },
         data: {
-          actionName: "RECALL_MEMORY_FILTERED",
+          actionName: "SEARCH_MEMORIES",
           memories,
           total: data.total,
           offset: data.offset,
@@ -170,7 +334,7 @@ export const recallMemoryFilteredAction: Action = {
         name: "{{agentName}}",
         content: {
           text: "Found N memory item(s)...",
-          action: "RECALL_MEMORY_FILTERED",
+          action: "SEARCH_MEMORIES",
         },
       },
     ],
@@ -187,23 +351,21 @@ interface ForgetMemoryParams {
 }
 
 export const forgetMemoryAction: Action = {
-  name: "FORGET_MEMORY",
+  name: "DELETE_MEMORY",
   contexts: ["memory", "knowledge", "agent_internal"],
   roleGate: { minRole: "OWNER" },
-  similes: ["DELETE_MEMORY", "REMOVE_MEMORY"],
+  similes: ["FORGET_MEMORY", "REMOVE_MEMORY"],
   description:
     "Permanently delete a memory by id. Requires explicit confirm:true.",
   descriptionCompressed:
     "permanently delete memory id require explicit confirm: true",
-  validate: async (runtime, message) => hasOwnerAccess(runtime, message),
-  handler: async (runtime, message, _state, options): Promise<ActionResult> => {
-    if (!(await hasOwnerAccess(runtime, message))) {
-      return {
-        success: false,
-        text: "Permission denied: only the owner may forget memories.",
-      };
-    }
-
+  validate: async () => true,
+  handler: async (
+    _runtime,
+    _message,
+    _state,
+    options,
+  ): Promise<ActionResult> => {
     const params = (options as HandlerOptions | undefined)?.parameters as
       | ForgetMemoryParams
       | undefined;
@@ -246,7 +408,7 @@ export const forgetMemoryAction: Action = {
         success: true,
         text: `Forgot memory ${memoryId}.`,
         values: { memoryId },
-        data: { actionName: "FORGET_MEMORY", memoryId },
+        data: { actionName: "DELETE_MEMORY", memoryId },
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -288,23 +450,21 @@ interface EditMemoryResponseShape {
 }
 
 export const editMemoryAction: Action = {
-  name: "EDIT_MEMORY",
+  name: "UPDATE_MEMORY",
   contexts: ["memory", "knowledge", "agent_internal"],
   roleGate: { minRole: "OWNER" },
-  similes: ["UPDATE_MEMORY", "MODIFY_MEMORY"],
+  similes: ["EDIT_MEMORY", "MODIFY_MEMORY"],
   description:
     "Edit the text of an existing memory. Server re-embeds the new text. Requires explicit confirm:true.",
   descriptionCompressed:
     "edit text exist memory server re-embed new text require explicit confirm: true",
-  validate: async (runtime, message) => hasOwnerAccess(runtime, message),
-  handler: async (runtime, message, _state, options): Promise<ActionResult> => {
-    if (!(await hasOwnerAccess(runtime, message))) {
-      return {
-        success: false,
-        text: "Permission denied: only the owner may edit memories.",
-      };
-    }
-
+  validate: async () => true,
+  handler: async (
+    _runtime,
+    _message,
+    _state,
+    options,
+  ): Promise<ActionResult> => {
     const params = (options as HandlerOptions | undefined)?.parameters as
       | EditMemoryParams
       | undefined;
@@ -359,7 +519,7 @@ export const editMemoryAction: Action = {
         text: `Updated memory ${memoryId}.`,
         values: { memoryId },
         data: {
-          actionName: "EDIT_MEMORY",
+          actionName: "UPDATE_MEMORY",
           memoryId,
           memory: data.memory ?? null,
         },

@@ -9,9 +9,9 @@ import {
 	updateEntityAction,
 } from "../features/advanced-capabilities/actions/index";
 import {
-	factExtractorEvaluator,
-	reflectionEvaluator,
-	relationshipExtractionEvaluator,
+	factExtractorAction,
+	reflectionAction,
+	relationshipExtractionAction,
 } from "../features/advanced-capabilities/evaluators/index";
 import {
 	contactsProvider,
@@ -21,24 +21,21 @@ import {
 } from "../features/advanced-capabilities/providers/index";
 import {
 	__setKnowledgeUrlFetchImplForTests,
-	createKnowledgePlugin,
+	documentsPlugin,
 	type FetchedKnowledgeUrl,
 	type FetchedKnowledgeUrlKind,
 	type FetchKnowledgeFromUrlOptions,
 	fetchKnowledgeFromUrl,
 	isYouTubeUrl,
 	KnowledgeService,
-	knowledgePlugin,
-	knowledgePluginCore,
-	knowledgePluginHeadless,
-} from "../features/knowledge/index";
+} from "../features/documents/index";
 import { trajectoriesPlugin } from "../features/trajectories/index";
 import { FollowUpService } from "../services/followUp";
 import { RelationshipsService } from "../services/relationships";
 import type { Plugin } from "../types/plugin";
 
 export type NativeRuntimeFeature =
-	| "knowledge"
+	| "documents"
 	| "relationships"
 	| "trajectories";
 
@@ -54,6 +51,11 @@ export const relationshipsPlugin: Plugin = {
 		withCanonicalActionDocs(sendMessageAction),
 		withCanonicalActionDocs(updateContactAction),
 		withCanonicalActionDocs(updateEntityAction),
+		// ALWAYS_AFTER actions (post-message work; replaces legacy evaluators).
+		factExtractorAction,
+		reflectionAction,
+		// ALWAYS_BEFORE actions (pre-Stage 1 heuristics; runs even on IGNORE/STOP).
+		relationshipExtractionAction,
 	],
 	providers: [
 		contactsProvider,
@@ -61,17 +63,13 @@ export const relationshipsPlugin: Plugin = {
 		followUpsProvider,
 		relationshipsProvider,
 	],
-	evaluators: [
-		factExtractorEvaluator,
-		reflectionEvaluator,
-		relationshipExtractionEvaluator,
-	],
+	evaluators: [],
 	services: [RelationshipsService, FollowUpService],
 };
 
 export const nativeRuntimeFeaturePlugins: Record<NativeRuntimeFeature, Plugin> =
 	{
-		knowledge: knowledgePlugin,
+		documents: documentsPlugin,
 		relationships: relationshipsPlugin,
 		trajectories: trajectoriesPlugin,
 	};
@@ -86,7 +84,7 @@ export const nativeRuntimeFeaturePluginNames: Record<
 	NativeRuntimeFeature,
 	string
 > = {
-	knowledge: knowledgePlugin.name,
+	documents: documentsPlugin.name,
 	relationships: relationshipsPlugin.name,
 	trajectories: trajectoriesPlugin.name,
 };
@@ -95,7 +93,7 @@ export const nativeRuntimeFeatureDefaults: Record<
 	NativeRuntimeFeature,
 	boolean
 > = {
-	knowledge: true,
+	documents: true,
 	relationships: true,
 	trajectories: true,
 };
@@ -118,6 +116,12 @@ export function resolveNativeRuntimeFeatureFromPluginName(
 	return null;
 }
 
+export {
+	createDocumentsPlugin,
+	documentsPlugin,
+	documentsPluginCore,
+	documentsPluginHeadless,
+} from "../features/documents/index";
 export type {
 	FetchedKnowledgeUrl,
 	FetchedKnowledgeUrlKind,
@@ -125,14 +129,10 @@ export type {
 };
 export {
 	__setKnowledgeUrlFetchImplForTests,
-	createKnowledgePlugin,
 	FollowUpService,
 	fetchKnowledgeFromUrl,
 	isYouTubeUrl,
 	KnowledgeService,
-	knowledgePlugin,
-	knowledgePluginCore,
-	knowledgePluginHeadless,
 	RelationshipsService,
 	trajectoriesPlugin,
 };

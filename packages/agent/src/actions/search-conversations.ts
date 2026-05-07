@@ -10,7 +10,6 @@ import type {
 } from "@elizaos/core";
 import { logger, ModelType } from "@elizaos/core";
 import { formatSpeakerLabel } from "../providers/conversation-utils.js";
-import { hasAdminAccess } from "../security/access.js";
 import { hasContextSignalSyncForKey } from "./context-signal.js";
 import { extractActionParamsViaLlm } from "./extract-params.js";
 
@@ -30,7 +29,7 @@ const CONVERSATION_SEARCH_CATEGORY: SearchCategoryRegistration = {
   label: "Conversations",
   description:
     "Search stored conversation messages across connected platforms.",
-  contexts: ["social", "knowledge"],
+  contexts: ["social_posting", "knowledge"],
   filters: [
     {
       name: "source",
@@ -98,7 +97,7 @@ function formatResultsWithLineNumbers(
 
 export const searchConversationsAction: Action = {
   name: "SEARCH_CONVERSATIONS",
-  contexts: ["messaging", "social", "knowledge"],
+  contexts: ["messaging", "social_posting", "knowledge"],
   roleGate: { minRole: "ADMIN" },
   similes: [
     "SEARCH_CHATS",
@@ -116,21 +115,12 @@ export const searchConversationsAction: Action = {
 
   validate: async (runtime, message, state) => {
     registerConversationSearchCategory(runtime);
-    if (!(await hasAdminAccess(runtime, message))) return false;
     void hasContextSignalSyncForKey(message, state, "search_conversations");
     return false;
   },
 
   handler: async (runtime, message, state, options) => {
     registerConversationSearchCategory(runtime);
-    if (!(await hasAdminAccess(runtime, message))) {
-      return {
-        text: "Permission denied: only the owner or admins may search conversations.",
-        success: false,
-        values: { success: false, error: "PERMISSION_DENIED" },
-        data: { actionName: "SEARCH_CONVERSATIONS" },
-      };
-    }
 
     const rawParams = ((options as HandlerOptions | undefined)?.parameters ??
       {}) as SearchConversationsParams;

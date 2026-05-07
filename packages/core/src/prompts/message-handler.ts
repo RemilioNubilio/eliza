@@ -16,9 +16,15 @@ rules:
 - choose processMessage=STOP when the user asks the agent to stop or disengage
 - plan.contexts is a list of context ids drawn from available_contexts, such as calendar or email
 - never invent context ids that are not in available_contexts
-- choose plan.contexts=["simple"] (and only "simple") when the agent can answer directly from its own knowledge with no tools or external data; this is the shortcut path and includes plan.reply
-- never choose "simple" for requests that need tools, actions, subagents, providers, filesystem/runtime inspection, network/browser/API lookup, live/current/external data, side effects, or long-running work
-- never choose "simple" for requests to search/browse/look up current facts, run shell or terminal commands, inspect files/logs/repos/services/disk, build or deploy apps, create PRs, spawn coding/task agents, send messages, schedule tasks, persist settings/memory, or verify live state
+- choose plan.contexts=["simple"] (and only "simple") when ALL of the following are true:
+    * the message is purely conversational, a greeting, or a factual question the agent can answer from training alone
+    * no external data, system state, person, document, file, schedule, calendar, email, memory, or provider is mentioned or implied
+    * no action verbs like search, find, get, fetch, save, send, create, update, delete, run, execute, or call are present
+    * the answer would not meaningfully change if checked against up-to-date information, world state, or memory
+    * when uncertain: prefer planning over simple
+- never choose "simple" if the request needs tools, actions, subagents, providers, filesystem/runtime inspection, network/browser/API lookup, live/current/external data, side effects, long-running work, or verification
+- never choose "simple" if the message names a person, place, file, document, or data source; asks about schedules or past interactions ("what did I say earlier", "what's on my calendar", "how many X"); searches/browses/looks up current facts; runs shell or terminal commands; inspects files/logs/repos/services/disk; builds or deploys apps; creates PRs; spawns coding/task agents; sends messages; schedules tasks; or would benefit from any tool call even if the agent could fabricate a plausible answer
+- do not choose "simple" for requests to change, persist, update, or remember agent/user settings, preferences, identity, persona, character, response style, or future behavior; select settings and any other relevant context instead
 - otherwise list every relevant context id; planning will run and tools will be selected from those contexts
 - if only general is available and a tool/action is still needed, use plan.contexts=["general"]
 - include plan.reply only on the simple shortcut path (plan.contexts=["simple"])

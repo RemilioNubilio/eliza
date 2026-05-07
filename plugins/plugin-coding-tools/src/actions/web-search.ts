@@ -1,10 +1,10 @@
-import {
-  type Action,
-  type ActionResult,
-  type HandlerCallback,
-  type IAgentRuntime,
-  type Memory,
-  type State,
+import type {
+  Action,
+  ActionResult,
+  HandlerCallback,
+  IAgentRuntime,
+  Memory,
+  State,
 } from "@elizaos/core";
 
 import {
@@ -14,6 +14,8 @@ import {
   successActionResult,
 } from "../lib/format.js";
 import { CODING_TOOLS_CONTEXTS } from "../types.js";
+
+const ACTION_NAME = "CODE_WEB_SEARCH";
 
 function asStringArray(value: unknown[] | undefined): string[] | undefined {
   if (!value) return undefined;
@@ -25,14 +27,15 @@ function asStringArray(value: unknown[] | undefined): string[] | undefined {
 }
 
 export const webSearchAction: Action = {
-  name: "WEB_SEARCH",
+  name: ACTION_NAME,
   contexts: [...CODING_TOOLS_CONTEXTS],
   contextGate: { anyOf: ["code", "terminal", "automation"] },
-  similes: ["SEARCH_WEB", "GOOGLE", "BING"],
+  roleGate: { minRole: "ADMIN" },
+  similes: ["CODING_WEB_SEARCH", "DEV_WEB_SEARCH", "CODE_SEARCH_WEB"],
   description:
-    "Run a web search and return ranked results. Stub in v1: no provider is wired in this plugin, so the action returns a placeholder success that echoes the query and any domain filters. Wire a Brave/Bing/Tavily backend before relying on this for real results.",
+    "Record a coding-agent web search request (query plus optional allowed_domains / blocked_domains filters) so a downstream coding sub-agent can satisfy it. This plugin does not host its own search backend; it returns an unconfigured-provider notice and the structured request. For hosted generic web search use the global WEB_SEARCH action when that plugin is available.",
   descriptionCompressed:
-    "Web search (stub — no backend configured; echoes query + filters).",
+    "code-web-search:request query+allowed_domains+blocked_domains (no built-in provider)",
   parameters: [
     {
       name: "query",
@@ -53,9 +56,11 @@ export const webSearchAction: Action = {
       schema: { type: "array", items: { type: "string" } },
     },
   ],
-  validate: async (runtime: IAgentRuntime, _message: Memory, _state?: State) => {
-    const disable = runtime.getSetting?.("CODING_TOOLS_DISABLE");
-    if (disable === true || disable === "true" || disable === "1") return false;
+  validate: async (
+    _runtime: IAgentRuntime,
+    _message: Memory,
+    _state?: State,
+  ) => {
     return true;
   },
   handler: async (
@@ -67,18 +72,29 @@ export const webSearchAction: Action = {
   ): Promise<ActionResult> => {
     const query = readStringParam(options, "query");
     if (!query || query.trim().length === 0) {
-      return failureToActionResult({
-        reason: "missing_param",
-        message: "query is required",
-      });
+      return failureToActionResult(
+        {
+          reason: "missing_param",
+          message: "query is required",
+        },
+        {
+          actionName: ACTION_NAME,
+          reason: "missing_query",
+        },
+      );
     }
 
-    const allowedDomains = asStringArray(readArrayParam(options, "allowed_domains"));
-    const blockedDomains = asStringArray(readArrayParam(options, "blocked_domains"));
+    const allowedDomains = asStringArray(
+      readArrayParam(options, "allowed_domains"),
+    );
+    const blockedDomains = asStringArray(
+      readArrayParam(options, "blocked_domains"),
+    );
 
-    const text = `WEB_SEARCH not configured (no provider). Query: "${query}". When a provider is wired (Brave/Bing/Tavily), this action will return ranked results.`;
+    const text = `${ACTION_NAME} not configured (no provider). Query: "${query}". Use WEB_SEARCH for hosted generic web search when available.`;
 
     const data: Record<string, unknown> = {
+      actionName: ACTION_NAME,
       stub: true,
       query,
       ...(allowedDomains ? { allowed_domains: allowedDomains } : {}),
