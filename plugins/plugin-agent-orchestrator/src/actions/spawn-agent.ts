@@ -121,8 +121,8 @@ function getMessageText(message: Memory): string {
 
 export const spawnAgentAction: Action = {
   name: "SPAWN_AGENT",
-  contexts: ["tasks", "automation", "agent_internal"],
-  contextGate: { anyOf: ["tasks", "automation", "agent_internal"] },
+  contexts: ["general", "code", "automation"],
+  contextGate: { anyOf: ["general", "code", "automation"] },
   roleGate: { minRole: "USER" },
 
   similes: [
@@ -144,7 +144,6 @@ export const spawnAgentAction: Action = {
     "Returns a session ID that can be used to interact with the agent.",
   descriptionCompressed:
     "Spawn task agent in existing workspace for async coding/research/current-info work; returns session id for follow-up.",
-  contexts: ["general", "code", "automation"],
 
   // Spawning kicks off an async subagent whose final answer lands via the
   // synthesis callback, not via this action's ActionResult. Without this
