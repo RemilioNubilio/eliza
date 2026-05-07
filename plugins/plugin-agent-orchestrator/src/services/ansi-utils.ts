@@ -221,10 +221,40 @@ export function closeUnbalancedMarkdownFences(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
 
-  const fenceCount =
-    trimmed.split("\n").filter((line) => line.trimStart().startsWith("```"))
-      .length ?? 0;
-  return fenceCount % 2 === 0 ? trimmed : `${trimmed}\n\`\`\``;
+  const fixedLines: string[] = [];
+  let openFence = false;
+
+  for (const line of trimmed.split("\n")) {
+    const fence = line.trim();
+    if (!fence.startsWith("```")) {
+      fixedLines.push(line);
+      continue;
+    }
+
+    if (!openFence) {
+      openFence = true;
+      fixedLines.push(line);
+      continue;
+    }
+
+    if (/^```\s*$/.test(fence)) {
+      openFence = false;
+      fixedLines.push(line);
+      continue;
+    }
+
+    // A second fenced opener such as ```text while already inside a fence is
+    // usually a model-generated missing close. Close the previous block before
+    // preserving the next one.
+    fixedLines.push("```");
+    fixedLines.push(line);
+  }
+
+  if (openFence) {
+    fixedLines.push("```");
+  }
+
+  return fixedLines.join("\n").trim();
 }
 
 function extractStructuredCompletionBlock(lines: string[]): string {

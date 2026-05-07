@@ -169,4 +169,30 @@ describe("closeUnbalancedMarkdownFences", () => {
       ].join("\n"),
     );
   });
+
+  it("repairs nested fenced openers with info strings", () => {
+    expect(
+      closeUnbalancedMarkdownFences(
+        [
+          "Branch: clean.",
+          "```text",
+          "## branch...origin/develop",
+          "Remotes:",
+          "```text",
+          "origin https://github.com/example/repo.git",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "Branch: clean.",
+        "```text",
+        "## branch...origin/develop",
+        "Remotes:",
+        "```",
+        "```text",
+        "origin https://github.com/example/repo.git",
+        "```",
+      ].join("\n"),
+    );
+  });
 });
