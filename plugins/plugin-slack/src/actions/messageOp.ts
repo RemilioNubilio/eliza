@@ -45,6 +45,8 @@ interface MessageOpInfo {
   remove?: boolean;
 }
 
+const MAX_SLACK_ACTION_TEXT_CHARS = 4_000;
+const SLACK_ACTION_TIMEOUT_MS = 30_000;
 const VALID_OPS = new Set(["send", "edit", "delete", "react", "pin", "unpin"]);
 
 function parseJsonObject(value: unknown): Record<string, unknown> | null {
@@ -91,7 +93,7 @@ function normalizeMessageOpInfo(
     op: opRaw as MessageOpInfo["op"],
     text:
       typeof params.text === "string" && params.text.trim().length > 0
-        ? params.text
+        ? params.text.slice(0, MAX_SLACK_ACTION_TEXT_CHARS)
         : undefined,
     messageTs:
       typeof params.messageTs === "string" && params.messageTs.trim().length > 0
@@ -180,6 +182,44 @@ export const messageOp: Action = {
     "Slack message operation router. Send, edit, delete, react, pin, or unpin Slack messages by setting op.",
   descriptionCompressed:
     "Slack message ops: send, edit, delete, react, pin, unpin.",
+  contexts: ["messaging", "connectors"],
+  contextGate: { anyOf: ["messaging", "connectors"] },
+  roleGate: { minRole: "USER" },
+  parameters: [
+    {
+      name: "op",
+      description: "Operation: send, edit, delete, react, pin, or unpin.",
+      required: false,
+      schema: {
+        type: "string",
+        enum: ["send", "edit", "delete", "react", "pin", "unpin"],
+      },
+    },
+    {
+      name: "text",
+      description: "Message text for send or edit.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "channelRef",
+      description: "Slack channel name/id or current.",
+      required: false,
+      schema: { type: "string", default: "current" },
+    },
+    {
+      name: "messageTs",
+      description: "Slack message timestamp for edit/delete/react/pin/unpin.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "emoji",
+      description: "Reaction emoji name without colons.",
+      required: false,
+      schema: { type: "string" },
+    },
+  ],
   validate: async (
     runtime: IAgentRuntime,
     message: Memory,
@@ -278,6 +318,10 @@ export const messageOp: Action = {
       });
       return { success: false, error: "Could not extract op parameters" };
     }
+    info = {
+      ...info,
+      text: info.text?.slice(0, MAX_SLACK_ACTION_TEXT_CHARS),
+    };
 
     const stateData = state?.data;
     const room = stateData?.room || (await runtime.getRoom(message.roomId));
@@ -293,6 +337,7 @@ export const messageOp: Action = {
 
     const op = info.op;
     const logSrc = `plugin:slack:action:message-op:${op}`;
+    const timeoutMs = SLACK_ACTION_TIMEOUT_MS;
 
     if (op === "send") {
       if (!info.text) {
@@ -331,7 +376,12 @@ export const messageOp: Action = {
       await callback?.(response);
       return {
         success: true,
-        data: { op, messageTs: result.ts, channelId: targetChannelId },
+        data: {
+          op,
+          messageTs: result.ts,
+          channelId: targetChannelId,
+          timeoutMs,
+        },
       };
     }
 
@@ -375,6 +425,7 @@ export const messageOp: Action = {
           messageTs: info.messageTs,
           channelId,
           newText: info.text,
+          timeoutMs,
         },
       };
     }
@@ -414,7 +465,7 @@ export const messageOp: Action = {
       await callback?.(response);
       return {
         success: true,
-        data: { op, messageTs: info.messageTs, channelId },
+        data: { op, messageTs: info.messageTs, channelId, timeoutMs },
       };
     }
 
@@ -474,6 +525,7 @@ export const messageOp: Action = {
           messageTs: info.messageTs,
           channelId,
           action: actionWord,
+          timeoutMs,
         },
       };
     }
@@ -517,7 +569,7 @@ export const messageOp: Action = {
       await callback?.(response);
       return {
         success: true,
-        data: { op, messageTs: info.messageTs, channelId },
+        data: { op, messageTs: info.messageTs, channelId, timeoutMs },
       };
     }
 

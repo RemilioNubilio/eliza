@@ -6,7 +6,7 @@ import {
   getStewardPendingApprovals,
   getStewardWalletStatus,
 } from "@elizaos/app-steward";
-import { encodeToonValue, type Provider } from "@elizaos/core";
+import type { Provider } from "@elizaos/core";
 
 async function formatWorkspaceSummary(): Promise<{
   text: string;
@@ -27,7 +27,7 @@ async function formatWorkspaceSummary(): Promise<{
     : !steward.connected
       ? "unavailable"
       : "connected";
-  const text = encodeToonValue({
+  const text = JSON.stringify({
     app_browser_workspace: {
       mode,
       tabCount: tabs.length,
@@ -43,7 +43,7 @@ async function formatWorkspaceSummary(): Promise<{
         error: steward.error ?? "",
       },
     },
-  });
+  }, null, 2);
 
   return {
     text,
@@ -60,6 +60,10 @@ export const appBrowserWorkspaceProvider: Provider = {
     "Summarizes Eliza browser workspace tabs plus Steward wallet signing state for the agent.",
   descriptionCompressed:
     "Browser workspace tabs + Steward wallet signing state.",
+  contexts: ["browser", "web"],
+  contextGate: { anyOf: ["browser", "web"] },
+  cacheStable: false,
+  cacheScope: "turn",
   get: async () => {
     try {
       const summary = await formatWorkspaceSummary();
@@ -76,12 +80,12 @@ export const appBrowserWorkspaceProvider: Provider = {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return {
-        text: encodeToonValue({
+        text: JSON.stringify({
           app_browser_workspace: {
             available: false,
             error: message,
           },
-        }),
+        }, null, 2),
         data: { available: false, error: message },
       };
     }

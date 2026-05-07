@@ -6,12 +6,14 @@
 export type ActionDocParameterExampleValue = string | number | boolean | null;
 
 export type ActionDocParameterSchema = {
-	type: "string" | "number" | "boolean" | "object" | "array";
+	type: "string" | "number" | "integer" | "boolean" | "object" | "array";
 	description?: string;
 	default?: ActionDocParameterExampleValue;
 	enum?: string[];
 	properties?: Record<string, ActionDocParameterSchema>;
 	items?: ActionDocParameterSchema;
+	oneOf?: ActionDocParameterSchema[];
+	anyOf?: ActionDocParameterSchema[];
 	minimum?: number;
 	maximum?: number;
 	pattern?: string;
@@ -1186,86 +1188,6 @@ export const coreActionsSpec = {
 			descriptionCompressed: "Edit contact details for person in conversation.",
 		},
 		{
-			name: "THINK",
-			description:
-				"Pause and think deeply about a complex question, ambiguous request, or multi-faceted problem before responding. Use THINK when the question requires careful reasoning, when you are not confident in your initial assessment, when the user asks something nuanced that benefits from structured analysis, or when multiple valid approaches exist and you need to evaluate trade-offs. Do NOT use THINK for simple greetings, factual lookups, or straightforward requests where the answer is obvious. THINK re-processes the full conversation context through a larger, more capable model to produce a thorough, well-reasoned response.",
-			similes: [
-				"PLAN",
-				"REASON",
-				"ANALYZE",
-				"REFLECT",
-				"CONSIDER",
-				"DELIBERATE",
-				"DEEP_THINK",
-				"PONDER",
-			],
-			parameters: [],
-			examples: [
-				[
-					{
-						name: "{{name1}}",
-						content: {
-							text: "What's the best architecture for a real-time multiplayer game with 10k concurrent users?",
-						},
-					},
-					{
-						name: "{{name2}}",
-						content: {
-							text: "That's a great question with several important trade-offs to consider. Let me think through this carefully...",
-							actions: ["THINK"],
-						},
-					},
-				],
-				[
-					{
-						name: "{{name1}}",
-						content: {
-							text: "Should I use a monorepo or polyrepo for my team of 15 engineers working on 3 microservices?",
-						},
-					},
-					{
-						name: "{{name2}}",
-						content: {
-							text: "Let me think about the trade-offs for your specific situation...",
-							actions: ["THINK"],
-						},
-					},
-				],
-				[
-					{
-						name: "{{name1}}",
-						content: {
-							text: "We're seeing intermittent 502 errors in production but only during peak hours. Our setup is nginx -> node -> postgres. What could cause this?",
-						},
-					},
-					{
-						name: "{{name2}}",
-						content: {
-							text: "There are several possible causes here. Let me reason through the full request path systematically...",
-							actions: ["THINK"],
-						},
-					},
-				],
-				[
-					{
-						name: "{{name1}}",
-						content: {
-							text: "How should we handle authentication across our mobile app, web app, and API given we need SSO with both Google and enterprise SAML providers?",
-						},
-					},
-					{
-						name: "{{name2}}",
-						content: {
-							text: "Cross-platform auth with multiple identity providers has some nuance. Let me plan this out...",
-							actions: ["THINK"],
-						},
-					},
-				],
-			],
-			descriptionCompressed:
-				"Deep reasoning for complex/ambiguous questions. Re-processes full context through larger model. Use when careful reasoning needed, not for simple lookups.",
-		},
-		{
 			name: "GENERATE_IMAGE",
 			description:
 				"Generates an image based on a generated prompt reflecting the current conversation. Use GENERATE_IMAGE when the agent needs to visualize, illustrate, or demonstrate something visually for the user.",
@@ -2434,86 +2356,6 @@ export const allActionsSpec = {
 			descriptionCompressed: "Edit contact details for person in conversation.",
 		},
 		{
-			name: "THINK",
-			description:
-				"Pause and think deeply about a complex question, ambiguous request, or multi-faceted problem before responding. Use THINK when the question requires careful reasoning, when you are not confident in your initial assessment, when the user asks something nuanced that benefits from structured analysis, or when multiple valid approaches exist and you need to evaluate trade-offs. Do NOT use THINK for simple greetings, factual lookups, or straightforward requests where the answer is obvious. THINK re-processes the full conversation context through a larger, more capable model to produce a thorough, well-reasoned response.",
-			similes: [
-				"PLAN",
-				"REASON",
-				"ANALYZE",
-				"REFLECT",
-				"CONSIDER",
-				"DELIBERATE",
-				"DEEP_THINK",
-				"PONDER",
-			],
-			parameters: [],
-			examples: [
-				[
-					{
-						name: "{{name1}}",
-						content: {
-							text: "What's the best architecture for a real-time multiplayer game with 10k concurrent users?",
-						},
-					},
-					{
-						name: "{{name2}}",
-						content: {
-							text: "That's a great question with several important trade-offs to consider. Let me think through this carefully...",
-							actions: ["THINK"],
-						},
-					},
-				],
-				[
-					{
-						name: "{{name1}}",
-						content: {
-							text: "Should I use a monorepo or polyrepo for my team of 15 engineers working on 3 microservices?",
-						},
-					},
-					{
-						name: "{{name2}}",
-						content: {
-							text: "Let me think about the trade-offs for your specific situation...",
-							actions: ["THINK"],
-						},
-					},
-				],
-				[
-					{
-						name: "{{name1}}",
-						content: {
-							text: "We're seeing intermittent 502 errors in production but only during peak hours. Our setup is nginx -> node -> postgres. What could cause this?",
-						},
-					},
-					{
-						name: "{{name2}}",
-						content: {
-							text: "There are several possible causes here. Let me reason through the full request path systematically...",
-							actions: ["THINK"],
-						},
-					},
-				],
-				[
-					{
-						name: "{{name1}}",
-						content: {
-							text: "How should we handle authentication across our mobile app, web app, and API given we need SSO with both Google and enterprise SAML providers?",
-						},
-					},
-					{
-						name: "{{name2}}",
-						content: {
-							text: "Cross-platform auth with multiple identity providers has some nuance. Let me plan this out...",
-							actions: ["THINK"],
-						},
-					},
-				],
-			],
-			descriptionCompressed:
-				"Deep reasoning for complex/ambiguous questions. Re-processes full context through larger model. Use when careful reasoning needed, not for simple lookups.",
-		},
-		{
 			name: "GENERATE_IMAGE",
 			description:
 				"Generates an image based on a generated prompt reflecting the current conversation. Use GENERATE_IMAGE when the agent needs to visualize, illustrate, or demonstrate something visually for the user.",
@@ -2592,7 +2434,37 @@ export const allActionsSpec = {
 			name: "ACTIVATE_N8N_WORKFLOW",
 			description:
 				"Activate an n8n workflow to start processing triggers and running automatically. Identifies workflows by ID, name, or semantic description in any language.",
-			parameters: [],
+			parameters: [
+				{
+					name: "workflowId",
+					description: "Optional exact n8n workflow id to activate.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Optional exact n8n workflow id to activate.",
+				},
+				{
+					name: "workflowName",
+					description: "Optional workflow name to activate.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Optional workflow name to activate.",
+				},
+				{
+					name: "query",
+					description:
+						"Optional natural-language description of the workflow to activate.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional natural-language description of the workflow to activate.",
+				},
+			],
 			descriptionCompressed:
 				"activate n8n workflow start process trigger run automatically identify workflow ID, name, semantic description language",
 			similes: [
@@ -2601,14 +2473,191 @@ export const allActionsSpec = {
 				"START_WORKFLOW",
 				"TURN_ON_WORKFLOW",
 			],
+			exampleCalls: [
+				{
+					user: "Use ACTIVATE_N8N_WORKFLOW with the provided parameters.",
+					actions: ["ACTIVATE_N8N_WORKFLOW"],
+					params: {
+						ACTIVATE_N8N_WORKFLOW: {
+							workflowId: "example",
+							workflowName: "example",
+							query: "example",
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "ASK_USER_QUESTION",
+			description:
+				"Broadcast 1-4 structured questions back to the user. Each question has a short header, a full question string, and optional multi-choice options with descriptions and previews. This is a structured-question broadcast surface — the action returns the question payload as data so a UI layer can render it; the action does NOT block waiting for an answer. UI integration is pending; for now treat the response as a published question, not as an interactive prompt.",
+			parameters: [
+				{
+					name: "questions",
+					description:
+						"Array of 1-4 question objects. Each: { question: string, header: string, options?: Array<{label, description?, preview?}>, multiSelect?: boolean }. If options is empty/undefined, the question is treated as freeform.",
+					required: true,
+					schema: {
+						type: "array",
+						items: {
+							type: "object",
+							properties: {
+								question: {
+									type: "string",
+								},
+								header: {
+									type: "string",
+								},
+								multiSelect: {
+									type: "boolean",
+								},
+								options: {
+									type: "array",
+									items: {
+										type: "object",
+										properties: {
+											label: {
+												type: "string",
+											},
+											description: {
+												type: "string",
+											},
+											preview: {
+												type: "string",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					descriptionCompressed:
+						"Array of 1-4 question objects. Each: { question: string, header: string, options?: Array<{label, description?, preview?}>, multiSelect?: boolean }. If...",
+				},
+			],
+			descriptionCompressed:
+				"Broadcast 1-4 structured questions to the user (UI integration pending; non-blocking).",
+			similes: ["ASK", "CLARIFY"],
+			exampleCalls: [
+				{
+					user: "Use ASK_USER_QUESTION with the provided parameters.",
+					actions: ["ASK_USER_QUESTION"],
+					params: {
+						ASK_USER_QUESTION: {
+							questions: "example",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "ATTACK_NPC",
 			description:
 				"Engage a nearby NPC in combat by its instance id. The server pathfinds the agent into attack range automatically.",
-			parameters: [],
+			parameters: [
+				{
+					name: "npcId",
+					description: "Nearby NPC instance id from the SCAPE_NEARBY provider.",
+					required: true,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed: "NPC id.",
+				},
+			],
 			descriptionCompressed: "Attack NPC by id.",
 			similes: ["FIGHT_NPC", "KILL_NPC", "ENGAGE"],
+			exampleCalls: [
+				{
+					user: "Use ATTACK_NPC with the provided parameters.",
+					actions: ["ATTACK_NPC"],
+					params: {
+						ATTACK_NPC: {
+							npcId: 1,
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "BASH",
+			description:
+				"Execute a shell command via /bin/bash -c <command>. Runs in the session cwd unless an explicit cwd inside the sandbox roots is supplied. Foreground commands return stdout, stderr, and exit code. Long-running commands auto-promote to background and return a task_id; pass run_in_background=true to background immediately. Respects the sandbox command denylist.",
+			parameters: [
+				{
+					name: "command",
+					description:
+						"Shell command to run; executed via /bin/bash -c <command>.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Shell command to run. executed via /bin/bash -c <command>.",
+				},
+				{
+					name: "description",
+					description:
+						"Five to ten word humanly-readable summary of the command.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Five to ten word humanly-readable summary of the command.",
+				},
+				{
+					name: "timeout",
+					description:
+						"Hard timeout in ms; clamped to [100, 600000]. Default 120000.",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed:
+						"Hard timeout in ms. clamped to [100, 600000]. Default 120000.",
+				},
+				{
+					name: "cwd",
+					description:
+						"Absolute working directory; must resolve inside the configured workspace roots. Defaults to the session cwd.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Absolute working directory. must resolve inside the configured workspace roots. Defaults to the session cwd.",
+				},
+				{
+					name: "run_in_background",
+					description:
+						"If true, return a task_id immediately. Use TASK_OUTPUT to poll and TASK_STOP to terminate.",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed:
+						"If true, return a task_id immediately. Use TASK_OUTPUT to poll and TASK_STOP to terminate.",
+				},
+			],
+			descriptionCompressed:
+				"Run a shell command (foreground or background) within sandbox roots.",
+			similes: ["SHELL", "EXEC", "RUN_COMMAND"],
+			exampleCalls: [
+				{
+					user: "Use BASH with the provided parameters.",
+					actions: ["BASH"],
+					params: {
+						BASH: {
+							command: "example",
+							description: "example",
+							timeout: 1,
+							cwd: "example",
+							run_in_background: false,
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "BLOCK_UNTIL_TASK_COMPLETE",
@@ -2698,7 +2747,57 @@ export const allActionsSpec = {
 			name: "BLUEBUBBLES_MESSAGE_OP",
 			description:
 				"BlueBubbles iMessage operation router. Send a reply or react to a message by setting op (send | react).",
-			parameters: [],
+			parameters: [
+				{
+					name: "op",
+					description: "Operation to run: send or react.",
+					required: false,
+					schema: {
+						type: "string",
+						enum: ["send", "react"],
+					},
+					descriptionCompressed: "Operation to run: send or react.",
+				},
+				{
+					name: "text",
+					description: "Message text for send.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "msg text for send.",
+				},
+				{
+					name: "to",
+					description:
+						"BlueBubbles chat guid, handle, or current conversation.",
+					required: false,
+					schema: {
+						type: "string",
+						default: "current",
+					},
+					descriptionCompressed:
+						"BlueBubbles chat guid, handle, or current convo.",
+				},
+				{
+					name: "messageGuid",
+					description: "Target message guid for reactions.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Target msg guid for reactions.",
+				},
+				{
+					name: "emoji",
+					description: "Reaction emoji.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Reaction emoji.",
+				},
+			],
 			descriptionCompressed: "Bluebubbles message ops: send, react.",
 			similes: [
 				"SEND_IMESSAGE",
@@ -2709,6 +2808,21 @@ export const allActionsSpec = {
 				"BLUEBUBBLES_REACT",
 				"BB_REACTION",
 				"IMESSAGE_REACT",
+			],
+			exampleCalls: [
+				{
+					user: "Use BLUEBUBBLES_MESSAGE_OP with the provided parameters.",
+					actions: ["BLUEBUBBLES_MESSAGE_OP"],
+					params: {
+						BLUEBUBBLES_MESSAGE_OP: {
+							op: "send",
+							text: "example",
+							to: "current",
+							messageGuid: "example",
+							emoji: "example",
+						},
+					},
+				},
 			],
 		},
 		{
@@ -2873,7 +2987,48 @@ export const allActionsSpec = {
 		{
 			name: "CALL_MCP_TOOL",
 			description: "Calls a tool from an MCP server to perform a specific task",
-			parameters: [],
+			parameters: [
+				{
+					name: "serverName",
+					description: "Optional MCP server name that owns the tool.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Optional MCP server name that owns the tool.",
+				},
+				{
+					name: "toolName",
+					description: "Optional exact MCP tool name to call.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Optional exact MCP tool name to call.",
+				},
+				{
+					name: "arguments",
+					description:
+						"Optional JSON arguments to pass to the selected MCP tool.",
+					required: false,
+					schema: {
+						type: "object",
+					},
+					descriptionCompressed:
+						"Optional JSON arguments to pass to the selected MCP tool.",
+				},
+				{
+					name: "query",
+					description:
+						"Natural-language description of the tool call to select.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Natural-language description of the tool call to select.",
+				},
+			],
 			descriptionCompressed: "call tool MCP server perform specific task",
 			similes: [
 				"CALL_TOOL",
@@ -2887,14 +3042,49 @@ export const allActionsSpec = {
 				"INVOKE_TOOL",
 				"INVOKE_MCP_TOOL",
 			],
+			exampleCalls: [
+				{
+					user: "Use CALL_MCP_TOOL with the provided parameters.",
+					actions: ["CALL_MCP_TOOL"],
+					params: {
+						CALL_MCP_TOOL: {
+							serverName: "example",
+							toolName: "example",
+							arguments: "example",
+							query: "example",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "CHAT_PUBLIC",
 			description:
 				"Say something in public chat so nearby players and agents can see it. Use to narrate, socialize, or respond to operator prompts.",
-			parameters: [],
+			parameters: [
+				{
+					name: "message",
+					description: "Public chat text to send, capped to 80 characters.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Chat text.",
+				},
+			],
 			descriptionCompressed: "Say something in public chat.",
 			similes: ["SAY", "SPEAK", "TALK", "BROADCAST"],
+			exampleCalls: [
+				{
+					user: "Use CHAT_PUBLIC with the provided parameters.",
+					actions: ["CHAT_PUBLIC"],
+					params: {
+						CHAT_PUBLIC: {
+							message: "example",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "CHECK_AVAILABILITY",
@@ -2970,10 +3160,51 @@ export const allActionsSpec = {
 			name: "CLAUDE_CODE_WORKBENCH_RUN",
 			description:
 				"Run an allowlisted repo workflow through the Claude Code workbench service.",
-			parameters: [],
+			parameters: [
+				{
+					name: "workflow",
+					description: "Allowlisted workflow name to run.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Allowlisted workflow name to run.",
+				},
+				{
+					name: "cwd",
+					description: "Optional working directory for the workflow.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Optional working directory for the workflow.",
+				},
+				{
+					name: "stdin",
+					description: "Optional stdin passed to the workflow.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Optional stdin passed to the workflow.",
+				},
+			],
 			descriptionCompressed:
 				"run allowlist repo workflow through Claude Code workbench service",
 			similes: ["RUN_WORKBENCH_WORKFLOW", "WORKBENCH_RUN", "CCW_RUN"],
+			exampleCalls: [
+				{
+					user: "Use CLAUDE_CODE_WORKBENCH_RUN with the provided parameters.",
+					actions: ["CLAUDE_CODE_WORKBENCH_RUN"],
+					params: {
+						CLAUDE_CODE_WORKBENCH_RUN: {
+							workflow: "example",
+							cwd: "example",
+							stdin: "example",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "CLEAR_LINEAR_ACTIVITY",
@@ -3181,18 +3412,198 @@ export const allActionsSpec = {
 			],
 		},
 		{
-			name: "CREATE_LINEAR_COMMENT",
-			description: "Add a comment to a Linear issue",
+			name: "COMPUTER_USE",
+			description:
+				"computer_use:\n  purpose: Canonical cross-platform computer-use action for real desktop interaction on macOS, Linux, and Windows when direct computer operation is required.\n  guidance: Take a screenshot before acting. After each desktop action, the result includes a screenshot when available. Use this standard plugin action, not a LifeOps wrapper, for Finder/Desktop/native-app/browser/file/terminal workflows on the owner's machine.\n  actions: screenshot/click/click_with_modifiers/double_click/right_click/mouse_move/type/key/key_combo/scroll/drag/detect_elements/ocr.",
 			parameters: [
 				{
-					name: "name",
-					description: "The name to use.",
+					name: "action",
+					description: "Desktop action to perform.",
+					required: true,
+					schema: {
+						type: "string",
+						enum: [
+							"screenshot",
+							"click",
+							"click_with_modifiers",
+							"double_click",
+							"right_click",
+							"mouse_move",
+							"type",
+							"key",
+							"key_combo",
+							"scroll",
+							"drag",
+							"detect_elements",
+							"ocr",
+						],
+					},
+					descriptionCompressed: "Desktop action to perform.",
+				},
+				{
+					name: "coordinate",
+					description: "Target [x, y] pixel coordinate.",
+					required: false,
+					schema: {
+						type: "array",
+						items: {
+							type: "number",
+						},
+					},
+					descriptionCompressed: "Target [x, y] pixel coordinate.",
+				},
+				{
+					name: "startCoordinate",
+					description: "Start [x, y] pixel coordinate for drag.",
+					required: false,
+					schema: {
+						type: "array",
+						items: {
+							type: "number",
+						},
+					},
+					descriptionCompressed: "Start [x, y] pixel coordinate for drag.",
+				},
+				{
+					name: "text",
+					description: "Text to type.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					examples: ["example"],
-					descriptionCompressed: "The name to use.",
+					descriptionCompressed: "Text to type.",
+				},
+				{
+					name: "modifiers",
+					description:
+						"Modifier keys to hold during click_with_modifiers, e.g. ['cmd', 'shift'] or ['ctrl'].",
+					required: false,
+					schema: {
+						type: "array",
+						items: {
+							type: "string",
+						},
+					},
+					descriptionCompressed:
+						"Modifier keys to hold during click_with_modifiers, e. g. ['cmd', 'shift'] or ['ctrl'].",
+				},
+				{
+					name: "key",
+					description: "Single key or combo string depending on action.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Single key or combo string depending on action.",
+				},
+				{
+					name: "button",
+					description: "Mouse button for click_with_modifiers.",
+					required: false,
+					schema: {
+						type: "string",
+						enum: ["left", "middle", "right"],
+					},
+					descriptionCompressed: "Mouse button for click_with_modifiers.",
+				},
+				{
+					name: "clicks",
+					description: "Number of clicks for click_with_modifiers.",
+					required: false,
+					schema: {
+						type: "number",
+						minimum: 1,
+						maximum: 5,
+					},
+					descriptionCompressed: "Number of clicks for click_with_modifiers.",
+				},
+				{
+					name: "scrollDirection",
+					description: "Scroll direction.",
+					required: false,
+					schema: {
+						type: "string",
+						enum: ["up", "down", "left", "right"],
+					},
+					descriptionCompressed: "Scroll direction.",
+				},
+				{
+					name: "scrollAmount",
+					description: "Scroll tick count.",
+					required: false,
+					schema: {
+						type: "number",
+						default: 3,
+						minimum: 1,
+						maximum: 20,
+					},
+					descriptionCompressed: "Scroll tick count.",
+				},
+			],
+			descriptionCompressed:
+				"Canonical cross-platform desktop control: screenshot/click/modified click/double/right/move/type/key/key_combo/scroll/drag/detect_elements/ocr.",
+			similes: [
+				"USE_COMPUTER",
+				"CONTROL_COMPUTER",
+				"COMPUTER_ACTION",
+				"DESKTOP_ACTION",
+				"CLICK",
+				"CLICK_SCREEN",
+				"TYPE_TEXT",
+				"PRESS_KEY",
+				"KEY_COMBO",
+				"SCROLL_SCREEN",
+				"MOVE_MOUSE",
+				"DRAG",
+				"MOUSE_CLICK",
+				"CLICK_WITH_MODIFIERS",
+				"TAKE_SCREENSHOT",
+				"CAPTURE_SCREEN",
+				"SEE_SCREEN",
+			],
+			exampleCalls: [
+				{
+					user: "Use COMPUTER_USE with the provided parameters.",
+					actions: ["COMPUTER_USE"],
+					params: {
+						COMPUTER_USE: {
+							action: "screenshot",
+							coordinate: "example",
+							startCoordinate: "example",
+							text: "example",
+							modifiers: "example",
+							key: "example",
+							button: "left",
+							clicks: 1,
+							scrollDirection: "up",
+							scrollAmount: 3,
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "CREATE_LINEAR_COMMENT",
+			description: "Add a comment to a Linear issue",
+			parameters: [
+				{
+					name: "issueId",
+					description: "Linear issue id or identifier to comment on.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Linear issue id or id to comment on.",
+				},
+				{
+					name: "body",
+					description: "Comment body to add to the issue.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Comment body to add to the issue.",
 				},
 			],
 			descriptionCompressed: "add comment Linear issue",
@@ -3208,7 +3619,8 @@ export const allActionsSpec = {
 					actions: ["CREATE_LINEAR_COMMENT"],
 					params: {
 						CREATE_LINEAR_COMMENT: {
-							name: "example",
+							issueId: "example",
+							body: "example",
 						},
 					},
 				},
@@ -3217,15 +3629,146 @@ export const allActionsSpec = {
 		{
 			name: "CREATE_LINEAR_ISSUE",
 			description: "Create a new issue in Linear",
-			parameters: [],
+			parameters: [
+				{
+					name: "issueData",
+					description: "Structured Linear issue fields.",
+					required: false,
+					schema: {
+						type: "object",
+						properties: {
+							title: {
+								type: "string",
+							},
+							description: {
+								type: "string",
+							},
+							priority: {
+								type: "number",
+							},
+							teamId: {
+								type: "string",
+							},
+							assigneeId: {
+								type: "string",
+							},
+							labelIds: {
+								type: "array",
+								items: {
+									type: "string",
+								},
+							},
+						},
+					},
+					descriptionCompressed: "Structured Linear issue fields.",
+				},
+			],
 			descriptionCompressed: "create new issue Linear",
 			similes: ["create-linear-issue", "new-linear-issue", "add-linear-issue"],
+			exampleCalls: [
+				{
+					user: "Use CREATE_LINEAR_ISSUE with the provided parameters.",
+					actions: ["CREATE_LINEAR_ISSUE"],
+					params: {
+						CREATE_LINEAR_ISSUE: {
+							issueData: "example",
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "CREATE_N8N_WORKFLOW",
+			description:
+				"Generate, preview, and deploy n8n workflows from natural language. ",
+			parameters: [
+				{
+					name: "request",
+					description:
+						"Natural-language workflow request, draft modification, deployment confirmation, or cancellation request.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Natural-language workflow request, draft modification, deployment confirmation, or cancellation request.",
+				},
+				{
+					name: "draftAction",
+					description:
+						"Optional explicit operation for a pending workflow draft.",
+					required: false,
+					schema: {
+						type: "string",
+						enum: ["generate", "modify", "deploy", "cancel"],
+					},
+					descriptionCompressed:
+						"Optional explicit operation for a pending workflow draft.",
+				},
+			],
+			descriptionCompressed:
+				"generate, preview, deploy n8n workflow natural language handle full lifecycle: generate draft, show preview, deploy user confirmation handle modify/cancel pend draft IMPORTANT: workflow draft pend, action use user response draft includ yes, ok, deploy, cancel, modification request never reply w/ text draft pend",
+			similes: [
+				"CREATE_WORKFLOW",
+				"BUILD_WORKFLOW",
+				"GENERATE_WORKFLOW",
+				"MAKE_AUTOMATION",
+				"CREATE_AUTOMATION",
+				"BUILD_N8N_WORKFLOW",
+				"SETUP_WORKFLOW",
+				"CONFIRM_WORKFLOW",
+				"DEPLOY_WORKFLOW",
+				"CANCEL_WORKFLOW",
+			],
+			exampleCalls: [
+				{
+					user: "Use CREATE_N8N_WORKFLOW with the provided parameters.",
+					actions: ["CREATE_N8N_WORKFLOW"],
+					params: {
+						CREATE_N8N_WORKFLOW: {
+							request: "example",
+							draftAction: "generate",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "DEACTIVATE_N8N_WORKFLOW",
 			description:
 				"Deactivate an n8n workflow to stop it from processing triggers and running automatically. Identifies workflows by ID, name, or semantic description in any language.",
-			parameters: [],
+			parameters: [
+				{
+					name: "workflowId",
+					description: "Optional exact n8n workflow id to deactivate.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional exact n8n workflow id to deactivate.",
+				},
+				{
+					name: "workflowName",
+					description: "Optional workflow name to deactivate.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Optional workflow name to deactivate.",
+				},
+				{
+					name: "query",
+					description:
+						"Optional natural-language description of the workflow to deactivate.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional natural-language description of the workflow to deactivate.",
+				},
+			],
 			descriptionCompressed:
 				"deactivate n8n workflow stop process trigger run automatically identify workflow ID, name, semantic description language",
 			similes: [
@@ -3235,11 +3778,34 @@ export const allActionsSpec = {
 				"PAUSE_WORKFLOW",
 				"TURN_OFF_WORKFLOW",
 			],
+			exampleCalls: [
+				{
+					user: "Use DEACTIVATE_N8N_WORKFLOW with the provided parameters.",
+					actions: ["DEACTIVATE_N8N_WORKFLOW"],
+					params: {
+						DEACTIVATE_N8N_WORKFLOW: {
+							workflowId: "example",
+							workflowName: "example",
+							query: "example",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "DELETE_LINEAR_ISSUE",
 			description: "Delete (archive) an issue in Linear",
-			parameters: [],
+			parameters: [
+				{
+					name: "issueId",
+					description: "Linear issue id or identifier to archive.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Linear issue id or id to archive.",
+				},
+			],
 			descriptionCompressed: "delete (archive) issue Linear",
 			similes: [
 				"delete-linear-issue",
@@ -3247,22 +3813,112 @@ export const allActionsSpec = {
 				"remove-linear-issue",
 				"close-linear-issue",
 			],
+			exampleCalls: [
+				{
+					user: "Use DELETE_LINEAR_ISSUE with the provided parameters.",
+					actions: ["DELETE_LINEAR_ISSUE"],
+					params: {
+						DELETE_LINEAR_ISSUE: {
+							issueId: "example",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "DELETE_N8N_WORKFLOW",
 			description:
 				"Delete an n8n workflow permanently. This action cannot be undone. Identifies workflows by ID, name, or semantic description in any language.",
-			parameters: [],
+			parameters: [
+				{
+					name: "workflowId",
+					description: "Optional exact n8n workflow id to delete.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Optional exact n8n workflow id to delete.",
+				},
+				{
+					name: "workflowName",
+					description: "Optional workflow name to delete.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Optional workflow name to delete.",
+				},
+				{
+					name: "query",
+					description:
+						"Optional natural-language description of the workflow to delete.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional natural-language description of the workflow to delete.",
+				},
+				{
+					name: "confirmed",
+					description: "Whether the user has confirmed permanent deletion.",
+					required: false,
+					schema: {
+						type: "boolean",
+						default: false,
+					},
+					descriptionCompressed:
+						"Whether user has confirmed permanent deletion.",
+				},
+			],
 			descriptionCompressed:
 				"delete n8n workflow permanently action cannot undone identify workflow ID, name, semantic description language",
 			similes: ["DELETE_WORKFLOW", "REMOVE_WORKFLOW", "DESTROY_WORKFLOW"],
+			exampleCalls: [
+				{
+					user: "Use DELETE_N8N_WORKFLOW with the provided parameters.",
+					actions: ["DELETE_N8N_WORKFLOW"],
+					params: {
+						DELETE_N8N_WORKFLOW: {
+							workflowId: "example",
+							workflowName: "example",
+							query: "example",
+							confirmed: false,
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "DEXSCREENER_BOOSTED_TOKENS",
 			description:
 				"Get boosted (promoted/sponsored) tokens from DexScreener, showing tokens with paid promotional boosts",
-			parameters: [],
+			parameters: [
+				{
+					name: "top",
+					description:
+						"When true, return top boosted tokens instead of latest boosted tokens.",
+					required: false,
+					schema: {
+						type: "boolean",
+						default: false,
+					},
+					descriptionCompressed:
+						"When true, return top boosted tokens instead of latest boosted tokens.",
+				},
+			],
 			similes: ["promoted tokens", "sponsored tokens", "boosted coins"],
+			exampleCalls: [
+				{
+					user: "Use DEXSCREENER_BOOSTED_TOKENS with the provided parameters.",
+					actions: ["DEXSCREENER_BOOSTED_TOKENS"],
+					params: {
+						DEXSCREENER_BOOSTED_TOKENS: {
+							top: false,
+						},
+					},
+				},
+			],
 			descriptionCompressed:
 				"Get boosted (promoted/sponsored) tokens from DexScreener, showing tokens with paid promotional boosts",
 		},
@@ -3270,8 +3926,54 @@ export const allActionsSpec = {
 			name: "DEXSCREENER_CHAIN_PAIRS",
 			description:
 				"Get top trading pairs from a specific blockchain sorted by volume, liquidity, price change, or transaction count",
-			parameters: [],
+			parameters: [
+				{
+					name: "chain",
+					description: "Chain id/name to inspect.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Chain id/name to inspect.",
+				},
+				{
+					name: "sortBy",
+					description: "Metric used to rank pairs.",
+					required: false,
+					schema: {
+						type: "string",
+						enum: ["volume", "liquidity", "priceChange", "txns"],
+						default: "volume",
+					},
+					descriptionCompressed: "Metric used to rank pairs.",
+				},
+				{
+					name: "limit",
+					description: "Maximum number of chain pairs to return.",
+					required: false,
+					schema: {
+						type: "number",
+						default: 10,
+						minimum: 1,
+						maximum: 25,
+					},
+					descriptionCompressed: "max number of chain pairs to return.",
+				},
+			],
 			similes: ["tokens on", "pairs on", "top on"],
+			exampleCalls: [
+				{
+					user: "Use DEXSCREENER_CHAIN_PAIRS with the provided parameters.",
+					actions: ["DEXSCREENER_CHAIN_PAIRS"],
+					params: {
+						DEXSCREENER_CHAIN_PAIRS: {
+							chain: "example",
+							sortBy: "volume",
+							limit: 10,
+						},
+					},
+				},
+			],
 			descriptionCompressed:
 				"Get top trading pairs from a specific blockchain sorted by volume, liquidity, price change, or transaction count",
 		},
@@ -3279,8 +3981,42 @@ export const allActionsSpec = {
 			name: "DEXSCREENER_NEW_PAIRS",
 			description:
 				"Get newly created trading pairs from DexScreener, showing recently launched tokens and their initial liquidity",
-			parameters: [],
+			parameters: [
+				{
+					name: "chain",
+					description: "Optional chain id/name to filter new pairs.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Optional chain id/name to filter new pairs.",
+				},
+				{
+					name: "limit",
+					description: "Maximum number of new pairs to return.",
+					required: false,
+					schema: {
+						type: "number",
+						default: 10,
+						minimum: 1,
+						maximum: 25,
+					},
+					descriptionCompressed: "max number of new pairs to return.",
+				},
+			],
 			similes: ["new listings", "latest pairs", "new tokens", "fresh pairs"],
+			exampleCalls: [
+				{
+					user: "Use DEXSCREENER_NEW_PAIRS with the provided parameters.",
+					actions: ["DEXSCREENER_NEW_PAIRS"],
+					params: {
+						DEXSCREENER_NEW_PAIRS: {
+							chain: "example",
+							limit: 10,
+						},
+					},
+				},
+			],
 			descriptionCompressed:
 				"Get newly created trading pairs from DexScreener, showing recently launched tokens and their initial liquidity",
 		},
@@ -3288,8 +4024,31 @@ export const allActionsSpec = {
 			name: "DEXSCREENER_SEARCH",
 			description:
 				"Search for tokens or trading pairs on DexScreener by name, symbol, or contract address",
-			parameters: [],
+			parameters: [
+				{
+					name: "query",
+					description:
+						"Token name, symbol, pair, or contract address to search for.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Token name, symbol, pair, or contract address to search for.",
+				},
+			],
 			similes: ["find token", "look for", "search dexscreener"],
+			exampleCalls: [
+				{
+					user: "Use DEXSCREENER_SEARCH with the provided parameters.",
+					actions: ["DEXSCREENER_SEARCH"],
+					params: {
+						DEXSCREENER_SEARCH: {
+							query: "example",
+						},
+					},
+				},
+			],
 			descriptionCompressed:
 				"Search for tokens or trading pairs on DexScreener by name, symbol, or contract address",
 		},
@@ -3328,8 +4087,30 @@ export const allActionsSpec = {
 			name: "DEXSCREENER_TOKEN_PROFILES",
 			description:
 				"Get latest token profiles from DexScreener including social links, descriptions, and project information",
-			parameters: [],
+			parameters: [
+				{
+					name: "limit",
+					description: "Maximum number of token profiles to include.",
+					required: false,
+					schema: {
+						type: "number",
+						default: 10,
+					},
+					descriptionCompressed: "max number of token profiles to include.",
+				},
+			],
 			similes: ["token profiles", "token details page"],
+			exampleCalls: [
+				{
+					user: "Use DEXSCREENER_TOKEN_PROFILES with the provided parameters.",
+					actions: ["DEXSCREENER_TOKEN_PROFILES"],
+					params: {
+						DEXSCREENER_TOKEN_PROFILES: {
+							limit: 10,
+						},
+					},
+				},
+			],
 			descriptionCompressed:
 				"Get latest token profiles from DexScreener including social links, descriptions, and project info",
 		},
@@ -3337,12 +4118,48 @@ export const allActionsSpec = {
 			name: "DEXSCREENER_TRENDING",
 			description:
 				"Get trending tokens from DexScreener based on volume, price changes, and trading activity",
-			parameters: [],
+			parameters: [
+				{
+					name: "timeframe",
+					description: "Trending window.",
+					required: false,
+					schema: {
+						type: "string",
+						enum: ["1h", "6h", "24h"],
+						default: "24h",
+					},
+					descriptionCompressed: "Trending window.",
+				},
+				{
+					name: "limit",
+					description: "Maximum number of trending pairs to return.",
+					required: false,
+					schema: {
+						type: "number",
+						default: 10,
+						minimum: 1,
+						maximum: 25,
+					},
+					descriptionCompressed: "max number of trending pairs to return.",
+				},
+			],
 			similes: [
 				"hot tokens",
 				"popular coins",
 				"top gainers",
 				"what's trending",
+			],
+			exampleCalls: [
+				{
+					user: "Use DEXSCREENER_TRENDING with the provided parameters.",
+					actions: ["DEXSCREENER_TRENDING"],
+					params: {
+						DEXSCREENER_TRENDING: {
+							timeframe: "24h",
+							limit: 10,
+						},
+					},
+				},
 			],
 			descriptionCompressed:
 				"Get trending tokens from DexScreener based on volume, price changes, and trading activity",
@@ -3353,14 +4170,23 @@ export const allActionsSpec = {
 				"Start Discord credential setup or account pairing. Guides the user through setting up API credentials for supported third-party services, validates them when possible, and stores them securely.",
 			parameters: [
 				{
-					name: "data",
-					description: "The data to use.",
+					name: "service",
+					description: "Third-party service to configure from Discord.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					examples: ["example"],
-					descriptionCompressed: "The data to use.",
+					descriptionCompressed: "3p service to configure from Discord.",
+				},
+				{
+					name: "credentials",
+					description: "Credential values supplied by the user, when present.",
+					required: false,
+					schema: {
+						type: "object",
+					},
+					descriptionCompressed:
+						"Credential values supplied by user, when present.",
 				},
 			],
 			descriptionCompressed: "Set up Discord credentials.",
@@ -3380,7 +4206,8 @@ export const allActionsSpec = {
 					actions: ["DISCORD_SETUP_CREDENTIALS"],
 					params: {
 						DISCORD_SETUP_CREDENTIALS: {
-							data: "example",
+							service: "example",
+							credentials: "example",
 						},
 					},
 				},
@@ -3418,6 +4245,124 @@ export const allActionsSpec = {
 					params: {
 						DOWNLOAD_MUSIC: {
 							confirmed: false,
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "EDIT",
+			description:
+				"Replace text in an existing file. Default behavior requires `old_string` to match exactly once; pass `replace_all=true` to substitute every occurrence. The file must have been READ in this session, must still match its recorded mtime, and the new content cannot introduce a detected secret pattern.",
+			parameters: [
+				{
+					name: "file_path",
+					description: "Absolute path to the file to edit.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Absolute path to the file to edit.",
+				},
+				{
+					name: "old_string",
+					description: "Exact substring to replace.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Exact substring to replace.",
+				},
+				{
+					name: "new_string",
+					description: "Replacement text. Must differ from old_string.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Replacement text. Must differ from old_string.",
+				},
+				{
+					name: "replace_all",
+					description:
+						"If true, replace every occurrence; otherwise require exactly one match.",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed:
+						"If true, replace every occurrence. otherwise require exactly one match.",
+				},
+			],
+			descriptionCompressed:
+				"Replace exact-match text in a file (single match by default; pass replace_all for multiple).",
+			similes: ["EDIT_FILE", "MODIFY_FILE"],
+			exampleCalls: [
+				{
+					user: "Use EDIT with the provided parameters.",
+					actions: ["EDIT"],
+					params: {
+						EDIT: {
+							file_path: "example",
+							old_string: "example",
+							new_string: "example",
+							replace_all: false,
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "ENTER_WORKTREE",
+			description:
+				"Create a git worktree for the current repo and switch the session into it. The new worktree path becomes the session cwd and a sandbox root, so subsequent file operations land there until EXIT_WORKTREE pops it. Use to isolate a parallel branch of work without disturbing the main checkout.",
+			parameters: [
+				{
+					name: "name",
+					description:
+						"Optional worktree branch/dir name. Defaults to a random auto-* identifier.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional worktree branch/dir name. Defaults to a random auto-* id.",
+				},
+				{
+					name: "path",
+					description:
+						"Optional absolute worktree directory. Must lie within sandbox roots. Defaults to a per-call directory under the OS temp dir.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional absolute worktree directory. Must lie within sandbox roots. Defaults to a per-call directory under the OS temp dir.",
+				},
+				{
+					name: "base",
+					description: "Optional base ref for the new worktree (default HEAD).",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional base ref for the new worktree (default HEAD).",
+				},
+			],
+			descriptionCompressed:
+				"Create and switch into a git worktree for parallel work.",
+			similes: ["GIT_WORKTREE_ADD", "ADD_WORKTREE", "OPEN_WORKTREE"],
+			exampleCalls: [
+				{
+					user: "Use ENTER_WORKTREE with the provided parameters.",
+					actions: ["ENTER_WORKTREE"],
+					params: {
+						ENTER_WORKTREE: {
+							name: "example",
+							path: "example",
+							base: "example",
 						},
 					},
 				},
@@ -3495,6 +4440,38 @@ export const allActionsSpec = {
 							amount: "example",
 							slippageBps: 1,
 							routeProvider: "example",
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "EXIT_WORKTREE",
+			description:
+				"Pop the most recent ENTER_WORKTREE: restore the previous session cwd, drop the added sandbox root, and (with cleanup=true) run `git worktree remove --force` to delete the worktree directory.",
+			parameters: [
+				{
+					name: "cleanup",
+					description:
+						"If true, also `git worktree remove --force` the popped worktree directory.",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed:
+						"If true, also `git worktree remove --force` the popped worktree directory.",
+				},
+			],
+			descriptionCompressed:
+				"Exit current worktree, restore previous cwd, optionally git worktree remove --force.",
+			similes: ["LEAVE_WORKTREE", "POP_WORKTREE", "GIT_WORKTREE_REMOVE"],
+			exampleCalls: [
+				{
+					user: "Use EXIT_WORKTREE with the provided parameters.",
+					actions: ["EXIT_WORKTREE"],
+					params: {
+						EXIT_WORKTREE: {
+							cleanup: false,
 						},
 					},
 				},
@@ -3809,9 +4786,30 @@ export const allActionsSpec = {
 		{
 			name: "FORM_RESTORE",
 			description: "Restore a previously stashed form session",
-			parameters: [],
+			parameters: [
+				{
+					name: "sessionId",
+					description: "Optional stashed form session id to restore.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Optional stashed form session id to restore.",
+				},
+			],
 			descriptionCompressed: "Restore stashed form session.",
 			similes: ["RESUME_FORM", "CONTINUE_FORM"],
+			exampleCalls: [
+				{
+					user: "Use FORM_RESTORE with the provided parameters.",
+					actions: ["FORM_RESTORE"],
+					params: {
+						FORM_RESTORE: {
+							sessionId: "example",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "GET_LINEAR_ACTIVITY",
@@ -4024,6 +5022,208 @@ export const allActionsSpec = {
 			],
 		},
 		{
+			name: "GLOB",
+			description:
+				"Find files matching a glob pattern (e.g. '**/*.ts'). Returns up to 100 absolute paths sorted by mtime descending. Excludes VCS, build, and dependency directories. Use this instead of BASH for file discovery.",
+			parameters: [
+				{
+					name: "pattern",
+					description:
+						"Glob pattern relative to the search root (e.g. '**/*.ts').",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Glob pattern relative to the search root (e. g. '**/*. ts').",
+				},
+				{
+					name: "path",
+					description:
+						"Absolute path of the directory to search. Defaults to the session cwd.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Absolute path of the directory to search. Defaults to the session cwd.",
+				},
+			],
+			descriptionCompressed:
+				"Find files by glob (e.g. '**/*.ts'); returns absolute paths sorted by mtime.",
+			similes: ["FIND_FILES"],
+			exampleCalls: [
+				{
+					user: "Use GLOB with the provided parameters.",
+					actions: ["GLOB"],
+					params: {
+						GLOB: {
+							pattern: "example",
+							path: "example",
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "GREP",
+			description:
+				"Search file contents using ripgrep (a fast regex search). Returns matching files, counts, or line content. Always excludes VCS directories. Use this instead of BASH for content search.",
+			parameters: [
+				{
+					name: "pattern",
+					description: "Regex pattern to search for.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Regex pattern to search for.",
+				},
+				{
+					name: "path",
+					description:
+						"Absolute path to a file or directory to search. Defaults to the session cwd.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Absolute path to a file or directory to search. Defaults to the session cwd.",
+				},
+				{
+					name: "glob",
+					description:
+						"Optional glob filter passed to ripgrep -g (e.g. '*.ts').",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional glob filter passed to ripgrep -g (e. g. '*. ts').",
+				},
+				{
+					name: "type",
+					description:
+						"Optional ripgrep file type passed via -t (e.g. 'js', 'py').",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional ripgrep file type passed via -t (e. g. 'js', 'py').",
+				},
+				{
+					name: "output_mode",
+					description:
+						"How to render matches: 'content' returns matching lines, 'files_with_matches' returns file paths, 'count' returns per-file counts. Defaults to 'files_with_matches'.",
+					required: false,
+					schema: {
+						type: "string",
+						enum: ["content", "files_with_matches", "count"],
+					},
+					descriptionCompressed:
+						"How to render matches: 'content' returns matching lines, 'files_with_matches' returns file paths, 'count' returns per-file counts. Defaults to...",
+				},
+				{
+					name: "-A",
+					description:
+						"Lines of context to show after each match (content mode).",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed:
+						"Lines of context to show after each match (content mode).",
+				},
+				{
+					name: "-B",
+					description:
+						"Lines of context to show before each match (content mode).",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed:
+						"Lines of context to show before each match (content mode).",
+				},
+				{
+					name: "-C",
+					description: "Lines of context around each match (content mode).",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed:
+						"Lines of context around each match (content mode).",
+				},
+				{
+					name: "case_insensitive",
+					description: "Match case-insensitively (alias of -i).",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed: "Match case-insensitively (alias of -i).",
+				},
+				{
+					name: "multiline",
+					description:
+						"Enable multiline matching (the pattern can span newlines).",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed:
+						"Enable multiline matching (the pattern can span newlines).",
+				},
+				{
+					name: "head_limit",
+					description:
+						"Truncate output to the first N lines. 0 means unlimited. Defaults to CODING_TOOLS_GREP_HEAD_LIMIT or 250.",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed:
+						"Truncate output to the first N lines. 0 means unlimited. Defaults to CODING_TOOLS_GREP_HEAD_LIMIT or 250.",
+				},
+				{
+					name: "show_line_numbers",
+					description: "Show 1-based line numbers in content mode.",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed: "Show 1-based line numbers in content mode.",
+				},
+			],
+			descriptionCompressed:
+				"Ripgrep wrapper: regex search across files, returns matches/counts/files.",
+			similes: ["SEARCH_CONTENT", "RIPGREP", "RG"],
+			exampleCalls: [
+				{
+					user: "Use GREP with the provided parameters.",
+					actions: ["GREP"],
+					params: {
+						GREP: {
+							pattern: "example",
+							path: "example",
+							glob: "example",
+							type: "example",
+							output_mode: "content",
+							"-A": 1,
+							"-B": 1,
+							"-C": 1,
+							case_insensitive: false,
+							multiline: false,
+							head_limit: 1,
+							show_line_numbers: false,
+						},
+					},
+				},
+			],
+		},
+		{
 			name: "HEALTH",
 			description:
 				"Query health and fitness telemetry from HealthKit, Google Fit, Strava, Fitbit, Withings, or Oura — sleep ",
@@ -4111,9 +5311,42 @@ export const allActionsSpec = {
 		{
 			name: "IMESSAGE_SEND_MESSAGE",
 			description: "Send a text message via iMessage (macOS only)",
-			parameters: [],
+			parameters: [
+				{
+					name: "text",
+					description: "Message text to send.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "msg text to send.",
+				},
+				{
+					name: "to",
+					description: "Phone number, email address, or current conversation.",
+					required: false,
+					schema: {
+						type: "string",
+						default: "current",
+					},
+					descriptionCompressed:
+						"Phone number, email address, or current convo.",
+				},
+			],
 			descriptionCompressed: "Send iMessage (macOS).",
 			similes: ["SEND_IMESSAGE", "IMESSAGE_TEXT", "TEXT_IMESSAGE", "SEND_IMSG"],
+			exampleCalls: [
+				{
+					user: "Use IMESSAGE_SEND_MESSAGE with the provided parameters.",
+					actions: ["IMESSAGE_SEND_MESSAGE"],
+					params: {
+						IMESSAGE_SEND_MESSAGE: {
+							text: "example",
+							to: "current",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "INSTAGRAM_REPLY",
@@ -4184,10 +5417,31 @@ export const allActionsSpec = {
 			name: "INSTALL_SKILL",
 			description:
 				"Install a skill from the ClawHub registry. The skill will be security-scanned before activation. ",
-			parameters: [],
+			parameters: [
+				{
+					name: "slug",
+					description: "Skill slug or search term to install.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Skill slug or search term to install.",
+				},
+			],
 			descriptionCompressed:
 				"Install skill from ClawHub registry. Security-scanned before activation.",
 			similes: ["DOWNLOAD_SKILL", "ADD_SKILL", "GET_SKILL"],
+			exampleCalls: [
+				{
+					user: "Use INSTALL_SKILL with the provided parameters.",
+					actions: ["INSTALL_SKILL"],
+					params: {
+						INSTALL_SKILL: {
+							slug: "example",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "LIST_ACTIVE_BLOCKS",
@@ -4333,8 +5587,9 @@ export const allActionsSpec = {
 			parameters: [
 				{
 					name: "subaction",
-					description: "Router parameter subaction.",
-					required: false,
+					description:
+						"LP operation: onboard, list_pools, open, close, reposition, list_positions, get_position, set_preferences.",
+					required: true,
 					schema: {
 						type: "string",
 						enum: [
@@ -4348,98 +5603,103 @@ export const allActionsSpec = {
 							"set_preferences",
 						],
 					},
-					descriptionCompressed: "Router param subaction.",
+					descriptionCompressed:
+						"LP operation: onboard, list_pools, open, close, reposition, list_positions, get_position, set_preferences.",
 				},
 				{
 					name: "chain",
-					description: "Router parameter chain.",
+					description: "Chain for the LP operation.",
 					required: false,
 					schema: {
 						type: "string",
 						enum: ["solana", "evm"],
 					},
-					descriptionCompressed: "Router param chain.",
+					descriptionCompressed: "Chain for the LP operation.",
 				},
 				{
 					name: "dex",
-					description: "Router parameter dex.",
+					description: "DEX/protocol name.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed: "Router param dex.",
+					descriptionCompressed: "DEX/protocol name.",
 				},
 				{
 					name: "pool",
-					description: "Router parameter pool.",
+					description:
+						"Pool id/address for open, close, reposition, or position lookup.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed: "Router param pool.",
+					descriptionCompressed:
+						"Pool id/address for open, close, reposition, or position lookup.",
 				},
 				{
 					name: "position",
-					description: "Router parameter position.",
+					description: "LP position id/mint/address.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed: "Router param position.",
+					descriptionCompressed: "LP position id/mint/address.",
 				},
 				{
 					name: "amount",
-					description: "Router parameter amount.",
+					description:
+						"Liquidity amount for open, close, or reposition operations.",
 					required: false,
 					schema: {
-						type: "number",
+						type: "string",
 					},
-					descriptionCompressed: "Router param amount.",
+					descriptionCompressed:
+						"Liquidity amount for open, close, or reposition operations.",
 				},
 				{
 					name: "range",
-					description: "Router parameter range.",
+					description: "Desired concentrated liquidity price range.",
 					required: false,
 					schema: {
-						type: "string",
+						type: "object",
 					},
-					descriptionCompressed: "Router param range.",
+					descriptionCompressed: "Desired concentrated liquidity price range.",
 				},
 				{
 					name: "tokenA",
-					description: "Router parameter tokenA.",
+					description: "First token filter or deposit token.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed: "Router param tokenA.",
+					descriptionCompressed: "First token filter or deposit token.",
 				},
 				{
 					name: "tokenB",
-					description: "Router parameter tokenB.",
+					description: "Second token filter or deposit token.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed: "Router param tokenB.",
+					descriptionCompressed: "Second token filter or deposit token.",
 				},
 				{
 					name: "chainId",
-					description: "Router parameter chainId.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed: "Router param chainId.",
-				},
-				{
-					name: "slippageBps",
-					description: "Router parameter slippageBps.",
+					description: "Optional numeric EVM chain id.",
 					required: false,
 					schema: {
 						type: "number",
 					},
-					descriptionCompressed: "Router param slippageBps.",
+					descriptionCompressed: "Optional numeric EVM chain id.",
+				},
+				{
+					name: "slippageBps",
+					description: "Maximum allowed slippage in basis points.",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed: "max allowed slippage in basis points.",
 				},
 			],
 			descriptionCompressed:
@@ -4462,12 +5722,59 @@ export const allActionsSpec = {
 							dex: "example",
 							pool: "example",
 							position: "example",
-							amount: 1,
+							amount: "example",
 							range: "example",
 							tokenA: "example",
 							tokenB: "example",
-							chainId: "example",
+							chainId: 1,
 							slippageBps: 1,
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "LS",
+			description:
+				"List entries in a directory, sorted with directories first then files. Each directory name has a trailing '/'. Pass an `ignore` array of glob patterns to skip entries. Use this instead of BASH for directory listing.",
+			parameters: [
+				{
+					name: "path",
+					description:
+						"Absolute path of the directory to list. Defaults to the session cwd.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Absolute path of the directory to list. Defaults to the session cwd.",
+				},
+				{
+					name: "ignore",
+					description:
+						"Array of glob patterns to exclude (e.g. ['*.log', 'tmp/*']).",
+					required: false,
+					schema: {
+						type: "array",
+						items: {
+							type: "string",
+						},
+					},
+					descriptionCompressed:
+						"Array of glob patterns to exclude (e. g. ['*. log', 'tmp/*']).",
+				},
+			],
+			descriptionCompressed:
+				"List a directory; dirs first, files second; supports ignore globs.",
+			similes: ["LIST_DIR", "DIR"],
+			exampleCalls: [
+				{
+					user: "Use LS with the provided parameters.",
+					actions: ["LS"],
+					params: {
+						LS: {
+							path: "example",
+							ignore: "example",
 						},
 					},
 				},
@@ -4583,13 +5890,66 @@ export const allActionsSpec = {
 			name: "manage_raydium_positions",
 			description:
 				"Automatically manage Raydium positions by rebalancing them when they drift too far from the pool price",
-			parameters: [],
+			parameters: [
+				{
+					name: "repositionThresholdBps",
+					description:
+						"Required drift threshold in basis points before rebalancing.",
+					required: true,
+					schema: {
+						type: "integer",
+						minimum: 1,
+						maximum: 10000,
+					},
+					descriptionCompressed:
+						"Required drift threshold in basis points before rebalancing.",
+				},
+				{
+					name: "intervalSeconds",
+					description:
+						"Requested monitoring interval in seconds for the automation policy.",
+					required: true,
+					schema: {
+						type: "integer",
+						minimum: 1,
+						maximum: 86400,
+					},
+					descriptionCompressed:
+						"Requested monitoring interval in seconds for the automation policy.",
+				},
+				{
+					name: "slippageToleranceBps",
+					description:
+						"Required slippage tolerance in basis points for reopen transactions.",
+					required: true,
+					schema: {
+						type: "integer",
+						minimum: 1,
+						maximum: 5000,
+					},
+					descriptionCompressed:
+						"Required slippage tolerance in basis points for reopen transactions.",
+				},
+			],
 			descriptionCompressed:
 				"automatically manage Raydium position rebalance drift too far pool price",
 			similes: [
 				"AUTOMATE_RAYDIUM_REBALANCING",
 				"AUTOMATE_RAYDIUM_POSITIONS",
 				"START_MANAGING_RAYDIUM_POSITIONS",
+			],
+			exampleCalls: [
+				{
+					user: "Use manage_raydium_positions with the provided parameters.",
+					actions: ["manage_raydium_positions"],
+					params: {
+						manage_raydium_positions: {
+							repositionThresholdBps: "example",
+							intervalSeconds: "example",
+							slippageToleranceBps: "example",
+						},
+					},
+				},
 			],
 		},
 		{
@@ -4908,14 +6268,70 @@ export const allActionsSpec = {
 		{
 			name: "MATRIX_JOIN_ROOM",
 			description: "Join a Matrix room by ID or alias",
-			parameters: [],
+			parameters: [
+				{
+					name: "room",
+					description:
+						"Matrix room id (!room:server) or alias (#alias:server).",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Matrix room id (!room:server) or alias (#alias:server).",
+				},
+			],
 			descriptionCompressed: "Join Matrix room by id or alias.",
 			similes: ["JOIN_MATRIX_ROOM", "ENTER_ROOM"],
+			exampleCalls: [
+				{
+					user: "Use MATRIX_JOIN_ROOM with the provided parameters.",
+					actions: ["MATRIX_JOIN_ROOM"],
+					params: {
+						MATRIX_JOIN_ROOM: {
+							room: "example",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "MODIFY_EXISTING_N8N_WORKFLOW",
 			description: "Load an existing deployed n8n workflow for modification. ",
-			parameters: [],
+			parameters: [
+				{
+					name: "workflowId",
+					description:
+						"Optional exact n8n workflow id to load into the draft editor.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional exact n8n workflow id to load into the draft editor.",
+				},
+				{
+					name: "workflowName",
+					description: "Optional workflow name to load into the draft editor.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional workflow name to load into the draft editor.",
+				},
+				{
+					name: "query",
+					description:
+						"Optional natural-language description of the workflow to modify.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional natural-language description of the workflow to modify.",
+				},
+			],
 			descriptionCompressed:
 				"Load deployed n8n workflow into draft editor; then use CREATE_N8N_WORKFLOW to change, preview, redeploy.",
 			similes: [
@@ -4923,6 +6339,19 @@ export const allActionsSpec = {
 				"UPDATE_EXISTING_WORKFLOW",
 				"CHANGE_EXISTING_WORKFLOW",
 				"LOAD_WORKFLOW_FOR_EDIT",
+			],
+			exampleCalls: [
+				{
+					user: "Use MODIFY_EXISTING_N8N_WORKFLOW with the provided parameters.",
+					actions: ["MODIFY_EXISTING_N8N_WORKFLOW"],
+					params: {
+						MODIFY_EXISTING_N8N_WORKFLOW: {
+							workflowId: "example",
+							workflowName: "example",
+							query: "example",
+						},
+					},
+				},
 			],
 		},
 		{
@@ -5032,17 +6461,163 @@ export const allActionsSpec = {
 			name: "NOSTR_PUBLISH_PROFILE",
 			description:
 				"Publish or update the bot's Nostr profile (kind:0 metadata)",
-			parameters: [],
+			parameters: [
+				{
+					name: "name",
+					description: "Display name for the Nostr profile.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Display name for the Nostr profile.",
+				},
+				{
+					name: "about",
+					description: "Profile bio/about text.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Profile bio/about text.",
+				},
+				{
+					name: "picture",
+					description: "Profile picture URL.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Profile picture URL.",
+				},
+			],
 			descriptionCompressed:
 				"publish update bot Nostr profile (kind: 0 metadata)",
 			similes: ["UPDATE_NOSTR_PROFILE", "SET_NOSTR_PROFILE", "NOSTR_PROFILE"],
+			exampleCalls: [
+				{
+					user: "Use NOSTR_PUBLISH_PROFILE with the provided parameters.",
+					actions: ["NOSTR_PUBLISH_PROFILE"],
+					params: {
+						NOSTR_PUBLISH_PROFILE: {
+							name: "example",
+							about: "example",
+							picture: "example",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "NOSTR_SEND_DM",
 			description: "Send an encrypted direct message via Nostr (NIP-04)",
-			parameters: [],
+			parameters: [
+				{
+					name: "text",
+					description: "Direct message text to send.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Direct msg text to send.",
+				},
+				{
+					name: "toPubkey",
+					description: "Recipient npub, hex pubkey, or current.",
+					required: false,
+					schema: {
+						type: "string",
+						default: "current",
+					},
+					descriptionCompressed: "Recipient npub, hex pubkey, or current.",
+				},
+			],
 			descriptionCompressed: "send encrypt direct message via Nostr (NIP-04)",
 			similes: ["SEND_NOSTR_DM", "NOSTR_MESSAGE", "NOSTR_TEXT", "DM_NOSTR"],
+			exampleCalls: [
+				{
+					user: "Use NOSTR_SEND_DM with the provided parameters.",
+					actions: ["NOSTR_SEND_DM"],
+					params: {
+						NOSTR_SEND_DM: {
+							text: "example",
+							toPubkey: "current",
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "NOTEBOOK_EDIT",
+			description:
+				"Replace, insert, or delete a cell in a Jupyter `.ipynb` notebook. Default `edit_mode` is `replace`. Insert places a new cell after `cell_id` (or at the start if omitted). Delete removes the matching cell. The notebook must have been READ in this session and must still match its recorded mtime.",
+			parameters: [
+				{
+					name: "notebook_path",
+					description: "Absolute path to a .ipynb notebook.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Absolute path to a. ipynb notebook.",
+				},
+				{
+					name: "cell_id",
+					description:
+						"Target cell id. Required for replace and delete; optional for insert.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Target cell id. Required for replace and delete. optional for insert.",
+				},
+				{
+					name: "new_source",
+					description: "New cell source text. Required for replace and insert.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"New cell source text. Required for replace and insert.",
+				},
+				{
+					name: "cell_type",
+					description: "Cell type: code | markdown | raw.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Cell type: code | markdown | raw.",
+				},
+				{
+					name: "edit_mode",
+					description: "replace | insert | delete (default replace).",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "replace | insert | delete (default replace).",
+				},
+			],
+			descriptionCompressed:
+				"Replace/insert/delete a cell in a Jupyter notebook by cell_id.",
+			similes: ["EDIT_NOTEBOOK"],
+			exampleCalls: [
+				{
+					user: "Use NOTEBOOK_EDIT with the provided parameters.",
+					actions: ["NOTEBOOK_EDIT"],
+					params: {
+						NOTEBOOK_EDIT: {
+							notebook_path: "example",
+							cell_id: "example",
+							new_source: "example",
+							cell_type: "example",
+							edit_mode: "example",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "PAYMENT_OP",
@@ -5156,6 +6731,28 @@ export const allActionsSpec = {
 				"Start playing a new song: provide a track name, artist, search words, or a media URL. ",
 			parameters: [
 				{
+					name: "query",
+					description:
+						"Track name, artist, search phrase, or direct media URL to play.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Track name, artist, search phrase, or direct media URL to play.",
+				},
+				{
+					name: "url",
+					description:
+						"Direct media URL to play. Prefer query for standard song requests.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Direct media URL to play. Prefer query for standard song requests.",
+				},
+				{
 					name: "confirmed",
 					description: "Must be true to play or queue the requested audio.",
 					required: false,
@@ -5189,6 +6786,8 @@ export const allActionsSpec = {
 					actions: ["PLAY_AUDIO"],
 					params: {
 						PLAY_AUDIO: {
+							query: "example",
+							url: "example",
 							confirmed: false,
 						},
 					},
@@ -5415,9 +7014,53 @@ export const allActionsSpec = {
 			name: "POLYMARKET_PLACE_ORDER",
 			description:
 				"Explain Polymarket order placement readiness. Signed trading is disabled in this app scaffold.",
-			parameters: [],
+			parameters: [
+				{
+					name: "side",
+					description:
+						"Intended side, buy or sell. Trading is currently disabled.",
+					required: false,
+					schema: {
+						type: "string",
+						enum: ["buy", "sell"],
+					},
+					descriptionCompressed:
+						"Intended side, buy or sell. Trading is disabled.",
+				},
+				{
+					name: "marketId",
+					description: "Polymarket market id or condition id.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Polymarket market id or condition id.",
+				},
+				{
+					name: "amount",
+					description: "Intended order amount. Trading is currently disabled.",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed: "Intended order amount. Trading is disabled.",
+				},
+			],
 			descriptionCompressed: "Report disabled Polymarket trading readiness.",
 			similes: ["POLYMARKET_TRADE", "POLYMARKET_BUY", "POLYMARKET_SELL"],
+			exampleCalls: [
+				{
+					user: "Use POLYMARKET_PLACE_ORDER with the provided parameters.",
+					actions: ["POLYMARKET_PLACE_ORDER"],
+					params: {
+						POLYMARKET_PLACE_ORDER: {
+							side: "buy",
+							marketId: "example",
+							amount: 1,
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "POLYMARKET_READ",
@@ -5650,6 +7293,57 @@ export const allActionsSpec = {
 							baseBranch: "example",
 							useWorktree: false,
 							parentWorkspaceId: "example",
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "READ",
+			description:
+				"Read the contents of a file at an absolute path. Returns numbered lines, capped by a per-call line limit and a per-file byte limit. Use offset/limit to paginate through large files. Required before WRITE/EDIT can mutate an existing file.",
+			parameters: [
+				{
+					name: "file_path",
+					description: "Absolute path to the file to read.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Absolute path to the file to read.",
+				},
+				{
+					name: "offset",
+					description: "Zero-based line offset to start reading from.",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed:
+						"Zero-based line offset to start reading from.",
+				},
+				{
+					name: "limit",
+					description: "Max number of lines to return.",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed: "Max number of lines to return.",
+				},
+			],
+			descriptionCompressed:
+				"Read a file by absolute path; returns numbered lines (offset/limit supported).",
+			similes: ["READ_FILE", "CAT", "OPEN_FILE"],
+			exampleCalls: [
+				{
+					user: "Use READ with the provided parameters.",
+					actions: ["READ"],
+					params: {
+						READ: {
+							file_path: "example",
+							offset: 1,
+							limit: 1,
 						},
 					},
 				},
@@ -6394,13 +8088,37 @@ export const allActionsSpec = {
 			name: "SIGNAL_READ_RECENT_MESSAGES",
 			description:
 				"Read the most recent Signal messages across active conversations",
-			parameters: [],
+			parameters: [
+				{
+					name: "limit",
+					description: "Maximum recent messages to return.",
+					required: false,
+					schema: {
+						type: "number",
+						default: 10,
+						minimum: 1,
+						maximum: 25,
+					},
+					descriptionCompressed: "max recent msgs to return.",
+				},
+			],
 			descriptionCompressed: "Read recent Signal msgs.",
 			similes: [
 				"READ_SIGNAL_MESSAGES",
 				"CHECK_SIGNAL_MESSAGES",
 				"SHOW_SIGNAL_MESSAGES",
 				"SIGNAL_INBOX",
+			],
+			exampleCalls: [
+				{
+					user: "Use SIGNAL_READ_RECENT_MESSAGES with the provided parameters.",
+					actions: ["SIGNAL_READ_RECENT_MESSAGES"],
+					params: {
+						SIGNAL_READ_RECENT_MESSAGES: {
+							limit: 10,
+						},
+					},
+				},
 			],
 		},
 		{
@@ -6444,14 +8162,54 @@ export const allActionsSpec = {
 				"Slack message operation router. Send, edit, delete, react, pin, or unpin Slack messages by setting op.",
 			parameters: [
 				{
-					name: "data",
-					description: "The data to use.",
+					name: "op",
+					description: "Operation: send, edit, delete, react, pin, or unpin.",
+					required: false,
+					schema: {
+						type: "string",
+						enum: ["send", "edit", "delete", "react", "pin", "unpin"],
+					},
+					descriptionCompressed:
+						"Operation: send, edit, delete, react, pin, or unpin.",
+				},
+				{
+					name: "text",
+					description: "Message text for send or edit.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					examples: ["example"],
-					descriptionCompressed: "The data to use.",
+					descriptionCompressed: "msg text for send or edit.",
+				},
+				{
+					name: "channelRef",
+					description: "Slack channel name/id or current.",
+					required: false,
+					schema: {
+						type: "string",
+						default: "current",
+					},
+					descriptionCompressed: "Slack channel name/id or current.",
+				},
+				{
+					name: "messageTs",
+					description:
+						"Slack message timestamp for edit/delete/react/pin/unpin.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Slack msg timestamp for edit/delete/react/pin/unpin.",
+				},
+				{
+					name: "emoji",
+					description: "Reaction emoji name without colons.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Reaction emoji name without colons.",
 				},
 			],
 			descriptionCompressed:
@@ -6495,7 +8253,11 @@ export const allActionsSpec = {
 					actions: ["SLACK_MESSAGE_OP"],
 					params: {
 						SLACK_MESSAGE_OP: {
-							data: "example",
+							op: "send",
+							text: "example",
+							channelRef: "current",
+							messageTs: "example",
+							emoji: "example",
 						},
 					},
 				},
@@ -6506,14 +8268,35 @@ export const allActionsSpec = {
 			description: "Read message history from a Slack channel",
 			parameters: [
 				{
-					name: "data",
-					description: "The data to use.",
+					name: "channelRef",
+					description: "Slack channel name/id or current.",
+					required: false,
+					schema: {
+						type: "string",
+						default: "current",
+					},
+					descriptionCompressed: "Slack channel name/id or current.",
+				},
+				{
+					name: "limit",
+					description: "Maximum messages to read.",
+					required: false,
+					schema: {
+						type: "number",
+						default: 10,
+						minimum: 1,
+						maximum: 100,
+					},
+					descriptionCompressed: "max msgs to read.",
+				},
+				{
+					name: "after",
+					description: "Optional lower bound timestamp or date.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					examples: ["example"],
-					descriptionCompressed: "The data to use.",
+					descriptionCompressed: "Optional lower bound timestamp or date.",
 				},
 			],
 			descriptionCompressed: "Read Slack channel message history.",
@@ -6530,7 +8313,9 @@ export const allActionsSpec = {
 					actions: ["SLACK_READ_CHANNEL"],
 					params: {
 						SLACK_READ_CHANNEL: {
-							data: "example",
+							channelRef: "current",
+							limit: 10,
+							after: "example",
 						},
 					},
 				},
@@ -6730,10 +8515,48 @@ export const allActionsSpec = {
 			name: "SUMMARIZE_FEED",
 			description:
 				"Fetch the top-N X tweets and produce a concise natural-language summary using the runtime's small text model.",
-			parameters: [],
+			parameters: [
+				{
+					name: "limit",
+					description: "Number of top feed tweets to summarize.",
+					required: false,
+					schema: {
+						type: "number",
+						default: 5,
+						minimum: 1,
+						maximum: 25,
+					},
+					descriptionCompressed: "Number of top feed tweets to summarize.",
+				},
+				{
+					name: "fetchCount",
+					description: "Number of feed tweets to fetch before ranking.",
+					required: false,
+					schema: {
+						type: "number",
+						default: 50,
+						minimum: 1,
+						maximum: 100,
+					},
+					descriptionCompressed:
+						"Number of feed tweets to fetch before ranking.",
+				},
+			],
 			descriptionCompressed:
 				"fetch top-n x tweet produce concise natural-language summary use runtime small text model",
 			similes: ["X_FEED_SUMMARY", "SUMMARIZE_TWITTER", "SUMMARIZE_X_FEED"],
+			exampleCalls: [
+				{
+					user: "Use SUMMARIZE_FEED with the provided parameters.",
+					actions: ["SUMMARIZE_FEED"],
+					params: {
+						SUMMARIZE_FEED: {
+							limit: 5,
+							fetchCount: 50,
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "SYNC_SKILL_CATALOG",
@@ -6998,6 +8821,62 @@ export const allActionsSpec = {
 			],
 		},
 		{
+			name: "TASK_OUTPUT",
+			description:
+				"Read captured output and current status of a background BASH task. Pass block=true to wait for completion (or until timeout) before returning.",
+			parameters: [
+				{
+					name: "task_id",
+					description:
+						"Task id returned by BASH (background or auto-promoted).",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Task id returned by BASH (background or auto-promoted).",
+				},
+				{
+					name: "block",
+					description:
+						"If true, wait for the task to finish (or until timeout) before returning.",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed:
+						"If true, wait for the task to finish (or until timeout) before returning.",
+				},
+				{
+					name: "timeout",
+					description:
+						"When blocking, max ms to wait. Clamped to [0, 600000]. Default 30000 when block=true, 0 otherwise.",
+					required: false,
+					schema: {
+						type: "number",
+					},
+					descriptionCompressed:
+						"When blocking, max ms to wait. Clamped to [0, 600000]. Default 30000 when block=true, 0 otherwise.",
+				},
+			],
+			descriptionCompressed:
+				"Read background shell task output (optionally blocking).",
+			similes: ["GET_TASK_OUTPUT"],
+			exampleCalls: [
+				{
+					user: "Use TASK_OUTPUT with the provided parameters.",
+					actions: ["TASK_OUTPUT"],
+					params: {
+						TASK_OUTPUT: {
+							task_id: "example",
+							block: false,
+							timeout: 1,
+						},
+					},
+				},
+			],
+		},
+		{
 			name: "TASK_SHARE",
 			description:
 				"Discover the best available way to view or share a task result, including artifacts, live preview URLs, workspace paths, and environment share capabilities.",
@@ -7049,6 +8928,37 @@ export const allActionsSpec = {
 							threadId: "example",
 							sessionId: "example",
 							search: "example",
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "TASK_STOP",
+			description:
+				"Terminate a running background BASH task by id. Sends SIGTERM (and SIGKILL after a grace period). Returns the task's terminal status.",
+			parameters: [
+				{
+					name: "task_id",
+					description:
+						"Task id returned by BASH (background or auto-promoted).",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Task id returned by BASH (background or auto-promoted).",
+				},
+			],
+			descriptionCompressed: "Stop a background shell task.",
+			similes: ["KILL_TASK", "STOP_TASK"],
+			exampleCalls: [
+				{
+					user: "Use TASK_STOP with the provided parameters.",
+					actions: ["TASK_STOP"],
+					params: {
+						TASK_STOP: {
+							task_id: "example",
 						},
 					},
 				},
@@ -7173,10 +9083,81 @@ export const allActionsSpec = {
 			],
 		},
 		{
+			name: "TODO_WRITE",
+			description:
+				"Replace the conversation's todo list with the provided array. Each todo has content, status (pending|in_progress|completed), and an optional activeForm describing the in-progress phrasing. The full list is replaced on every call. Use to plan multi-step work and track progress within a session.",
+			parameters: [
+				{
+					name: "todos",
+					description:
+						"Array of todo objects. Each item: { id?: string, content: string, status: 'pending'|'in_progress'|'completed', activeForm?: string }. Replaces the entire list.",
+					required: true,
+					schema: {
+						type: "array",
+						items: {
+							type: "object",
+							properties: {
+								id: {
+									type: "string",
+								},
+								content: {
+									type: "string",
+								},
+								status: {
+									type: "string",
+									enum: ["pending", "in_progress", "completed"],
+								},
+								activeForm: {
+									type: "string",
+								},
+							},
+						},
+					},
+					descriptionCompressed:
+						"Array of todo objects. Each item: { id?: string, content: string, status: 'pending'|'in_progress'|'completed', activeForm?: string }. Replaces the entire list.",
+				},
+			],
+			descriptionCompressed:
+				"Replace conversation todo list with {content,status,activeForm}[].",
+			similes: ["UPDATE_TODOS", "SET_TODOS"],
+			exampleCalls: [
+				{
+					user: "Use TODO_WRITE with the provided parameters.",
+					actions: ["TODO_WRITE"],
+					params: {
+						TODO_WRITE: {
+							todos: "example",
+						},
+					},
+				},
+			],
+		},
+		{
 			name: "TOGGLE_SKILL",
 			description:
 				"Enable or disable an installed skill. Say 'enable <skill>' or 'disable <skill>'.",
-			parameters: [],
+			parameters: [
+				{
+					name: "slug",
+					description: "Installed skill slug or name to enable or disable.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Installed skill slug or name to enable or disable.",
+				},
+				{
+					name: "enabled",
+					description: "Whether to enable true or disable false the skill.",
+					required: false,
+					schema: {
+						type: "boolean",
+					},
+					descriptionCompressed:
+						"Whether to enable true or disable false the skill.",
+				},
+			],
 			descriptionCompressed: "Enable/disable installed skill.",
 			similes: [
 				"ENABLE_SKILL",
@@ -7185,6 +9166,18 @@ export const allActionsSpec = {
 				"TURN_OFF_SKILL",
 				"ACTIVATE_SKILL",
 				"DEACTIVATE_SKILL",
+			],
+			exampleCalls: [
+				{
+					user: "Use TOGGLE_SKILL with the provided parameters.",
+					actions: ["TOGGLE_SKILL"],
+					params: {
+						TOGGLE_SKILL: {
+							slug: "example",
+							enabled: false,
+						},
+					},
+				},
 			],
 		},
 		{
@@ -7234,7 +9227,27 @@ export const allActionsSpec = {
 		{
 			name: "TWITCH_SEND_MESSAGE",
 			description: "Send a message to a Twitch channel",
-			parameters: [],
+			parameters: [
+				{
+					name: "text",
+					description: "Chat message text to send.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Chat msg text to send.",
+				},
+				{
+					name: "channel",
+					description: "Twitch channel name, without #, or current.",
+					required: false,
+					schema: {
+						type: "string",
+						default: "current",
+					},
+					descriptionCompressed: "Twitch channel name, without #, or current.",
+				},
+			],
 			descriptionCompressed: "send message Twitch channel",
 			similes: [
 				"SEND_TWITCH_MESSAGE",
@@ -7242,181 +9255,43 @@ export const allActionsSpec = {
 				"CHAT_TWITCH",
 				"SAY_IN_TWITCH",
 			],
+			exampleCalls: [
+				{
+					user: "Use TWITCH_SEND_MESSAGE with the provided parameters.",
+					actions: ["TWITCH_SEND_MESSAGE"],
+					params: {
+						TWITCH_SEND_MESSAGE: {
+							text: "example",
+							channel: "current",
+						},
+					},
+				},
+			],
 		},
 		{
 			name: "UNINSTALL_SKILL",
 			description:
 				"Uninstall a non-bundled skill. Bundled skills cannot be removed. ",
-			parameters: [],
-			descriptionCompressed: "Remove non-bundled skill.",
-			similes: ["REMOVE_SKILL", "DELETE_SKILL"],
-		},
-		{
-			name: "USE_COMPUTER",
-			description:
-				"use_computer_action:\n  purpose: Control the local desktop for real application interaction when direct computer operation is required.\n  guidance: Take a screenshot before acting. After each desktop action, the result includes a screenshot when available.\n  actions: screenshot/click/click_with_modifiers/double_click/right_click/mouse_move/type/key/key_combo/scroll/drag/detect_elements/ocr.",
 			parameters: [
 				{
-					name: "action",
-					description: "Desktop action to perform.",
-					required: true,
-					schema: {
-						type: "string",
-						enum: [
-							"screenshot",
-							"click",
-							"click_with_modifiers",
-							"double_click",
-							"right_click",
-							"mouse_move",
-							"type",
-							"key",
-							"key_combo",
-							"scroll",
-							"drag",
-							"detect_elements",
-							"ocr",
-						],
-					},
-					descriptionCompressed: "Desktop action to perform.",
-				},
-				{
-					name: "coordinate",
-					description: "Target [x, y] pixel coordinate.",
-					required: false,
-					schema: {
-						type: "array",
-						items: {
-							type: "number",
-						},
-					},
-					descriptionCompressed: "Target [x, y] pixel coordinate.",
-				},
-				{
-					name: "startCoordinate",
-					description: "Start [x, y] pixel coordinate for drag.",
-					required: false,
-					schema: {
-						type: "array",
-						items: {
-							type: "number",
-						},
-					},
-					descriptionCompressed: "Start [x, y] pixel coordinate for drag.",
-				},
-				{
-					name: "text",
-					description: "Text to type.",
+					name: "slug",
+					description: "Installed skill slug or name to uninstall.",
 					required: false,
 					schema: {
 						type: "string",
 					},
-					descriptionCompressed: "Text to type.",
-				},
-				{
-					name: "modifiers",
-					description:
-						"Modifier keys to hold during click_with_modifiers, e.g. ['cmd', 'shift'] or ['ctrl'].",
-					required: false,
-					schema: {
-						type: "array",
-						items: {
-							type: "string",
-						},
-					},
-					descriptionCompressed:
-						"Modifier keys to hold during click_with_modifiers, e. g. ['cmd', 'shift'] or ['ctrl'].",
-				},
-				{
-					name: "key",
-					description: "Single key or combo string depending on action.",
-					required: false,
-					schema: {
-						type: "string",
-					},
-					descriptionCompressed:
-						"Single key or combo string depending on action.",
-				},
-				{
-					name: "button",
-					description: "Mouse button for click_with_modifiers.",
-					required: false,
-					schema: {
-						type: "string",
-						enum: ["left", "middle", "right"],
-					},
-					descriptionCompressed: "Mouse button for click_with_modifiers.",
-				},
-				{
-					name: "clicks",
-					description: "Number of clicks for click_with_modifiers.",
-					required: false,
-					schema: {
-						type: "number",
-						minimum: 1,
-						maximum: 5,
-					},
-					descriptionCompressed: "Number of clicks for click_with_modifiers.",
-				},
-				{
-					name: "scrollDirection",
-					description: "Scroll direction.",
-					required: false,
-					schema: {
-						type: "string",
-						enum: ["up", "down", "left", "right"],
-					},
-					descriptionCompressed: "Scroll direction.",
-				},
-				{
-					name: "scrollAmount",
-					description: "Scroll tick count.",
-					required: false,
-					schema: {
-						type: "number",
-						default: 3,
-						minimum: 1,
-						maximum: 20,
-					},
-					descriptionCompressed: "Scroll tick count.",
+					descriptionCompressed: "Installed skill slug or name to uninstall.",
 				},
 			],
-			descriptionCompressed:
-				"Desktop control router: screenshot/click/modified click/double/right/move/type/key/key_combo/scroll/drag/detect_elements/ocr; screenshot before acting.",
-			similes: [
-				"CONTROL_COMPUTER",
-				"COMPUTER_ACTION",
-				"DESKTOP_ACTION",
-				"CLICK",
-				"CLICK_SCREEN",
-				"TYPE_TEXT",
-				"PRESS_KEY",
-				"KEY_COMBO",
-				"SCROLL_SCREEN",
-				"MOVE_MOUSE",
-				"DRAG",
-				"MOUSE_CLICK",
-				"CLICK_WITH_MODIFIERS",
-				"TAKE_SCREENSHOT",
-				"CAPTURE_SCREEN",
-				"SEE_SCREEN",
-			],
+			descriptionCompressed: "Remove non-bundled skill.",
+			similes: ["REMOVE_SKILL", "DELETE_SKILL"],
 			exampleCalls: [
 				{
-					user: "Use USE_COMPUTER with the provided parameters.",
-					actions: ["USE_COMPUTER"],
+					user: "Use UNINSTALL_SKILL with the provided parameters.",
+					actions: ["UNINSTALL_SKILL"],
 					params: {
-						USE_COMPUTER: {
-							action: "screenshot",
-							coordinate: "example",
-							startCoordinate: "example",
-							text: "example",
-							modifiers: "example",
-							key: "example",
-							button: "left",
-							clicks: 1,
-							scrollDirection: "up",
-							scrollAmount: 3,
+						UNINSTALL_SKILL: {
+							slug: "example",
 						},
 					},
 				},
@@ -7618,6 +9493,106 @@ export const allActionsSpec = {
 			],
 		},
 		{
+			name: "WEB_FETCH",
+			description:
+				"Fetch a single http(s) URL and return its body as text. HTML responses are stripped of tags and collapsed to plain text. Body is capped at 5MB; text is capped at 50000 chars. Loopback addresses (localhost, 127.0.0.1, 0.0.0.0, ::1, 169.254.*) are blocked by default; set CODING_TOOLS_WEB_FETCH_ALLOW_LOOPBACK=1 to permit them. Use for reading documentation, blog posts, or pasting in a URL the user referenced.",
+			parameters: [
+				{
+					name: "url",
+					description: "Absolute http:// or https:// URL to fetch.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Absolute http:// or https:// URL to fetch.",
+				},
+				{
+					name: "prompt",
+					description:
+						"Optional summary/extraction instruction. Echoed verbatim in the result text; no LLM is run on the body in v1.",
+					required: false,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed:
+						"Optional summary/extraction instruction. Echoed verbatim in the result text. no LLM is run on the body in v1.",
+				},
+			],
+			descriptionCompressed:
+				"Fetch http(s) URL and return body as plain text (HTML stripped, capped).",
+			similes: ["FETCH_URL", "GET_URL", "DOWNLOAD_PAGE"],
+			exampleCalls: [
+				{
+					user: "Use WEB_FETCH with the provided parameters.",
+					actions: ["WEB_FETCH"],
+					params: {
+						WEB_FETCH: {
+							url: "example",
+							prompt: "example",
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "WEB_SEARCH",
+			description:
+				"Run a web search and return ranked results. Stub in v1: no provider is wired in this plugin, so the action returns a placeholder success that echoes the query and any domain filters. Wire a Brave/Bing/Tavily backend before relying on this for real results.",
+			parameters: [
+				{
+					name: "query",
+					description: "Search query string.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Search query string.",
+				},
+				{
+					name: "allowed_domains",
+					description: "Optional list of domains to restrict results to.",
+					required: false,
+					schema: {
+						type: "array",
+						items: {
+							type: "string",
+						},
+					},
+					descriptionCompressed:
+						"Optional list of domains to restrict results to.",
+				},
+				{
+					name: "blocked_domains",
+					description: "Optional list of domains to exclude from results.",
+					required: false,
+					schema: {
+						type: "array",
+						items: {
+							type: "string",
+						},
+					},
+					descriptionCompressed:
+						"Optional list of domains to exclude from results.",
+				},
+			],
+			descriptionCompressed:
+				"Web search (stub — no backend configured; echoes query + filters).",
+			similes: ["SEARCH_WEB", "GOOGLE", "BING"],
+			exampleCalls: [
+				{
+					user: "Use WEB_SEARCH with the provided parameters.",
+					actions: ["WEB_SEARCH"],
+					params: {
+						WEB_SEARCH: {
+							query: "example",
+							allowed_domains: "example",
+							blocked_domains: "example",
+						},
+					},
+				},
+			],
+		},
+		{
 			name: "WORKFLOW_LIFECYCLE_OP",
 			description:
 				'n8n workflow lifecycle operation. Pass `op` ("activate", "deactivate", or "delete") and optionally `workflowId`. Identifies workflows by ID, name, or semantic description.',
@@ -7672,6 +9647,46 @@ export const allActionsSpec = {
 						WORKFLOW_LIFECYCLE_OP: {
 							op: "example",
 							workflowId: "example",
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "WRITE",
+			description:
+				"Write a file at an absolute path, replacing any existing contents. The file's parent directory is created if missing. Existing files must have been READ in this session first; otherwise the write is rejected to avoid clobbering external edits.",
+			parameters: [
+				{
+					name: "file_path",
+					description: "Absolute path to the file to write.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Absolute path to the file to write.",
+				},
+				{
+					name: "content",
+					description: "Full new file contents.",
+					required: true,
+					schema: {
+						type: "string",
+					},
+					descriptionCompressed: "Full new file contents.",
+				},
+			],
+			descriptionCompressed:
+				"Write a file at an absolute path (creates parents; rejects if existing file was not READ first).",
+			similes: ["WRITE_FILE", "CREATE_FILE"],
+			exampleCalls: [
+				{
+					user: "Use WRITE with the provided parameters.",
+					actions: ["WRITE"],
+					params: {
+						WRITE: {
+							file_path: "example",
+							content: "example",
 						},
 					},
 				},

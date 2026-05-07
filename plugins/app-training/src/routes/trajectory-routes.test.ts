@@ -1,7 +1,10 @@
 import type http from "node:http";
 import { Readable } from "node:stream";
 import type { Trajectory } from "@elizaos/agent/types/trajectory";
-import type { AgentRuntime } from "@elizaos/core";
+import {
+  ELIZA_NATIVE_TRAJECTORY_FORMAT,
+  type AgentRuntime,
+} from "@elizaos/core";
 import { describe, expect, it, vi } from "vitest";
 import { handleTrajectoryRoute } from "./trajectory-routes";
 
@@ -217,5 +220,56 @@ describe("trajectory routes", () => {
     );
     expect(response.headers["content-type"]).toBe("application/json");
     expect(response.body).toBe("[]");
+  });
+
+  it("supports JSONL trajectory export", async () => {
+    const exportTrajectories = vi.fn(async () => ({
+      data: `${JSON.stringify({
+        format: ELIZA_NATIVE_TRAJECTORY_FORMAT,
+        schemaVersion: 1,
+        boundary: "vercel_ai_sdk.generateText",
+        trajectoryId: "traj-1",
+        agentId: "agent-1",
+        stepId: "step-1",
+        callId: "call-1",
+        request: { prompt: "user" },
+        response: { text: "resp" },
+        metadata: { task_type: "response" },
+      })}\n`,
+      filename: "trajectories.eliza-native.jsonl",
+      mimeType: "application/x-ndjson",
+    }));
+    const logger = createLogger({ exportTrajectories });
+    const response = createResponse();
+
+    await handleTrajectoryRoute(
+      createRequest({
+        format: "jsonl",
+        jsonShape: ELIZA_NATIVE_TRAJECTORY_FORMAT,
+        includePrompts: true,
+      }),
+      response,
+      createRuntime(logger),
+      "/api/trajectories/export",
+      "POST",
+    );
+
+    expect(exportTrajectories).toHaveBeenCalledWith(
+      expect.objectContaining({
+        format: "jsonl",
+        jsonShape: ELIZA_NATIVE_TRAJECTORY_FORMAT,
+        includePrompts: true,
+      }),
+    );
+    expect(response.headers["content-type"]).toBe("application/x-ndjson");
+    expect(typeof response.body).toBe("string");
+    const lines = String(response.body)
+      .trim()
+      .split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
+      format: ELIZA_NATIVE_TRAJECTORY_FORMAT,
+      trajectoryId: "traj-1",
+    });
   });
 });

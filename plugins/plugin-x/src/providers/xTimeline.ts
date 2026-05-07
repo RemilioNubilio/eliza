@@ -1,5 +1,4 @@
 import {
-  encodeToonValue,
   type IAgentRuntime,
   logger,
   type Memory,
@@ -14,7 +13,7 @@ const DEFAULT_LIMIT = 5;
 const DEFAULT_FETCH_COUNT = 50;
 
 function providerText(value: unknown): string {
-  return encodeToonValue({ x_timeline: value });
+  return JSON.stringify({ x_timeline: value }, null, 2);
 }
 
 export const xTimelineProvider: Provider = {
@@ -24,6 +23,11 @@ export const xTimelineProvider: Provider = {
   descriptionCompressed:
     "X home timeline top tweets ranked by likes + retweets*2.",
   dynamic: true,
+  contexts: ["social_posting", "messaging", "connectors"],
+  contextGate: { anyOf: ["social_posting", "messaging", "connectors"] },
+  cacheScope: "turn",
+  roleGate: { minRole: "ADMIN" },
+  cacheStable: false,
   get: async (
     runtime: IAgentRuntime,
     _message: Memory,

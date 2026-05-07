@@ -1,14 +1,27 @@
-import { v5EvaluatorTemplate } from "../prompts/evaluator";
+import { v5EvaluatorSchema, v5EvaluatorTemplate } from "../prompts/evaluator";
 import { emitStreamingHook, getStreamingContext } from "../streaming-context";
 import type { EvaluationResult } from "../types/components";
-import { ModelType, type TextGenerationModelType } from "../types/model";
+import {
+	type ChatMessage,
+	ModelType,
+	type PromptSegment,
+	type TextGenerationModelType,
+} from "../types/model";
+import type { JsonValue } from "../types/primitives.ts";
+import { computePrefixHashes } from "./context-hash";
+import { renderContextObject } from "./context-renderer";
 import { computeCallCostUsd } from "./cost-table";
 import { parseJsonObject, stringifyForModel } from "./json-output";
+import {
+	buildModelInputBudget,
+	withModelInputBudgetProviderOptions,
+} from "./model-input-budget";
 import type {
 	ContextObject,
 	PlannerToolCall,
 	PlannerTrajectory,
 } from "./planner-loop";
+import { trajectoryStepsToMessages } from "./planner-loop";
 import type {
 	RecordedStage,
 	RecordedUsage,
@@ -20,9 +33,17 @@ export type EvaluatorRoute = EvaluationResult["decision"];
 export interface EvaluatorRuntime {
 	useModel(
 		modelType: TextGenerationModelType,
-		params: { prompt: string; responseSchema?: unknown },
+		params: {
+			prompt: string;
+			messages?: ChatMessage[];
+			responseSchema?: unknown;
+			promptSegments?: PromptSegment[];
+			providerOptions?: Record<string, unknown>;
+		},
 		provider?: string,
-	): Promise<string | { text?: string; object?: unknown }>;
+	): Promise<
+		string | { text?: string; object?: unknown; providerMetadata?: unknown }
+	>;
 	logger?: {
 		warn?: (context: unknown, message?: string) => void;
 		debug?: (context: unknown, message?: string) => void;
@@ -70,21 +91,49 @@ interface RawEvaluatorOutput {
 export async function runEvaluator(
 	params: RunEvaluatorParams,
 ): Promise<EvaluatorOutput> {
-	const prompt =
-		params.prompt ??
-		renderEvaluatorPrompt({
-			context: params.context,
-			trajectory: params.trajectory,
-		});
+	const renderedInput = params.prompt
+		? renderModelInputFromPrompt(params.prompt)
+		: renderEvaluatorModelInput({
+				context: params.context,
+				trajectory: params.trajectory,
+			});
+	const prompt = renderedInput.prompt;
+	const prefixHashes = computePrefixHashes(renderedInput.promptSegments);
+	const cachePrefixHashes = computePrefixHashes(
+		cachePrefixSegments(renderedInput.promptSegments),
+	);
+	const prefixHash =
+		cachePrefixHashes[cachePrefixHashes.length - 1]?.hash ??
+		"no-context-segments";
+	const modelInputBudget = buildModelInputBudget({
+		prompt,
+		messages: renderedInput.messages,
+		promptSegments: renderedInput.promptSegments,
+	});
 	const startedAt = Date.now();
 	const modelType = params.modelType ?? ModelType.RESPONSE_HANDLER;
 	const raw = await params.runtime.useModel(
 		modelType,
-		{ prompt },
+		{
+			prompt,
+			messages: renderedInput.messages,
+			responseSchema: v5EvaluatorSchema,
+			promptSegments: renderedInput.promptSegments,
+			providerOptions: withModelInputBudgetProviderOptions(
+				cacheProviderOptions({
+					prefixHash,
+					segmentHashes: prefixHashes.map((entry) => entry.segmentHash),
+				}),
+				modelInputBudget,
+			),
+		},
 		params.provider,
 	);
 	const endedAt = Date.now();
-	const output = parseEvaluatorOutput(raw);
+	const output = repairMissingEvaluatorSuccess(
+		parseEvaluatorOutput(raw),
+		params.trajectory,
+	);
 	const streamingContext = getStreamingContext();
 	await emitStreamingHook(streamingContext, "onEvaluation", {
 		evaluation: output,
@@ -100,10 +149,13 @@ export async function runEvaluator(
 		modelType: String(modelType),
 		provider: params.provider,
 		prompt,
+		messages: renderedInput.messages,
 		raw,
 		output,
 		startedAt,
 		endedAt,
+		segmentHashes: prefixHashes.map((entry) => entry.segmentHash),
+		prefixHash,
 		logger: params.runtime.logger,
 	});
 
@@ -118,10 +170,13 @@ async function recordEvaluationStage(args: {
 	modelType: string;
 	provider?: string;
 	prompt: string;
-	raw: string | { text?: string; object?: unknown };
+	messages?: ChatMessage[];
+	raw: string | { text?: string; object?: unknown; providerMetadata?: unknown };
 	output: EvaluatorOutput;
 	startedAt: number;
 	endedAt: number;
+	segmentHashes: string[];
+	prefixHash: string;
 	logger?: EvaluatorRuntime["logger"];
 }): Promise<void> {
 	if (!args.recorder || !args.trajectoryId) return;
@@ -133,6 +188,7 @@ async function recordEvaluationStage(args: {
 					? args.raw.text
 					: JSON.stringify(args.raw.object ?? {});
 		const usage = extractEvaluatorUsage(args.raw);
+		const modelName = extractEvaluatorModelName(args.raw);
 		const stage: RecordedStage = {
 			stageId: `stage-eval-iter-${args.iteration}-${args.startedAt}`,
 			kind: "evaluation",
@@ -143,11 +199,15 @@ async function recordEvaluationStage(args: {
 			latencyMs: args.endedAt - args.startedAt,
 			model: {
 				modelType: args.modelType,
+				modelName,
 				provider: args.provider ?? "default",
 				prompt: args.prompt,
+				messages: args.messages,
+				tools: [],
+				toolCalls: [],
 				response: responseText,
 				usage,
-				costUsd: usage ? computeCallCostUsd(undefined, usage) : undefined,
+				costUsd: usage ? computeCallCostUsd(modelName, usage) : undefined,
 			},
 			evaluation: {
 				success: args.output.success,
@@ -157,6 +217,10 @@ async function recordEvaluationStage(args: {
 				copyToClipboard: args.output.copyToClipboard,
 				recommendedToolCallId: args.output.recommendedToolCallId,
 			},
+			cache: {
+				segmentHashes: args.segmentHashes,
+				prefixHash: args.prefixHash,
+			},
 		};
 		await args.recorder.recordStage(args.trajectoryId, stage);
 	} catch (err) {
@@ -165,6 +229,20 @@ async function recordEvaluationStage(args: {
 			"[TrajectoryRecorder] failed to record evaluation stage",
 		);
 	}
+}
+
+function extractEvaluatorModelName(
+	raw: string | { providerMetadata?: unknown },
+): string | undefined {
+	if (typeof raw === "string") return undefined;
+	const meta = raw.providerMetadata;
+	if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+		const direct = (meta as Record<string, unknown>).modelName;
+		if (typeof direct === "string") return direct;
+		const model = (meta as Record<string, unknown>).model;
+		if (typeof model === "string") return model;
+	}
+	return undefined;
 }
 
 function extractEvaluatorUsage(
@@ -201,9 +279,159 @@ export function renderEvaluatorPrompt(params: {
 	trajectory: PlannerTrajectory;
 	template?: string;
 }): string {
-	return (params.template ?? v5EvaluatorTemplate)
-		.replace("{{contextObject}}", stringifyForModel(params.context))
-		.replace("{{trajectory}}", stringifyForModel(params.trajectory));
+	return renderEvaluatorModelInput(params).prompt;
+}
+
+function renderEvaluatorModelInput(params: {
+	context: ContextObject;
+	trajectory: PlannerTrajectory;
+	template?: string;
+}): {
+	prompt: string;
+	messages: ChatMessage[];
+	promptSegments: PromptSegment[];
+} {
+	const renderedContext = renderContextObject(params.context);
+	const template = params.template ?? v5EvaluatorTemplate;
+	const instructions = (
+		template.split("context_object:")[0] ?? template
+	).trim();
+	const stepMessages = trajectoryStepsToMessages(params.trajectory.steps);
+	// Legacy prompt string still serializes as JSON for hash/segment consistency.
+	const trajectoryContent = `trajectory:\n${stringifyForModel(params.trajectory)}`;
+	const promptSegments = normalizePromptSegments([
+		...renderedContext.promptSegments,
+		{ content: `evaluator_stage:\n${instructions}`, stable: false },
+		{ content: trajectoryContent, stable: false },
+	]);
+	const prompt = promptSegments.map((segment) => segment.content).join("");
+	// Use proper assistant/tool message pairs so the evaluator sees the same
+	// native tool-calling format as the planner. The trajectory JSON is NOT
+	// included in dynamicBlocks — it is conveyed through stepMessages.
+	const messages = buildStageChatMessages({
+		contextSegments: renderedContext.promptSegments,
+		stageLabel: "evaluator_stage",
+		instructions,
+		dynamicBlocks: [],
+		stepMessages,
+	});
+	return { prompt, messages, promptSegments };
+}
+
+function renderModelInputFromPrompt(prompt: string): {
+	prompt: string;
+	messages: ChatMessage[];
+	promptSegments: PromptSegment[];
+} {
+	return renderMessagesFromPrompt(prompt, [{ content: prompt, stable: false }]);
+}
+
+function renderMessagesFromPrompt(
+	prompt: string,
+	promptSegments: PromptSegment[],
+): {
+	prompt: string;
+	messages: ChatMessage[];
+	promptSegments: PromptSegment[];
+} {
+	const contextStart = prompt.indexOf("context_object:");
+	const systemContent =
+		contextStart > 0 ? prompt.slice(0, contextStart).trimEnd() : prompt;
+	const userContent =
+		contextStart > 0 ? prompt.slice(contextStart).trimStart() : prompt;
+	const messages: ChatMessage[] =
+		contextStart > 0
+			? [
+					{ role: "system", content: systemContent },
+					{ role: "user", content: userContent },
+				]
+			: [{ role: "user", content: prompt }];
+	return { prompt, messages, promptSegments };
+}
+
+function compactPromptSegments(segments: PromptSegment[]): PromptSegment[] {
+	return segments.filter((segment) => segment.content.length > 0);
+}
+
+function normalizePromptSegments(segments: PromptSegment[]): PromptSegment[] {
+	return compactPromptSegments(
+		segments.map((segment, index) => ({
+			...segment,
+			content: `${index === 0 ? "" : "\n\n"}${segment.content.trim()}`,
+		})),
+	);
+}
+
+function segmentBlock(segment: PromptSegment): string {
+	const content = segment.content.trim();
+	const label = (segment as PromptSegment & { label?: unknown }).label;
+	return typeof label === "string" && label ? `${label}:\n${content}` : content;
+}
+
+function buildStageChatMessages(args: {
+	contextSegments: PromptSegment[];
+	stageLabel: string;
+	instructions: string;
+	dynamicBlocks: string[];
+	stepMessages: ChatMessage[];
+}): ChatMessage[] {
+	const stableContext = args.contextSegments
+		.filter((segment) => segment.stable)
+		.map(segmentBlock)
+		.filter(Boolean);
+	const dynamicContext = args.contextSegments
+		.filter((segment) => !segment.stable)
+		.map(segmentBlock)
+		.filter(Boolean);
+	const systemContent = [
+		...stableContext,
+		`${args.stageLabel}:\n${args.instructions}`,
+	]
+		.filter(Boolean)
+		.join("\n\n");
+	const userContent = [...dynamicContext, ...args.dynamicBlocks]
+		.map((block) => block.trim())
+		.filter(Boolean)
+		.join("\n\n");
+	return [
+		{ role: "system", content: systemContent },
+		{ role: "user", content: userContent },
+		...args.stepMessages,
+	];
+}
+
+function cachePrefixSegments(segments: PromptSegment[]): PromptSegment[] {
+	const prefix: PromptSegment[] = [];
+	for (const segment of segments) {
+		if (!segment.stable) break;
+		prefix.push(segment);
+	}
+	return prefix.length > 0 ? prefix : segments.slice(0, 1);
+}
+
+function cacheProviderOptions(args: {
+	prefixHash: string;
+	segmentHashes?: readonly string[];
+}): Record<string, JsonValue | object | undefined> {
+	const promptCacheKey = `v5:${args.prefixHash}`.slice(0, 1024);
+	return {
+		eliza: {
+			promptCacheKey,
+			prefixHash: args.prefixHash,
+			...(args.segmentHashes ? { segmentHashes: [...args.segmentHashes] } : {}),
+		},
+		cerebras: {
+			promptCacheKey,
+			prompt_cache_key: promptCacheKey,
+		},
+		openai: {
+			promptCacheKey,
+			promptCacheRetention: "24h",
+		},
+		gateway: {
+			caching: "auto",
+		},
+	};
 }
 
 export function parseEvaluatorOutput(
@@ -227,6 +455,28 @@ export function parseEvaluatorOutput(
 				? parsed.recommendedToolCallId
 				: undefined,
 		raw: parsed as Record<string, unknown>,
+	};
+}
+
+function repairMissingEvaluatorSuccess(
+	output: EvaluatorOutput,
+	trajectory: PlannerTrajectory,
+): EvaluatorOutput {
+	if (output.raw && Object.hasOwn(output.raw, "success")) {
+		return output;
+	}
+	if (output.decision !== "FINISH") {
+		return output;
+	}
+	const latestStep = [...trajectory.steps]
+		.reverse()
+		.find((step) => step.toolCall && step.result);
+	if (latestStep?.result?.success !== true) {
+		return output;
+	}
+	return {
+		...output,
+		success: true,
 	};
 }
 

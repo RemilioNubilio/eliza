@@ -11,7 +11,7 @@ import type {
 } from "../../../../types/index.ts";
 import { MemoryType } from "../../../../types/memory.ts";
 import { ModelType } from "../../../../types/model.ts";
-import { encodeToonValue } from "../../../../utils/toon";
+import { hasActionContextOrKeyword } from "../../../../utils/action-validation.ts";
 import type { CharacterFileManager } from "../services/character-file-manager.ts";
 import {
 	MAX_PREFS_PER_USER,
@@ -94,6 +94,8 @@ function resolveModifyCharacterScope(
  */
 export const modifyCharacterAction: Action = {
 	name: "MODIFY_CHARACTER",
+	contexts: ["settings", "agent_internal", "media"],
+	roleGate: { minRole: "ADMIN" },
 	similes: [
 		"UPDATE_PERSONALITY",
 		"CHANGE_PERSONALITY",
@@ -153,6 +155,28 @@ export const modifyCharacterAction: Action = {
 		if (!fileManager) {
 			return false;
 		}
+		if (
+			!hasActionContextOrKeyword(message, _state, {
+				contexts: ["settings", "agent_internal", "media"],
+				keywords: [
+					"personality",
+					"character",
+					"tone",
+					"style",
+					"behavior",
+					"voice",
+					"bio",
+					"name",
+					"respond in",
+					"be more",
+					"be less",
+					"change how you",
+					"update yourself",
+				],
+			})
+		) {
+			return false;
+		}
 
 		const messageText = message.content.text || "";
 		const modificationIntent = detectModificationIntentByRules(messageText);
@@ -176,10 +200,10 @@ export const modifyCharacterAction: Action = {
 			},
 		);
 
-		if (
+		const shouldRun =
 			modificationIntent.intent.isModificationRequest &&
-			modificationIntent.intent.requestType === "explicit"
-		) {
+			modificationIntent.intent.requestType === "explicit";
+		if (shouldRun) {
 			logger.info(
 				{
 					userId: message.entityId,
@@ -187,10 +211,10 @@ export const modifyCharacterAction: Action = {
 				},
 				"Explicit modification request detected — role check deferred to handler",
 			);
-			return true;
 		}
 
-		if (hasRecentEvolutionSuggestion) {
+		const shouldRunForEvolution = !shouldRun && hasRecentEvolutionSuggestion;
+		if (shouldRunForEvolution) {
 			logger.info(
 				{
 					roomId: message.roomId,
@@ -198,10 +222,13 @@ export const modifyCharacterAction: Action = {
 				},
 				"Recent evolution suggestion detected",
 			);
-			return true;
 		}
 
-		if (modificationIntent.potentialRequest) {
+		const shouldRunForPotential =
+			!shouldRun &&
+			!shouldRunForEvolution &&
+			modificationIntent.potentialRequest;
+		if (shouldRunForPotential) {
 			logger.info(
 				{
 					userId: message.entityId,
@@ -209,10 +236,9 @@ export const modifyCharacterAction: Action = {
 				},
 				"Potential modification request detected by heuristic rules",
 			);
-			return true;
 		}
 
-		return false;
+		return shouldRun || shouldRunForEvolution || shouldRunForPotential;
 	},
 
 	handler: async (
@@ -730,7 +756,7 @@ function parseStructuredRecord(
 
 function formatPromptData(value: unknown): string {
 	try {
-		return encodeToonValue(value);
+		return JSON.stringify(value, null, 2);
 	} catch {
 		return String(value);
 	}

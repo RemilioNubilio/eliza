@@ -19,6 +19,13 @@ import type { InstagramService } from "../service";
 const REPLY_MODES = ["comment", "dm"] as const;
 type InstagramReplyMode = (typeof REPLY_MODES)[number];
 
+const MAX_INSTAGRAM_REPLY_TEXT_CHARS = 1_000;
+const INSTAGRAM_ACTION_TIMEOUT_MS = 30_000;
+
+function truncateActionText(text: string, maxChars: number): string {
+  return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text;
+}
+
 function readParam(
   options: HandlerOptions | Record<string, unknown> | undefined,
   key: string
@@ -54,6 +61,11 @@ export const instagramReplyAction: Action = {
   description:
     "Reply on Instagram. mode=comment posts a comment on a media post (target=mediaId, text=comment). mode=dm sends a direct message to a thread (target=threadId, text=message).",
   descriptionCompressed: "Reply on Instagram: comment on post or DM user.",
+  contexts: ["social_posting", "messaging", "connectors"],
+  contextGate: {
+    anyOf: ["social_posting", "messaging", "connectors"],
+  },
+  roleGate: { minRole: "USER" },
   similes: [
     "POST_INSTAGRAM_COMMENT",
     "INSTAGRAM_COMMENT",
@@ -129,11 +141,14 @@ export const instagramReplyAction: Action = {
     }
 
     const content = message.content as Record<string, unknown>;
-    const responseText =
+    const responseText = truncateActionText(
       readStringParam(options, "text") ??
-      ((state?.response as Record<string, unknown> | undefined)?.text as string | undefined) ??
-      (content.text as string | undefined) ??
-      "";
+        ((state?.response as Record<string, unknown> | undefined)?.text as string | undefined) ??
+        (content.text as string | undefined) ??
+        "",
+      MAX_INSTAGRAM_REPLY_TEXT_CHARS
+    );
+    const timeoutMs = INSTAGRAM_ACTION_TIMEOUT_MS;
 
     if (!responseText) {
       if (callback) {
@@ -170,7 +185,7 @@ export const instagramReplyAction: Action = {
           actions: ["INSTAGRAM_REPLY"],
         });
       }
-      return { success: true, data: { mode, mediaId, commentId } };
+      return { success: true, data: { mode, mediaId, commentId, timeoutMs } };
     }
 
     const threadId = targetParam ?? (content.threadId as string | undefined);
@@ -190,6 +205,6 @@ export const instagramReplyAction: Action = {
         actions: ["INSTAGRAM_REPLY"],
       });
     }
-    return { success: true, data: { mode, threadId, messageId } };
+    return { success: true, data: { mode, threadId, messageId, timeoutMs } };
   },
 };

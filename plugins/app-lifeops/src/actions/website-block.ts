@@ -357,7 +357,7 @@ async function resolveWebsiteBlockPlanWithLlm(args: {
   const prompt = [
     "Plan the website blocking action for this request.",
     "Use the current request plus recent conversation context.",
-    "Return TOON only with these fields:",
+    "Return JSON only as a single object with these fields:",
     "  shouldAct: boolean",
     "  confirmed: boolean",
     "  response: short natural-language reply when clarification or deferral is needed",
@@ -377,7 +377,7 @@ async function resolveWebsiteBlockPlanWithLlm(args: {
     "- Use durationMinutes=null when the user explicitly wants the block to last until manual removal.",
     "- If the user gives an exact timed duration like 45, 90, or 135 minutes, preserve that exact duration.",
     "",
-    "Return TOON only.",
+    'Return JSON only, for example {"shouldAct":true,"confirmed":true,"response":null,"websites":["x.com"],"durationMinutes":60}.',
     "Current request:",
     currentMessage || "(empty)",
     "Recent conversation turns:",
@@ -434,7 +434,7 @@ async function recoverWebsiteContextWithLlm(args: {
   const prompt = [
     "Recover previously mentioned public website hostnames for a website-block request.",
     "Use the current request plus recent conversation context.",
-    "Return TOON only with one field:",
+    'Return JSON only as {"websites":["example.com"]}.',
     "  websites: array of public website hostnames or URLs relevant to the current blocking request",
     "",
     "Rules:",
@@ -443,7 +443,7 @@ async function recoverWebsiteContextWithLlm(args: {
     "- Do not invent websites.",
     "- Return an empty array when no websites were previously mentioned.",
     "",
-    "Return TOON only.",
+    "Return JSON only.",
     "Current request:",
     currentMessage || "(empty)",
     "Recent conversation turns:",
@@ -791,6 +791,8 @@ export const websiteBlockAction: Action & {
     "Owner-only. Manage local hosts-file website blocking on this Mac. Subactions: block (start a fixed-duration or indefinite block on a set of public hostnames; always drafts first, requires confirmed:true to actually edit the hosts file), unblock (remove the active block), status (check whether a block is active and when it ends), request_permission (request administrator/root approval for hosts-file edits).",
   descriptionCompressed:
     "site block hosts-file: block(hosts,duration,confirm) unblock status request-permission; macOS draft-then-confirm",
+  contexts: ["screen_time", "browser", "automation", "tasks"],
+  roleGate: { minRole: "OWNER" },
   suppressPostActionContinuation: true,
 
   validate: async (runtime, message) => {

@@ -20,8 +20,14 @@ import {
 import type { PTYService } from "../services/pty-service.js";
 import { requireTaskAgentAccess } from "../services/task-policy.js";
 
+const STOP_AGENT_SESSION_LIMIT = 25;
+const STOP_AGENT_TIMEOUT_MS = 10_000;
+
 export const stopAgentAction: Action = {
   name: "STOP_AGENT",
+  contexts: ["tasks", "automation", "agent_internal"],
+  contextGate: { anyOf: ["tasks", "automation", "agent_internal"] },
+  roleGate: { minRole: "USER" },
 
   similes: [
     "STOP_CODING_AGENT",
@@ -128,7 +134,7 @@ export const stopAgentAction: Action = {
 
     // Stop all sessions if requested
     if ((params?.all as boolean) ?? content.all) {
-      const sessions = await ptyService.listSessions();
+      const sessions = (await ptyService.listSessions()).slice(0, STOP_AGENT_SESSION_LIMIT);
       if (sessions.length === 0) {
         if (callback) {
           await callback({
@@ -140,7 +146,12 @@ export const stopAgentAction: Action = {
 
       for (const session of sessions) {
         try {
-          await ptyService.stopSession(session.id);
+          await Promise.race([
+            ptyService.stopSession(session.id),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("Stop agent timeout")), STOP_AGENT_TIMEOUT_MS),
+            ),
+          ]);
         } catch (err) {
           logger.error(`Failed to stop session ${session.id}: ${err}`);
         }
@@ -170,7 +181,7 @@ export const stopAgentAction: Action = {
     }
 
     if (!sessionId) {
-      const sessions = await ptyService.listSessions();
+      const sessions = (await ptyService.listSessions()).slice(0, STOP_AGENT_SESSION_LIMIT);
       if (sessions.length === 0) {
         if (callback) {
           await callback({
@@ -193,7 +204,12 @@ export const stopAgentAction: Action = {
     }
 
     try {
-      await ptyService.stopSession(sessionId);
+      await Promise.race([
+        ptyService.stopSession(sessionId),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Stop agent timeout")), STOP_AGENT_TIMEOUT_MS),
+        ),
+      ]);
 
       // Clear state if this was the current session
       if (

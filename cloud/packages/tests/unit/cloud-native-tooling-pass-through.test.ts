@@ -126,4 +126,93 @@ describe("cloud native tool pass-through", () => {
       ),
     ).toEqual(["lookup"]);
   });
+
+  test("gateway adapter preserves cache keys, structured output schemas, and cache usage tokens", () => {
+    const providerOptions = gatewayHooks.mergeGatewayProviderOptions({
+      model: "cerebras/gpt-oss-120b",
+      messages: [],
+      prompt_cache_key: "v5:test-cache",
+      providerOptions: { gateway: { caching: "auto" } },
+    } as never);
+
+    expect(providerOptions?.cerebras).toEqual({
+      prompt_cache_key: "v5:test-cache",
+      promptCacheKey: "v5:test-cache",
+    });
+    expect(providerOptions?.eliza).toEqual({
+      promptCacheKey: "v5:test-cache",
+    });
+    expect(providerOptions?.gateway).toEqual({ caching: "auto" });
+
+    expect(
+      gatewayHooks.toGatewayOutput({
+        type: "json_schema",
+        json_schema: {
+          name: "evaluation",
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: { success: { type: "boolean" } },
+            required: ["success"],
+          },
+        },
+      } as never),
+    ).toBeDefined();
+
+    const usage = gatewayHooks.toOpenAIUsage({
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      cacheReadInputTokens: 60,
+      cacheCreationInputTokens: 40,
+    } as never);
+
+    expect(usage.prompt_tokens).toBe(100);
+    expect(usage.completion_tokens).toBe(20);
+    expect(usage.prompt_tokens_details?.cached_tokens).toBe(60);
+    expect(usage.prompt_tokens_details?.cache_read_input_tokens).toBe(60);
+    expect(usage.prompt_tokens_details?.cache_creation_input_tokens).toBe(40);
+    expect(usage.cache_read_input_tokens).toBe(60);
+    expect(usage.cache_creation_input_tokens).toBe(40);
+  });
+
+  test("chat completions bridge preserves caller schema and cache usage details", async () => {
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: { success: { type: "boolean" } },
+      required: ["success"],
+    };
+    const output = chatHooks.mapResponseFormat({
+      type: "json_schema",
+      json_schema: {
+        name: "evaluation",
+        description: "Evaluator result",
+        schema,
+      },
+    } as never) as { responseFormat: Promise<Record<string, unknown>> };
+
+    await expect(output.responseFormat).resolves.toMatchObject({
+      type: "json",
+      schema,
+      name: "evaluation",
+      description: "Evaluator result",
+    });
+
+    const usage = chatHooks.formatOpenAIUsage(
+      { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+      {
+        inputTokens: 100,
+        outputTokens: 20,
+        cachedInputTokens: 64,
+        inputTokenDetails: { cacheCreationTokens: 32 },
+      },
+    );
+
+    expect(usage.prompt_tokens_details?.cached_tokens).toBe(64);
+    expect(usage.prompt_tokens_details?.cache_read_input_tokens).toBe(64);
+    expect(usage.prompt_tokens_details?.cache_creation_input_tokens).toBe(32);
+    expect(usage.cache_read_input_tokens).toBe(64);
+    expect(usage.cache_creation_input_tokens).toBe(32);
+  });
 });

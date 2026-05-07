@@ -52,6 +52,8 @@ import {
 	setTrajectoryPurpose,
 } from "./trajectory-context";
 import {
+	type TrajectoryProviderAccessLogger,
+	type TrajectoryRuntimeLlmCallLogger,
 	withActionStep,
 	withEvaluatorStep,
 	withProviderStep,
@@ -165,10 +167,7 @@ import type {
 	StructuredOutputFailure,
 } from "./types/state";
 import type { ToolPolicyConfig, ToolProfileId } from "./types/tools";
-import {
-	parseJSONObjectFromText,
-	stringToUuid,
-} from "./utils";
+import { parseJSONObjectFromText, stringToUuid } from "./utils";
 import {
 	collectActionResultSizeWarnings,
 	getActionResultActionName,
@@ -189,10 +188,7 @@ import { buildDeterministicSeed } from "./utils/deterministic";
 import { getNumberEnv } from "./utils/environment";
 import { getErrorMessage, isTransientModelError } from "./utils/model-errors";
 import { resolveStateDir } from "./utils/state-dir";
-import {
-	ActionStreamFilter,
-	ToonFieldStreamExtractor,
-} from "./utils/streaming";
+import { ActionStreamFilter } from "./utils/streaming";
 import { isPlainObject } from "./utils/type-guards";
 
 const environmentSettings: RuntimeSettings = {};
@@ -226,9 +222,6 @@ const STABLE_PROMPT_PROVIDER_NAMES = new Set([
 	"PROVIDERS",
 ]);
 const STRUCTURED_CODE_FENCE_PATTERN = /```([^\n`]*)\r?\n?([\s\S]*?)```/g;
-const TOON_HEADER_PATTERN = /^TOON(?:\s+DOCUMENT)?[:\s-]*$/i;
-const TOON_FIELD_PATTERN =
-	/^[A-Za-z_][A-Za-z0-9_.-]*(?:\[[^\]\n]*\])?(?:\{[^\n]*\})?:/m;
 const JSON_OBJECT_KEY_PATTERN =
 	/(?:["'][^"'\n]+["']|[A-Za-z_][A-Za-z0-9_-]*)\s*:/;
 const WEB_SEARCH_SERVICE_TYPE = "web_search";
@@ -278,7 +271,19 @@ type StructuredResponseCandidate = {
 	source: string;
 };
 
-type DynamicPromptStreamExtractor = ToonFieldStreamExtractor;
+type DynamicPromptStreamExtractor = {
+	push(chunk: string): void;
+	flush(): void;
+	reset(): void;
+	signalError(message: string): void;
+	signalRetry(retry: number): { validatedFields: string[] };
+	diagnose(): {
+		missingFields: string[];
+		invalidFields: string[];
+		incompleteFields: string[];
+	};
+	getValidatedFields(): Map<string, string>;
+};
 
 function coerceOutgoingMessageText(text: unknown): string {
 	if (text === null || text === undefined) {
@@ -320,8 +325,6 @@ function resolveDynamicPromptModelType(
 /**
  * Resolves the default structured-output format from a setting value.
  * Used by `dynamicPromptExecFromState` when no per-call preference is given.
- * Accepts legacy `toon` as an alias for JSON so old callers do not keep the
- * runtime on the former TOON prompt contract.
  */
 export function resolveDefaultOutputFormat(
 	raw: unknown,
@@ -329,8 +332,6 @@ export function resolveDefaultOutputFormat(
 	if (typeof raw !== "string") return "JSON";
 	switch (raw.trim().toLowerCase()) {
 		case "json":
-			return "JSON";
-		case "toon":
 			return "JSON";
 		default:
 			return "JSON";
@@ -2877,31 +2878,17 @@ export class AgentRuntime implements IAgentRuntime {
 			const actionResults: ActionResult[] = [];
 			let accumulatedState = state;
 
-			function normalizeAction(actionString: string) {
-				return actionString.toLowerCase().replace(/_/g, "");
-			}
-			const normalizedActions = this.actions.map((action) => {
-				const normalizedName = normalizeAction(action.name);
-				const normalizedSimiles = action.similes
-					? action.similes.map((simile) => normalizeAction(simile))
-					: [];
-				return {
-					action,
-					normalizedName,
-					normalizedSimiles,
-				};
-			});
 			const actionByName = new Map<string, Action>();
-			for (const entry of normalizedActions) {
-				if (!actionByName.has(entry.normalizedName)) {
-					actionByName.set(entry.normalizedName, entry.action);
+			for (const action of this.actions) {
+				if (!actionByName.has(action.name)) {
+					actionByName.set(action.name, action);
 				}
 			}
 			this.logger.trace(
 				{
 					src: "agent",
 					agentId: this.agentId,
-					actions: this.actions.map((a) => normalizeAction(a.name)),
+					actions: this.actions.map((a) => a.name),
 				},
 				"Available actions",
 			);
@@ -2930,66 +2917,7 @@ export class AgentRuntime implements IAgentRuntime {
 					{ src: "agent", agentId: this.agentId, action: responseAction },
 					"Processing action",
 				);
-				const normalizedResponseAction = normalizeAction(responseAction);
-
-				// First try exact match
-				let action = actionByName.get(normalizedResponseAction);
-
-				if (!action) {
-					// Then try fuzzy matching
-					for (const entry of normalizedActions) {
-						if (
-							entry.normalizedName.includes(normalizedResponseAction) ||
-							normalizedResponseAction.includes(entry.normalizedName)
-						) {
-							action = entry.action;
-							break;
-						}
-					}
-				}
-
-				if (!action) {
-					// Try similes
-					for (const entry of normalizedActions) {
-						const exactSimileMatch = entry.normalizedSimiles.find(
-							(simile) => simile === normalizedResponseAction,
-						);
-
-						if (exactSimileMatch) {
-							action = entry.action;
-							this.logger.debug(
-								{
-									src: "agent",
-									agentId: this.agentId,
-									action: action.name,
-									match: "simile",
-								},
-								"Action resolved via simile",
-							);
-							break;
-						}
-
-						const fuzzySimileMatch = entry.normalizedSimiles.find(
-							(simile) =>
-								simile.includes(normalizedResponseAction) ||
-								normalizedResponseAction.includes(simile),
-						);
-
-						if (fuzzySimileMatch) {
-							action = entry.action;
-							this.logger.debug(
-								{
-									src: "agent",
-									agentId: this.agentId,
-									action: action.name,
-									match: "fuzzy",
-								},
-								"Action resolved via fuzzy match",
-							);
-							break;
-						}
-					}
-				}
+				const action = actionByName.get(responseAction.trim());
 				if (!action) {
 					const errorMsg = `Action not found: ${responseAction}`;
 					this.logger.error(
@@ -3306,7 +3234,7 @@ export class AgentRuntime implements IAgentRuntime {
 										? result
 										: result === null
 											? null
-												: stringifyStructuredForPrompt({ result });
+											: stringifyStructuredForPrompt({ result });
 						actionResult = {
 							success: true,
 							data: {
@@ -3582,7 +3510,7 @@ export class AgentRuntime implements IAgentRuntime {
 				this.stateCache.set(`${message.id}_action_results`, {
 					values: { actionResults },
 					data: { actionResults, actionPlan },
-						text: stringifyStructuredForPrompt({ actionResults }),
+					text: stringifyStructuredForPrompt({ actionResults }),
 				});
 			}
 		}
@@ -4026,8 +3954,8 @@ export class AgentRuntime implements IAgentRuntime {
 				? trajectoryStepIdFromMessage
 				: getTrajectoryContext()?.trajectoryStepId;
 
-		// If we're running inside a trajectory step, always bypass the state cache so
-		// providers are executed and can be logged for training/benchmark traces.
+		// When composing state for a recorded trajectory step, execute providers
+		// instead of serving a stale cached state so provider accesses are logged.
 		if (trajectoryStepId) {
 			skipCache = true;
 		}
@@ -4079,22 +4007,9 @@ export class AgentRuntime implements IAgentRuntime {
 		);
 
 		// Optional trajectory logging service (no-op by default).
-		type TrajectoryLogger = Service & {
-			logProviderAccess: (params: {
-				stepId: string;
-				providerName: string;
-				data: Record<string, string | number | boolean | null>;
-				purpose: string;
-				query?: Record<string, string | number | boolean | null>;
-				runId?: string;
-				roomId?: string;
-				messageId?: string;
-				executionTraceId?: string;
-			}) => void;
-		};
-		const trajLogger = (await this._ensureServiceStarted(
-			"trajectories",
-		)) as TrajectoryLogger | null;
+		const trajLogger = (await this._ensureServiceStarted("trajectories")) as
+			| (Service & TrajectoryProviderAccessLogger)
+			| null;
 		const providerData = await Promise.all(
 			providersToGet.map(async (provider) => {
 				const start = Date.now();
@@ -5120,7 +5035,7 @@ export class AgentRuntime implements IAgentRuntime {
 			isTextStreamResult(rawResponse)
 		) {
 			// WHY undefined for accumulated: raw LLM tokens have no field-level
-			// extraction; accumulated text is only meaningful after a TOON field
+			// extraction; accumulated text is only meaningful after a structured
 			// extractor has parsed and isolated a field. Passing undefined is
 			// honest; consumers that need
 			// accumulated data get it from the extractor's onChunk bridge in
@@ -5224,8 +5139,10 @@ export class AgentRuntime implements IAgentRuntime {
 			await this.recordUseModelTrajectory({
 				modelType: String(modelType),
 				resolvedModelKey: String(resolvedModelKey),
+				provider: resolvedModel?.provider ?? provider,
 				modelParams,
 				promptContent,
+				result: resultRef.current,
 				response: modelOutToTrajectoryString(resultRef.current),
 				elapsedTime,
 			});
@@ -5277,8 +5194,10 @@ export class AgentRuntime implements IAgentRuntime {
 		await this.recordUseModelTrajectory({
 			modelType: String(modelType),
 			resolvedModelKey: String(resolvedModelKey),
+			provider: resolvedModel?.provider ?? provider,
 			modelParams,
 			promptContent,
+			result: resultRef.current,
 			response: modelOutToTrajectoryString(resultRef.current),
 			elapsedTime,
 		});
@@ -5298,39 +5217,21 @@ export class AgentRuntime implements IAgentRuntime {
 	private async recordUseModelTrajectory(args: {
 		modelType: string;
 		resolvedModelKey: string;
+		provider?: string;
 		modelParams: unknown;
 		promptContent: string | null | undefined;
+		result?: unknown;
 		response: string;
 		elapsedTime: number;
 	}): Promise<void> {
 		if (this.initResolver) return;
 
-		type TrajectoryLogger = Service & {
-			logLlmCall: (params: {
-				stepId: string;
-				model: string;
-				systemPrompt: string;
-				userPrompt: string;
-				response: string;
-				temperature: number;
-				maxTokens: number;
-				purpose: string;
-				actionType: string;
-				latencyMs: number;
-				modelSlot?: string;
-				runId?: string;
-				roomId?: string;
-				messageId?: string;
-				executionTraceId?: string;
-			}) => void;
-		};
-
 		try {
 			const trajCtx = getTrajectoryContext();
 			const stepId = trajCtx?.trajectoryStepId;
-			const trajLogger = (await this._ensureServiceStarted(
-				"trajectories",
-			)) as TrajectoryLogger | null;
+			const trajLogger = (await this._ensureServiceStarted("trajectories")) as
+				| (Service & TrajectoryRuntimeLlmCallLogger)
+				| null;
 			if (!stepId || !trajLogger) return;
 
 			const tempRaw = isPlainObject(args.modelParams)
@@ -5339,21 +5240,59 @@ export class AgentRuntime implements IAgentRuntime {
 			const maxTokensRaw = isPlainObject(args.modelParams)
 				? (args.modelParams as { maxTokens?: number }).maxTokens
 				: undefined;
+			const paramsRecord = isPlainObject(args.modelParams)
+				? (args.modelParams as Record<string, unknown>)
+				: {};
+			const resultRecord = isPlainObject(args.result)
+				? (args.result as Record<string, unknown>)
+				: {};
+			const usageRecord = isPlainObject(resultRecord.usage)
+				? (resultRecord.usage as Record<string, unknown>)
+				: {};
+			const asNumber = (value: unknown): number | undefined =>
+				typeof value === "number" && Number.isFinite(value) ? value : undefined;
 			const activeTrace = this.getActiveTrace(this.getCurrentRunId());
 			trajLogger.logLlmCall({
 				stepId,
 				model: args.resolvedModelKey,
+				modelType: args.modelType,
+				provider: args.provider,
 				systemPrompt:
 					typeof this.character.system === "string"
 						? this.character.system
 						: "",
 				userPrompt: args.promptContent ?? "",
+				prompt:
+					typeof paramsRecord.prompt === "string"
+						? paramsRecord.prompt
+						: (args.promptContent ?? ""),
+				messages: Array.isArray(paramsRecord.messages)
+					? paramsRecord.messages
+					: undefined,
+				tools: paramsRecord.tools,
+				toolChoice: paramsRecord.toolChoice,
+				responseSchema: paramsRecord.responseSchema,
+				providerOptions: paramsRecord.providerOptions,
 				response: args.response,
+				toolCalls: Array.isArray(resultRecord.toolCalls)
+					? resultRecord.toolCalls
+					: undefined,
+				finishReason:
+					typeof resultRecord.finishReason === "string"
+						? resultRecord.finishReason
+						: undefined,
+				providerMetadata: resultRecord.providerMetadata,
 				temperature: typeof tempRaw === "number" ? tempRaw : 0,
 				maxTokens: typeof maxTokensRaw === "number" ? maxTokensRaw : 0,
 				purpose: trajCtx?.purpose ?? "action",
 				actionType: "runtime.useModel",
 				latencyMs: Math.max(0, Math.round(args.elapsedTime)),
+				promptTokens: asNumber(usageRecord.promptTokens),
+				completionTokens: asNumber(usageRecord.completionTokens),
+				cacheReadInputTokens: asNumber(usageRecord.cacheReadInputTokens),
+				cacheCreationInputTokens: asNumber(
+					usageRecord.cacheCreationInputTokens,
+				),
 				modelSlot: args.modelType,
 				runId: trajCtx?.runId,
 				roomId: trajCtx?.roomId,
@@ -5590,8 +5529,8 @@ export class AgentRuntime implements IAgentRuntime {
 			modelSize?: "nano" | "small" | "medium" | "large" | "mega";
 			modelType?: import("./types").TextGenerationModelType;
 			model?: string;
-			preferredEncapsulation?: "json" | "toon";
-			forceFormat?: "json" | "toon";
+			preferredEncapsulation?: "json";
+			forceFormat?: "json";
 			requiredFields?: string[];
 			contextCheckLevel?: 0 | 1 | 2 | 3;
 			checkpointCodes?: boolean;
@@ -5950,64 +5889,6 @@ ${section_end}`;
 			this.logger.debug(
 				`dynamicPromptExecFromState prompt ~${outputTokenEst.toLocaleString()} tokens`,
 			);
-
-			// Create a structured extractor on first iteration if streaming.
-			// Legacy TOON output needed field-aware extraction; raw structured tokens must not be
-			// forwarded to user-visible streaming callbacks.
-			if (
-				currentRetry === 0 &&
-				options.onStreamChunk &&
-				!extractor &&
-				format === "TOON"
-			) {
-				const streamFields = schema
-					.filter((row) => {
-						if (row.streamField !== undefined) return row.streamField;
-						return row.field === "text";
-					})
-					.map((row) => row.field);
-
-				// Only use fallback if no explicit streamField settings exist
-				// Don't override explicit streamField: false on "text" field
-				const hasExplicitStreamSettings = schema.some(
-					(r) => r.streamField !== undefined,
-				);
-				const finalStreamFields =
-					streamFields.length > 0
-						? streamFields
-						: !hasExplicitStreamSettings &&
-								schema.some((r) => r.field === "text")
-							? ["text"]
-							: [];
-
-				const streamMessageId = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-				// WHY accumulated is forwarded: the extractor tracks the full extracted text
-				// per field internally (`content` in emitFieldContent). Surfacing it
-				// here means consumers like first-sentence voice detection or Eliza's
-				// streaming-text resolver can use the authoritative value instead of
-				// Note: this design prevents dual extractor conflicts by providing authoritative accumulated data
-				// re-accumulating from deltas — which broke when two extractors ran
-				// concurrently (the dual-extractor garbling bug).
-				const onChunk = (
-					chunk: string,
-					_field?: string,
-					accumulated?: string,
-				) => options.onStreamChunk?.(chunk, streamMessageId, accumulated);
-				const onEvent = options.onStreamEvent
-					? (event: StreamEvent) =>
-							options.onStreamEvent?.(event, streamMessageId)
-					: undefined;
-
-				extractor = new ToonFieldStreamExtractor({
-					level: contextLevel,
-					schema,
-					streamFields: finalStreamFields,
-					onChunk,
-					onEvent,
-					abortSignal: options.abortSignal,
-				});
-			}
 
 			// Pass promptSegments so providers can use cache hints when supported (Anthropic block cache, OpenAI/Gemini prefix).
 			const modelParams = {
@@ -6805,7 +6686,7 @@ ${section_end}`;
 	}
 
 	private buildValidationOutputInstructions({
-		format,
+		format: _format,
 		schema,
 		perFieldCodes,
 		includeFirstCheckpoint,
@@ -6817,14 +6698,11 @@ ${section_end}`;
 		includeFirstCheckpoint: boolean;
 		includeLastCheckpoint: boolean;
 	}): string {
-		const isJsonLike = format === "JSON" || format === "TOON";
 		const lines: string[] = [];
 
 		if (includeFirstCheckpoint) {
 			lines.push(
-				isJsonLike
-					? 'Echo the prompt checkpoint fields: "one_initial_code", "one_middle_code", "one_end_code".'
-					: "",
+				'Echo the prompt checkpoint fields: "one_initial_code", "one_middle_code", "one_end_code".',
 			);
 		}
 
@@ -6835,17 +6713,13 @@ ${section_end}`;
 			}
 
 			lines.push(
-				isJsonLike
-					? `For "${row.field}", include "code_${row.field}_start": "${fieldCode}" and "code_${row.field}_end": "${fieldCode}".`
-					: "",
+				`For "${row.field}", include "code_${row.field}_start": "${fieldCode}" and "code_${row.field}_end": "${fieldCode}".`,
 			);
 		}
 
 		if (includeLastCheckpoint) {
 			lines.push(
-				isJsonLike
-					? 'Echo the final checkpoint fields: "two_initial_code", "two_middle_code", "two_end_code".'
-					: "",
+				'Echo the final checkpoint fields: "two_initial_code", "two_middle_code", "two_end_code".',
 			);
 		}
 
@@ -7353,95 +7227,6 @@ ${section_end}`;
 			trimmed.includes("}") &&
 			JSON_OBJECT_KEY_PATTERN.test(trimmed)
 		);
-	}
-
-	private looksLikeToonDocument(text: string): boolean {
-		const lines = text
-			.trim()
-			.split(/\r?\n/)
-			.filter((line) => line.trim().length > 0);
-		if (lines.length === 0) {
-			return false;
-		}
-
-		const firstLine = lines[0]?.trim() ?? "";
-		if (TOON_HEADER_PATTERN.test(firstLine)) {
-			return lines
-				.slice(1)
-				.some((line) => TOON_FIELD_PATTERN.test(line.trim()));
-		}
-
-		if (!TOON_FIELD_PATTERN.test(firstLine)) {
-			return false;
-		}
-
-		if (lines.length === 1) {
-			const [, value = ""] = firstLine.split(/:(.*)/s);
-			const trimmedValue = value.trim();
-			return !(trimmedValue.startsWith("{") && trimmedValue.endsWith("}"));
-		}
-
-		let structuredFieldCount = 0;
-		for (const line of lines) {
-			const trimmed = line.trim();
-			if (TOON_FIELD_PATTERN.test(trimmed)) {
-				structuredFieldCount += 1;
-				continue;
-			}
-			if (/^[\t ]+/.test(line)) {
-				continue;
-			}
-			return false;
-		}
-
-		return structuredFieldCount > 0;
-	}
-
-	private extractEmbeddedToonDocument(text: string): string | null {
-		const lines = text.trim().split(/\r?\n/);
-		const startIndex = lines.findIndex((line) => {
-			const trimmed = line.trim();
-			return (
-				TOON_HEADER_PATTERN.test(trimmed) || TOON_FIELD_PATTERN.test(trimmed)
-			);
-		});
-
-		if (startIndex === -1) {
-			return null;
-		}
-
-		const collected: string[] = [];
-		let sawStructuredField = false;
-
-		for (let index = startIndex; index < lines.length; index++) {
-			const line = lines[index] ?? "";
-			const trimmed = line.trim();
-			const isStructuredField = TOON_FIELD_PATTERN.test(trimmed);
-			const isIndented = /^[\t ]+/.test(line);
-			const isHeader = TOON_HEADER_PATTERN.test(trimmed);
-
-			if (isHeader && !sawStructuredField) {
-				collected.push(line);
-				continue;
-			}
-
-			if (isStructuredField) {
-				sawStructuredField = true;
-				collected.push(line);
-				continue;
-			}
-
-			if (trimmed.length === 0 || isIndented) {
-				if (collected.length > 0) {
-					collected.push(line);
-					continue;
-				}
-			}
-
-			break;
-		}
-
-		return sawStructuredField ? collected.join("\n").trim() : null;
 	}
 
 	private extractEmbeddedJsonObject(text: string): string | null {

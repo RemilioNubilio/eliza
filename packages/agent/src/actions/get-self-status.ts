@@ -14,6 +14,7 @@ import {
   type AwarenessRegistry,
   getGlobalAwarenessRegistry,
 } from "@elizaos/shared";
+import { hasSelectedContextOrSignalSync } from "./context-signal.js";
 
 const VALID_MODULES = [
   "all",
@@ -28,6 +29,48 @@ const VALID_MODULES = [
 ] as const;
 
 type ValidModule = (typeof VALID_MODULES)[number];
+const GET_SELF_STATUS_CONTEXTS = [
+  "general",
+  "agent_internal",
+  "admin",
+  "settings",
+  "connectors",
+  "wallet",
+] as const;
+const GET_SELF_STATUS_TERMS = [
+  "status",
+  "self status",
+  "system status",
+  "runtime status",
+  "plugin health",
+  "health check",
+  "how are your plugins",
+  "how are you running",
+  "permissions",
+  "provider status",
+  "connector status",
+  "wallet status",
+  "状态",
+  "系统状态",
+  "插件健康",
+  "상태",
+  "시스템 상태",
+  "플러그인 상태",
+  "estado",
+  "estado del sistema",
+  "salud del plugin",
+  "estado do sistema",
+  "saúde do plugin",
+  "saude do plugin",
+  "trạng thái",
+  "trang thai",
+  "tình trạng hệ thống",
+  "tinh trang he thong",
+  "katayuan",
+  "status ng system",
+];
+const MAX_SELF_STATUS_BRIEF_CHARS = 1200;
+const MAX_SELF_STATUS_FULL_CHARS = 8000;
 
 function isAwarenessRegistry(value: unknown): value is AwarenessRegistry {
   return (
@@ -40,6 +83,8 @@ function isAwarenessRegistry(value: unknown): value is AwarenessRegistry {
 
 export const getSelfStatusAction: Action = {
   name: "GET_SELF_STATUS",
+  contexts: [...GET_SELF_STATUS_CONTEXTS],
+  roleGate: { minRole: "USER" },
 
   similes: [
     "CHECK_STATUS",
@@ -55,7 +100,13 @@ export const getSelfStatusAction: Action = {
   descriptionCompressed:
     "get detail self-status specific module (wallet, permission, plugin, etc) module use need detail always-on summary provide",
 
-  validate: async () => true,
+  validate: async (_runtime, message, state) =>
+    hasSelectedContextOrSignalSync(
+      message,
+      state,
+      GET_SELF_STATUS_CONTEXTS,
+      GET_SELF_STATUS_TERMS,
+    ),
 
   handler: async (runtime, _message, _state, options) => {
     const registry = (() => {
@@ -67,6 +118,8 @@ export const getSelfStatusAction: Action = {
     if (!registry) {
       return {
         text: "Self-awareness registry is not available.",
+        values: { error: "REGISTRY_UNAVAILABLE" },
+        data: { actionName: "GET_SELF_STATUS" },
         success: false,
       };
     }
@@ -79,8 +132,26 @@ export const getSelfStatusAction: Action = {
       : "all";
     const detailLevel = params?.detailLevel === "full" ? "full" : "brief";
 
-    const text = await registry.getDetail(runtime, module, detailLevel);
-    return { text, success: true };
+    const rawText = await registry.getDetail(runtime, module, detailLevel);
+    const maxChars =
+      detailLevel === "full"
+        ? MAX_SELF_STATUS_FULL_CHARS
+        : MAX_SELF_STATUS_BRIEF_CHARS;
+    const text =
+      rawText.length <= maxChars
+        ? rawText
+        : `${rawText.slice(0, maxChars)}\n…[self-status truncated]`;
+    return {
+      text,
+      values: { module, detailLevel },
+      data: {
+        actionName: "GET_SELF_STATUS",
+        module,
+        detailLevel,
+        truncated: text.length < rawText.length,
+      },
+      success: true,
+    };
   },
 
   parameters: [

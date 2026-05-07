@@ -14,9 +14,8 @@ describe("SHELL_COMMAND action", () => {
     vi.mocked(hasActionRoleAccess).mockReset();
   });
 
-  it("stops post-action continuation when terminal access is denied", async () => {
+  it("marks the turn as owned when terminal access is denied", async () => {
     vi.mocked(hasActionRoleAccess).mockResolvedValue(false);
-
     const result = await terminalAction.handler?.(
       { agentId: "agent-id" } as IAgentRuntime,
       {

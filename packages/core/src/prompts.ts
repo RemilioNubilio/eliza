@@ -27,7 +27,7 @@ instructions[5]:
 - include a short reason for why this contact should be saved
 
 output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 
 Example:
 contactName: Jane Doe
@@ -44,7 +44,7 @@ export const autonomyContinuousContinueTemplate = `Your job: reflect on context,
 - Use available actions/tools when they can advance the goal.
 - Use thinking to think about and plan what you want to do.
 - Do NOT speak out loud. This loop is internal-only.
-- Output structure: a TOON document with a thought field plus an optional actions list. No other message text. No XML, no JSON, no markdown fences.
+- Output structure: a JSON object with a thought field plus an optional actions list. No other message text. No XML or markdown fences.
 - If you don't need to make a change this round, take no action and output only the thought field with an empty actions value.
 - If you cannot act, explain what is missing inside thought and take no action.
 - Keep the response concise, focused on the next action.
@@ -54,7 +54,7 @@ USER CONTEXT (most recent last):
 
 Your last autonomous note: "{{lastThought}}"
 
-Continue from that note. Output a TOON thought and take action if needed.
+Continue from that note. Output a JSON thought and take action if needed.
 
 Example (no action this round):
 thought: Continuing from prior note; nothing new to act on.
@@ -67,7 +67,7 @@ export const autonomyContinuousFirstTemplate = `Your job: reflect on context, de
 - Use available actions/tools when they can advance the goal.
 - Use thinking to think about and plan what you want to do.
 - Do NOT speak out loud. This loop is internal-only.
-- Output structure: a TOON document with a thought field plus an optional actions list. No other message text. No XML, no JSON, no markdown fences.
+- Output structure: a JSON object with a thought field plus an optional actions list. No other message text. No XML or markdown fences.
 - If you don't need to make a change this round, take no action and output only the thought field with an empty actions value.
 - If you cannot act, explain what is missing inside thought and take no action.
 - Keep the response concise, focused on the next action.
@@ -75,7 +75,7 @@ export const autonomyContinuousFirstTemplate = `Your job: reflect on context, de
 USER CONTEXT (most recent last):
 {{targetRoomContext}}
 
-Think briefly, then output a TOON thought and take action if needed.
+Think briefly, then output a JSON thought and take action if needed.
 
 Example (no action this round):
 thought: Inspecting current state; nothing to act on this round.
@@ -90,7 +90,7 @@ Your job: continue helping the user and make progress toward the task.
 - Use available actions/tools to gather information or execute steps.
 - Use thinking to think about and plan what you want to do.
 - Do NOT speak out loud. This loop is internal-only.
-- Output structure: a TOON document with a thought field plus an optional actions list. No other message text. No XML, no JSON, no markdown fences.
+- Output structure: a JSON object with a thought field plus an optional actions list. No other message text. No XML or markdown fences.
 - If you don't need to make a change this round, take no action and output only the thought field with an empty actions value.
 - If you cannot act, explain what is missing inside thought and take no action.
 - Keep the response concise, focused on the next action.
@@ -100,7 +100,7 @@ USER CHAT CONTEXT (most recent last):
 
 Your last autonomous note: "{{lastThought}}"
 
-Continue the task. Output a TOON thought and take action now.
+Continue the task. Output a JSON thought and take action now.
 
 Example (no action this round):
 thought: Waiting on prior step to complete; nothing to do this round.
@@ -116,12 +116,12 @@ Your job: continue helping the user and make progress toward the task.
 - In MCP mode, selector-based actions require a process scope (pass process=... or prefix selector with "process:<name> >> ...").
 - Prefer safe, incremental steps; if unsure, gather more UI context before acting.
 - Do NOT speak out loud. This loop is internal-only.
-- Output structure: a TOON document with a thought field plus an optional actions list. No other message text. No XML, no JSON, no markdown fences.
+- Output structure: a JSON object with a thought field plus an optional actions list. No other message text. No XML or markdown fences.
 
 USER CHAT CONTEXT (most recent last):
 {{targetRoomContext}}
 
-Decide what to do next. Output a TOON thought, then take the most useful action.
+Decide what to do next. Output a JSON thought, then take the most useful action.
 
 Example:
 thought: Need to gather UI state before acting.
@@ -141,11 +141,11 @@ export const chooseOptionTemplate = `# Task: Choose an option from the available
 Analyze the options and select the most appropriate one based on the current context.
 Provide your reasoning and the selected option ID.
 
-Respond using TOON like this:
+Respond using JSON like this:
 thought: Your reasoning for the selection
 selected_id: The ID of the selected option
 
-IMPORTANT: Your response must ONLY contain the TOON document above.`;
+IMPORTANT: Your response must ONLY contain the JSON object above.`;
 
 export const CHOOSE_OPTION_TEMPLATE = chooseOptionTemplate;
 
@@ -170,7 +170,7 @@ Common patterns:
 
 Extract the operation, key (if applicable), value (if applicable), level, description, and type from the user's message.
 
-Output TOON only. Return exactly one TOON document, no prose or fences.
+Output JSON only. Return exactly one JSON object, no prose or fences.
 Use only these fields:
 operation: get|set|delete|list|check
 key: OPENAI_API_KEY
@@ -194,7 +194,7 @@ Common patterns:
 Recent Messages:
 {{recentMessages}}
 
-Output TOON only. Return exactly one TOON document, no prose or fences.
+Output JSON only. Return exactly one JSON object, no prose or fences.
 Use:
 key: OPENAI_API_KEY
 reason: why it is needed
@@ -221,7 +221,7 @@ Common patterns:
 
 Extract the secrets from the user's message. If the key name isn't explicitly specified, infer an appropriate UPPERCASE_WITH_UNDERSCORES name based on the context.
 
-Output TOON only. Return exactly one TOON document, no prose or fences.
+Output JSON only. Return exactly one JSON object, no prose or fences.
 Use:
 secrets[n]{key,value,description,type}:
 level: global|world|user
@@ -229,6 +229,120 @@ level: global|world|user
 Omit description/type/level when unknown. No XML or JSON.`;
 
 export const EXTRACT_SECRETS_TEMPLATE = extractSecretsTemplate;
+
+export const factExtractionTemplate = `# Task: Classify and extract facts from this message
+
+You maintain two fact stores for an AI assistant. Decide what to insert, strengthen, decay, or contradict. Return JSON ops only.
+
+Stores:
+- durable: stable identity-level claims that matter in a year.
+  Categories: identity, health, relationship, life_event, business_role, preference, goal.
+- current: time-bound state about right now or the near term.
+  Categories: feeling, physical_state, working_on, going_through, schedule_context.
+
+Rules:
+- If a claim feels stale or surprising to retrieve in a year, use current.
+- Empty output is right for small talk or questions with no new claim.
+- Before add_durable/add_current, scan known facts. If meaning already exists, emit strengthen with that factId.
+- Paraphrases count as duplicates. Match meaning, not surface form.
+
+Ops:
+- add_durable: claim, category, structured_fields; optional verification_status, reason.
+- add_current: claim, category, structured_fields; optional valid_at, reason.
+- strengthen: factId, optional reason.
+- decay: factId, optional reason.
+- contradict: factId, reason, optional proposedText.
+
+Examples:
+
+Message: "I have a flat cortisol curve confirmed via lab"
+{
+  "ops": [
+    {
+      "op": "add_durable",
+      "claim": "flat cortisol curve",
+      "category": "health",
+      "structured_fields": {
+        "condition": "flat cortisol curve",
+        "source": "lab"
+      },
+      "verification_status": "confirmed"
+    }
+  ]
+}
+
+Message: "I'm anxious this morning"
+{
+  "ops": [
+    {
+      "op": "add_current",
+      "claim": "anxious this morning",
+      "category": "feeling",
+      "structured_fields": {
+        "emotion": "anxious",
+        "window": "morning"
+      }
+    }
+  ]
+}
+
+Known durable facts include: [fact_abc] (durable.identity) lives in Berlin
+Message: "Berlin's been treating me well"
+{
+  "ops": [
+    {
+      "op": "strengthen",
+      "factId": "fact_abc",
+      "reason": "user reaffirmed living in Berlin"
+    }
+  ]
+}
+
+Known durable facts include: [fact_abc] (durable.identity) lives in Berlin
+Message: "Actually I moved to Tokyo last month"
+{
+  "ops": [
+    {
+      "op": "contradict",
+      "factId": "fact_abc",
+      "proposedText": "lives in Tokyo",
+      "reason": "user moved to Tokyo, contradicts Berlin"
+    },
+    {
+      "op": "add_durable",
+      "claim": "moved to Tokyo last month",
+      "category": "life_event",
+      "structured_fields": {
+        "event": "relocation",
+        "to": "Tokyo"
+      }
+    }
+  ]
+}
+
+Inputs:
+Agent Name: {{agentName}}
+Message Sender: {{senderName}} (ID: {{senderId}})
+Now: {{now}}
+
+Recent messages:
+{{recentMessages}}
+
+Known durable facts (format: [factId] (durable.category) claim):
+{{knownDurable}}
+
+Known current facts (format: [factId] (current.category, since validAt) claim):
+{{knownCurrent}}
+
+Latest message:
+{{message}}
+
+Output:
+JSON only. Return exactly one JSON object. No prose, no fences, no XML, no <think>.
+If nothing should change, return:
+{"ops":[]}`;
+
+export const FACT_EXTRACTION_TEMPLATE = factExtractionTemplate;
 
 export const imageDescriptionTemplate = `Task: Analyze the provided image and generate a comprehensive description with multiple levels of detail.
 
@@ -242,12 +356,12 @@ Be objective and descriptive. Focus on what you can actually see in the image ra
 
 Output:
 
-Respond using TOON like this:
+Respond using JSON like this:
 title: A concise, descriptive title for the image
 description: A brief 1-2 sentence summary of the key elements in the image
 text: An extensive, detailed description covering all visible elements, composition, lighting, colors, mood, setting, objects, people, activities, and any other relevant details you can observe in the image
 
-IMPORTANT: Your response must ONLY contain the TOON document above. Do not include any text, thinking, or reasoning before or after it.`;
+IMPORTANT: Your response must ONLY contain the JSON object above. Do not include any text, thinking, or reasoning before or after it.`;
 
 export const IMAGE_DESCRIPTION_TEMPLATE = imageDescriptionTemplate;
 
@@ -262,11 +376,11 @@ The prompt should be specific, descriptive, and suitable for AI image generation
 # Recent conversation:
 {{recentMessages}}
 
-Respond using TOON like this:
+Respond using JSON like this:
 thought: Your reasoning for the image prompt
 prompt: Detailed image generation prompt
 
-IMPORTANT: Your response must ONLY contain the TOON document above.`;
+IMPORTANT: Your response must ONLY contain the JSON object above.`;
 
 export const IMAGE_GENERATION_TEMPLATE = imageGenerationTemplate;
 
@@ -291,7 +405,7 @@ Also extract:
 - **Topics**: List of main topics discussed (comma-separated)
 - **Key Points**: Important facts or decisions (bullet points)
 
-Respond in TOON:
+Respond in JSON:
 text: Your comprehensive summary here
 topics[0]: topic1
 topics[1]: topic2
@@ -432,151 +546,43 @@ memories[2]:
 
 export const LONG_TERM_EXTRACTION_TEMPLATE = longTermExtractionTemplate;
 
-export const messageClassifierTemplate = `Legacy messageClassifierTemplate is disabled. The v5 message runtime handles routing through messageHandler contexts and the planner loop.`;
-
-export const MESSAGE_CLASSIFIER_TEMPLATE = messageClassifierTemplate;
-
-export const messageHandlerTemplate = `task: Generate dialog and actions for {{agentName}}.
+export const messageHandlerTemplate = `task: Decide whether {{agentName}} should respond and which contexts are needed.
 
 context:
 {{providers}}
 
-rules[22]:
-- think briefly, then respond
-- always include a thought field, even for direct replies
-- actions execute in listed order
-- if replying without another grounded state/action query, REPLY goes first
-- REPLY means a direct chat reply in the current conversation only; it is not an email reply, inbox workflow, or external-channel send
-- set simple=true only when the planner's text should be sent directly as the final reply without running REPLY again
-- if actions are REPLY-only and you want the REPLY action to generate the final user-facing message, set simple=false
-- use IGNORE or STOP only by themselves
-- in group conversations, choose IGNORE if the latest message is addressed to someone else and not to {{agentName}}
-- include providers only when needed
-- use only action and provider names that appear in the listed runtime surface; never invent new action names, provider names, benchmark ids, or paraphrased tool labels
-- when the user asks about uploaded files, documents, prior uploads, or knowledge-base contents, call the relevant providers before replying instead of asking the user to resend the material
-- when the user refers to "the uploaded file", "the document I uploaded", or a prior upload without naming it, treat that as a provider lookup request first; only ask which file after grounded document/knowledge lookup still leaves multiple plausible answers
-- use provider_hints from context when present instead of restating the same rules
-- if an action needs inputs, include them inside that action's params block
-- if a required param is unknown, ask for clarification in text
-- for live status questions or remaining-work queries, do not answer from recent conversation alone; call the relevant action/provider to refresh state, and do not pair it with a speculative REPLY that guesses the result
-- when an action will fetch the state and produce the final grounded answer, do not add REPLY just to say "checking", "let me look", or similar filler; use the action alone and leave text empty
-- when the user asks you to create, store, remember, schedule, remind, upload, follow up, route, escalate, or set a standing policy, choose the matching action instead of handling it in prose only
-- when the request names an external integration (Gmail, Discord, Slack, Telegram, GitHub, Google Sheets, Google Calendar, Google Drive, Notion, etc.) AND describes data movement between services or scheduled invocation of an external API, prefer CREATE_N8N_WORKFLOW; reserve CREATE_TRIGGER_TASK for self-driven scheduled prompts to the agent itself with no external API calls
-- for standing or future-condition requests like "if/when X, do Y", still choose the action that records, queues, or routes that behavior on the first turn
-- if a matching action can own the task and ask the missing follow-up itself, still select that action and put the clarification in text; do not reply in prose alone
-- when the user defines a durable preference, recurring block, escalation policy, upload policy, approval-gated workflow, or multi-device reminder rule, select the owning action even if some implementation details are still missing
-	- do not wait for portal names, deck attachments, updated-id uploads, exact flight times, reservation ids, fee-risk item names, priority labels, event IDs, exact travel preferences, or the definition of "important" before selecting the owning action; let the action gather those details
-	- future portal uploads, updated-id interventions, and cancellation-fee warning policies are operational workflows, not prose acknowledgements; choose COMPUTER_USE or DEVICE_INTENT first and let those actions ask the missing follow-up
-	- for LifeOps create requests with a clear defaultable habit or natural window, such as drinking water, stretch breaks during the day, weekday-after-lunch Invisalign checks, or brushing when waking up and before bed, call LIFE instead of asking for exact clock times unless the user explicitly asks for precise scheduling
-- only choose actions that directly satisfy the user's request or an explicit live-state question; do not opportunistically triage inboxes, summarize calendars, propose meetings, or call adjacent tools just because provider context makes them available
-- when the user is venting, reflecting, stating an opinion, or asking for generic advice about a domain, stay in REPLY or NONE unless they explicitly ask you to inspect state, change state, send something, schedule something, or perform a real operation
+rules:
+- choose action=RESPOND only when {{agentName}} should answer or perform work for this message
+- choose action=IGNORE when the message should be ignored
+- choose action=STOP when the user asks {{agentName}} to stop or disengage
+- contexts is a list of registered context ids, such as calendar, email, wallet, browser, code, or automation
+- never invent context ids that are not registered
+- only choose contexts when tools or context providers may be needed
+- simple=true only means reply can be sent directly when contexts is empty
+- if contexts is non-empty, planning will run and simple will be ignored
+- include reply only for a direct user-visible response
+- thought is internal routing rationale and is not shown to the user
 
-control_actions:
-- STOP means the task is done and the agent should end the run without executing more actions
-- STOP is a terminal control action even if it is not listed in available actions
-
-fields[5]{name,meaning}:
-- thought | short plan
-- actions | ordered list of action entries, each with a name and optional params
-- providers | comma-separated provider names, or empty
-- text | next message for {{agentName}}
-- simple | true only when text itself should be sent directly as the final reply; false when actions should run, including REPLY-driven finalization
-
-formatting:
-- wrap multi-line code in fenced code blocks
-- use inline backticks for short code identifiers
+fields:
+- action: RESPOND, IGNORE, or STOP
+- simple: boolean
+- contexts: array of context ids
+- thought: short routing rationale
+- reply: optional direct response for simple turns with no contexts
 
 output:
-TOON only. Return exactly one TOON document with the keys above. No prose before or after it. No <think>. No XML, no JSON, no markdown fences.
+JSON only. Return exactly one JSON object with the keys above. No prose before or after it. No <think>. No XML or markdown fences.
 
 Example:
-thought: Reply briefly. No extra providers needed.
-actions[1]:
-  - name: REPLY
-providers:
-text: Your message here
-simple: true`;
+{
+  "action": "RESPOND",
+  "simple": true,
+  "contexts": [],
+  "thought": "The user asked a direct conversational question that needs no tools.",
+  "reply": "Your message here"
+}`;
 
 export const MESSAGE_HANDLER_TEMPLATE = messageHandlerTemplate;
-
-export const multiStepDecisionTemplate = `Determine the next step the assistant should take in this conversation to help the user reach their goal.
-
-{{recentMessages}}
-
-# Multi-Step Workflow
-
-In each step, decide:
-
-1. **Which providers (if any)** should be called to gather necessary data.
-2. **Which action (if any)** should be executed after providers return.
-3. Decide whether the task is complete. If so, set \`isFinish: true\`. Do not select the \`REPLY\` action; replies are handled separately after task completion.
-
-You can select **multiple providers** and at most **one action** per step.
-
-Use only action and provider names that appear in the listed runtime surface. Never invent new action names, provider names, benchmark ids, or paraphrased tool labels.
-
-If the task is fully resolved and no further steps are needed, mark the step as \`isFinish: true\`.
-
----
-
-{{actionsWithDescriptions}}
-
-{{providersWithDescriptions}}
-
-These are the actions or data provider calls that have already been used in this run. Use this to avoid redundancy and guide your next move.
-
-{{actionResults}}
-
-keys:
-"thought" Clearly explain your reasoning for the selected providers and/or action, and how this step contributes to resolving the user's request.
-"action"  Name of the action to execute after providers return (can be empty if no action is needed).
-"providers" List of provider names to call in this step (can be empty if none are needed).
-"isFinish" Set to true only if the task is fully complete.
-
-⚠️ IMPORTANT: Do **not** mark the task as \`isFinish: true\` immediately after calling an action. Wait for the action to complete before deciding the task is finished.
-
-output:
-thought: Your thought here
-action: ACTION
-providers[2]: PROVIDER1,PROVIDER2
-isFinish: false`;
-
-export const MULTI_STEP_DECISION_TEMPLATE = multiStepDecisionTemplate;
-
-export const multiStepSummaryTemplate = `Summarize what the assistant has done so far and provide a final response to the user based on the completed steps.
-
-# Context Information
-{{bio}}
-
----
-
-{{system}}
-
----
-
-{{messageDirections}}
-
-# Conversation Summary
-Below is the user's original request and conversation so far:
-{{recentMessages}}
-
-# Execution Trace
-Here are the actions taken by the assistant to fulfill the request:
-{{actionResults}}
-
-# Assistant's Last Reasoning Step
-{{recentMessage}}
-
-# Instructions
-
- - Review the execution trace and last reasoning step carefully
-
- - Your final output MUST be TOON in this format:
-output:
-thought: Your thought here
-text: Your final message to the user`;
-
-export const MULTI_STEP_SUMMARY_TEMPLATE = multiStepSummaryTemplate;
 
 export const optionExtractionTemplate = `# Task: Extract selected task and option from user message
 
@@ -593,53 +599,13 @@ export const optionExtractionTemplate = `# Task: Extract selected task and optio
 4. If no clear selection is made, return null for both fields
 
 
-Return in TOON format:
+Return in JSON format:
 taskId: string_or_null
 selectedOption: OPTION_NAME_or_null
 
-IMPORTANT: Your response must ONLY contain the TOON document above. Do not include any text, thinking, or reasoning before or after it.`;
+IMPORTANT: Your response must ONLY contain the JSON object above. Do not include any text, thinking, or reasoning before or after it.`;
 
 export const OPTION_EXTRACTION_TEMPLATE = optionExtractionTemplate;
-
-export const postActionDecisionTemplate = `Continue helping the user after reviewing the latest action results.
-
-context:
-{{providers}}
-
-recent conversation:
-{{recentMessages}}
-
-recent action results:
-{{actionResults}}
-
-latest reflection task status:
-{{taskCompletionStatus}}
-
-rules[11]:
-- think briefly, then continue the task from the latest action results
-- actions execute in listed order
-- if replying, REPLY goes first
-- use IGNORE or STOP only by themselves
-- include providers only when needed
-- when the user asks about uploaded files, documents, prior uploads, or knowledge-base contents, call the relevant providers before replying instead of asking the user to resend the material
-- when the user refers to "the uploaded file", "the document I uploaded", or a prior upload without naming it, treat that as a provider lookup request first; only ask which file after grounded document/knowledge lookup still leaves multiple plausible answers
-- use provider_hints from context when present instead of restating the same rules
-- if an action needs inputs, include them under params keyed by action name
-- if a required param is unknown, ask for clarification in text
-- if reflection says the task is incomplete, keep working or explain the concrete follow-up you still need
-- if the task is complete, either reply to the user or use STOP to end the run
-- STOP is a terminal control action even if it is not listed in available actions
-
-output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
-
-thought: Your thought here
-actions[1]: ACTION
-providers[0]:
-text: Your message here
-simple: true`;
-
-export const POST_ACTION_DECISION_TEMPLATE = postActionDecisionTemplate;
 
 export const postCreationTemplate = `# Task: Create a post in the voice and style and perspective of {{agentName}} @{{xUserName}}.
 
@@ -665,7 +631,7 @@ Write a post that is {{adjective}} about {{topic}} (without mentioning {{topic}}
 Your response should be 1, 2, or 3 sentences (choose the length at random).
 Your response should not contain any questions. Brief, concise statements only. The total character count MUST be less than 280. No emojis. Use \\n\\n (double spaces) between statements if there are multiple statements in your response.
 
-Your output should be formatted as TOON like this:
+Your output should be formatted as JSON like this:
 thought: Your thought here
 post: Your post text here
 imagePrompt: Optional image prompt here
@@ -675,11 +641,13 @@ The "imagePrompt" field is optional and should be a prompt for an image that is 
 The "thought" field should be a short description of what the agent is thinking about before responding, including a brief justification for the response. Includate an explanation how the post is relevant to the topic but unique and different than other posts.
 
 
-IMPORTANT: Your response must ONLY contain the TOON document above. Do not include any text, thinking, or reasoning before or after it.`;
+IMPORTANT: Your response must ONLY contain the JSON object above. Do not include any text, thinking, or reasoning before or after it.`;
 
 export const POST_CREATION_TEMPLATE = postCreationTemplate;
 
-export const reflectionEvaluatorTemplate = `# Task: Generate Agent Reflection and Extract Relationships
+export const reflectionEvaluatorTemplate = `# Task: Generate Agent Reflection, Extract Facts and Relationships
+
+{{providers}}
 
 # Examples:
 {{evaluationExamples}}
@@ -697,129 +665,54 @@ Message Sender: {{senderName}} (ID: {{senderId}})
 
 {{recentMessages}}
 
+# Known Facts:
+{{knownFacts}}
+
 # Latest Action Results:
 {{actionResults}}
 
 # Instructions:
 1. Generate a self-reflective thought on the conversation about your performance and interaction quality.
-2. Identify and describe relationships between entities.
+2. Extract only durable new facts from the conversation.
+  - Prefer facts about the current user/sender that will still matter in a week: identity, stable preferences, recurring collaborators, durable setup, long-term projects, or ongoing constraints.
+  - Do NOT extract temporary status updates, current debugging/work items, one-off session metrics, isolated praise/complaints, or facts that are only true right now.
+  - If a fact would feel stale, irrelevant, or surprising to store a week from now, skip it.
+  - When in doubt, omit the fact.
+3. Identify and describe relationships between entities.
   - The sourceEntityId is the UUID of the entity initiating the interaction.
   - The targetEntityId is the UUID of the entity being interacted with.
   - Relationships are one-direction, so a friendship would be two entity relationships where each entity is both the source and the target of the other.
-  - Use exact UUIDs from the entities-in-room list only. Never invent placeholders, names, handles, or email addresses in sourceEntityId or targetEntityId.
-3. Always decide whether the user's task or request is actually complete right now.
+4. It is normal to return no facts when nothing durable was learned.
+5. Always decide whether the user's task or request is actually complete right now.
   - Set \`task_completed: true\` only if the user no longer needs additional action or follow-up from you in this turn.
   - If you asked a clarifying question, an action failed, work is still pending, or you only partially completed the request, set \`task_completed: false\`.
-4. Always include a short \`task_completion_reason\` grounded in the conversation and action results.
+6. Always include a short \`task_completion_reason\` grounded in the conversation and action results.
 
 Output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 Do not output JSON, XML, Markdown fences, or commentary.
-Use indexed TOON fields exactly like this:
+Use JSON fields exactly like this:
 thought: "a self-reflective thought on the conversation"
 task_completed: false
 task_completion_reason: "The request is still incomplete because the needed action has not happened yet."
+facts[0]:
+  claim: durable factual statement
+  type: fact
+  in_bio: false
+  already_known: false
 relationships[0]:
   sourceEntityId: entity_initiating_interaction
   targetEntityId: entity_being_interacted_with
   tags[0]: dm_interaction
 
-For additional entries, increment the index: relationships[1], tags[1], etc.
+For additional entries, increment the index: facts[1], relationships[1], tags[1], etc.
 Always include \`task_completed\` and \`task_completion_reason\`.
+If there are no durable new facts, omit all facts[...] entries.
 If there are no relationships, omit all relationships[...] entries.
 
-IMPORTANT: Your response must ONLY contain the TOON document above. Do not include any text, thinking, or reasoning before or after it.`;
+IMPORTANT: Your response must ONLY contain the JSON object above. Do not include any text, thinking, or reasoning before or after it.`;
 
 export const REFLECTION_EVALUATOR_TEMPLATE = reflectionEvaluatorTemplate;
-
-export const factExtractionTemplate = `# Task: Classify and extract facts from this message
-
-You maintain two fact stores for an AI assistant. Decide what to insert, strengthen, decay, or contradict. Return TOON ops only.
-
-Stores:
-- durable: stable identity-level claims that matter in a year.
-  Categories: identity, health, relationship, life_event, business_role, preference, goal.
-- current: time-bound state about right now or the near term.
-  Categories: feeling, physical_state, working_on, going_through, schedule_context.
-
-Rules:
-- If a claim feels stale or surprising to retrieve in a year, use current.
-- Empty output is right for small talk or questions with no new claim.
-- Before add_durable/add_current, scan known facts. If meaning already exists, emit strengthen with that factId.
-- Paraphrases count as duplicates. Match meaning, not surface form.
-
-Ops:
-- add_durable: claim, category, structured_fields; optional verification_status, reason.
-- add_current: claim, category, structured_fields; optional valid_at, reason.
-- strengthen: factId, optional reason.
-- decay: factId, optional reason.
-- contradict: factId, reason, optional proposedText.
-
-Examples:
-
-Message: "I have a flat cortisol curve confirmed via lab"
-ops[1]:
-  - op: add_durable
-    claim: flat cortisol curve
-    category: health
-    structured_fields:
-      condition: flat cortisol curve
-      source: lab
-    verification_status: confirmed
-
-Message: "I'm anxious this morning"
-ops[1]:
-  - op: add_current
-    claim: anxious this morning
-    category: feeling
-    structured_fields:
-      emotion: anxious
-      window: morning
-
-Known durable facts include: [fact_abc] (durable.identity) lives in Berlin
-Message: "Berlin's been treating me well"
-ops[1]:
-  - op: strengthen
-    factId: fact_abc
-    reason: user reaffirmed living in Berlin
-
-Known durable facts include: [fact_abc] (durable.identity) lives in Berlin
-Message: "Actually I moved to Tokyo last month"
-ops[2]:
-  - op: contradict
-    factId: fact_abc
-    proposedText: lives in Tokyo
-    reason: user moved to Tokyo, contradicts Berlin
-  - op: add_durable
-    claim: moved to Tokyo last month
-    category: life_event
-    structured_fields:
-      event: relocation
-      to: Tokyo
-
-Inputs:
-Agent Name: {{agentName}}
-Message Sender: {{senderName}} (ID: {{senderId}})
-Now: {{now}}
-
-Recent messages:
-{{recentMessages}}
-
-Known durable facts (format: [factId] (durable.category) claim):
-{{knownDurable}}
-
-Known current facts (format: [factId] (current.category, since validAt) claim):
-{{knownCurrent}}
-
-Latest message:
-{{message}}
-
-Output:
-TOON only. Return exactly one TOON document. No prose, no fences, no JSON, no XML, no <think>.
-If nothing should change, return:
-ops[0]:`;
-
-export const FACT_EXTRACTION_TEMPLATE = factExtractionTemplate;
 
 export const reflectionTemplate = `# Task: Reflect on recent agent behavior and interactions.
 
@@ -835,14 +728,14 @@ Analyze the agent's recent behavior and interactions. Consider:
 3. Were any mistakes made?
 4. What could be improved?
 
-Respond using TOON like this:
+Respond using JSON like this:
 thought: Your detailed analysis
 quality_score: Score 0-100 for overall quality
 strengths: What went well
 improvements: What could be improved
 learnings: Key takeaways for future interactions
 
-IMPORTANT: Your response must ONLY contain the TOON document above.`;
+IMPORTANT: Your response must ONLY contain the JSON object above.`;
 
 export const REFLECTION_TEMPLATE = reflectionTemplate;
 
@@ -861,7 +754,7 @@ instructions[4]:
 - return only the requested contact
 
 output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 
 Example:
 contactName: Jane Doe
@@ -884,13 +777,13 @@ IMPORTANT CODE BLOCK FORMATTING RULES:
 - This ensures the user sees clearly formatted and copyable code when relevant.
 
 Do NOT include any thinking, reasoning, or <think> sections in your response.
-Go directly to the TOON response format without any preamble or explanation.
+Go directly to the JSON response format without any preamble or explanation.
 
-Respond using TOON like this:
+Respond using JSON like this:
 thought: Your thought here
 text: Your message here
 
-IMPORTANT: Your response must ONLY contain the TOON document above. Do not include any text, thinking, or reasoning before or after it.`;
+IMPORTANT: Your response must ONLY contain the JSON object above. Do not include any text, thinking, or reasoning before or after it.`;
 
 export const REPLY_TEMPLATE = replyTemplate;
 
@@ -913,7 +806,7 @@ instructions[5]:
 - include message only when the user asked for a specific note or reminder text
 
 output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 
 Example:
 contactName: Jane Doe
@@ -941,7 +834,7 @@ instructions[5]:
 - omit fields that are not clearly requested
 
 output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 
 Example:
 categories: vip,colleague
@@ -965,7 +858,7 @@ instructions[3]:
 - prefer false when uncertain
 
 output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 
 Example:
 decision: true`;
@@ -986,7 +879,7 @@ instructions[3]:
 - prefer false when uncertain
 
 output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 
 Example:
 decision: true`;
@@ -1011,8 +904,9 @@ available_contexts:
 {{availableContexts}}
 
 context_routing:
-- primaryContext: choose one context from available_contexts, or "general" if none apply
-- secondaryContexts: optional comma-separated list of additional relevant contexts
+- contexts: list zero or more context ids from available_contexts
+- use [] when no tool or context provider is needed
+- if contexts is non-empty, planning will run and simple will be ignored
 
 decision_note:
 - respond only when the latest message is talking TO {{agentName}}
@@ -1024,18 +918,20 @@ decision_note:
 - talking ABOUT {{agentName}} or continuing a room conversation around them is not enough
 
 output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 
 Example:
-name: {{agentName}}
-reasoning: Direct mention and clear follow-up.
-action: RESPOND
-primaryContext: general
-secondaryContexts:`;
+{
+  "action": "RESPOND",
+  "simple": true,
+  "contexts": [],
+  "thought": "Direct mention and clear follow-up.",
+  "reply": "Short direct reply when no context is needed."
+}`;
 
 export const SHOULD_RESPOND_TEMPLATE = shouldRespondTemplate;
 
-export const shouldRespondWithContextTemplate = `task: Decide whether {{agentName}} should respond and which domain context applies.
+export const shouldRespondWithContextTemplate = `task: Decide whether {{agentName}} should respond and which domain contexts apply.
 
 context:
 {{providers}}
@@ -1053,10 +949,9 @@ rules[7]:
 - if unsure whether the speaker is talking to {{agentName}}, prefer IGNORE over hallucinating relevance
 
 context_routing:
-- primaryContext: the single best-matching domain from available_contexts
-- secondaryContexts: zero or more additional domains that are relevant
+- contexts: zero or more matching domains from available_contexts
 - action intent does not only come from the last message; consider the full recent conversation
-- if no specific domain applies, use "general"
+- if no specific domain applies, use []
 
 decision_note:
 - respond only when the latest message is talking TO {{agentName}}
@@ -1069,14 +964,15 @@ decision_note:
 - context routing always applies, even for IGNORE/STOP decisions
 
 output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 
 Example:
-name: {{agentName}}
-reasoning: Direct mention asking about token balance.
-action: RESPOND
-primaryContext: wallet
-secondaryContexts: []`;
+{
+  "action": "RESPOND",
+  "simple": false,
+  "contexts": ["wallet"],
+  "thought": "Direct mention asking about token balance."
+}`;
 
 export const SHOULD_RESPOND_WITH_CONTEXT_TEMPLATE =
 	shouldRespondWithContextTemplate;
@@ -1095,7 +991,7 @@ instructions[3]:
 - prefer false when uncertain
 
 output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 
 Example:
 decision: true`;
@@ -1116,40 +1012,12 @@ instructions[3]:
 - prefer false when uncertain
 
 output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 
 Example:
 decision: true`;
 
 export const SHOULD_UNMUTE_ROOM_TEMPLATE = shouldUnmuteRoomTemplate;
-
-export const thinkTemplate = `# Task: Think deeply and reason carefully for {{agentName}}.
-
-{{providers}}
-
-# Context
-The initial planning phase identified this question as requiring deeper analysis.
-The following is the conversation so far and all available context.
-
-# Instructions
-You are {{agentName}}. A question or request has been identified as complex, ambiguous, or requiring careful reasoning. Your job is to think through this thoroughly before responding.
-
-Approach this systematically:
-1. Identify the core question or problem being asked
-2. Consider multiple angles, approaches, or interpretations
-3. Evaluate trade-offs, risks, and constraints
-4. Draw on relevant knowledge and context from the conversation
-5. Arrive at a well-reasoned conclusion or recommendation
-
-Be thorough but concise. Prioritize depth of reasoning over length. If there are genuine unknowns, acknowledge them rather than guessing.
-
-Respond using TOON:
-thought: Your detailed internal reasoning — the full chain of thought, alternatives considered, and why you reached your conclusion
-text: Your response to the user — clear, structured, and well-reasoned. Use headings, lists, or code blocks as appropriate for the content.
-
-IMPORTANT: Your response must ONLY contain the TOON document above. Do not include any preamble or explanation outside of it.`;
-
-export const THINK_TEMPLATE = thinkTemplate;
 
 export const updateContactTemplate = `task: Extract contact updates from the request.
 
@@ -1168,7 +1036,7 @@ instructions[6]:
 - omit fields that are not being changed
 
 output:
-TOON only. Return exactly one TOON document. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
 
 Example:
 contactName: Jane Doe
@@ -1180,6 +1048,79 @@ customFields: company:Acme,title:Designer
 notes: Prefers async communication`;
 
 export const UPDATE_CONTACT_TEMPLATE = updateContactTemplate;
+
+export const updateEntityTemplate = `# Task: Update entity information.
+
+{{providers}}
+
+# Current Entity Information:
+{{entityInfo}}
+
+# Instructions:
+Based on the request, determine what information about the entity should be updated.
+Only update fields that the user has explicitly requested to change.
+
+Respond using JSON like this:
+thought: Your reasoning for the entity update
+entity_id: The entity ID to update
+updates[1]{name,value}:
+  field_name,new_value
+
+IMPORTANT: Your response must ONLY contain the JSON object above.`;
+
+export const UPDATE_ENTITY_TEMPLATE = updateEntityTemplate;
+
+export const updateRoleTemplate = `task: Extract the requested role change.
+
+context:
+{{providers}}
+
+current_roles:
+{{roles}}
+
+recent_messages:
+{{recentMessages}}
+
+current_message:
+{{message}}
+
+instructions[6]:
+- identify the single entity whose role should be updated
+- return entity_id only when the UUID is explicit in context
+- normalize new_role to one of OWNER, ADMIN, MEMBER, GUEST, or NONE
+- if the user is removing elevated access without naming a new role, use NONE
+- do not invent entity ids or roles
+- include a short thought describing the change
+
+output:
+JSON only. Return exactly one JSON object. No prose before or after it. No <think>.
+
+Example:
+thought: Sarah should become an admin.
+entity_id: 00000000-0000-0000-0000-000000000000
+new_role: ADMIN`;
+
+export const UPDATE_ROLE_TEMPLATE = updateRoleTemplate;
+
+export const updateSettingsTemplate = `# Task: Update settings based on the request.
+
+{{providers}}
+
+# Current Settings:
+{{settings}}
+
+# Instructions:
+Based on the request, determine which settings to update.
+Only update settings that the user has explicitly requested.
+
+Respond using JSON like this:
+thought: Your reasoning for the settings changes
+updates[1]{key,value}:
+  setting_key,new_value
+
+IMPORTANT: Your response must ONLY contain the JSON object above.`;
+
+export const UPDATE_SETTINGS_TEMPLATE = updateSettingsTemplate;
 
 export const updateSummarizationTemplate = `# Task: Update and Condense Conversation Summary
 
@@ -1204,7 +1145,7 @@ Update the summary by:
 
 The goal is a rolling summary that captures the essence of the conversation without growing indefinitely.
 
-Respond in TOON:
+Respond in JSON:
 text: Your updated and condensed summary here
 topics[0]: topic1
 topics[1]: topic2

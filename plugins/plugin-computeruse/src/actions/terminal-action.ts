@@ -19,6 +19,9 @@ function formatTerminalResultText(result: TerminalActionResult): string {
 
 export const terminalAction: Action = {
   name: "TERMINAL_ACTION",
+  contexts: ["terminal", "code", "automation"],
+  contextGate: { anyOf: ["terminal", "code", "automation"] },
+  roleGate: { minRole: "USER" },
   similes: [
     "RUN_COMMAND",
     "EXECUTE_COMMAND",
@@ -128,8 +131,10 @@ export const terminalAction: Action = {
       return { success: false, error: "Missing action" };
     }
 
-    const result = await service.executeTerminalAction(params);
-    const text = formatTerminalResultText(result);
+    const timeoutSeconds = Math.min(Number(params.timeout ?? params.timeoutSeconds ?? 30), 120);
+    const result = await service.executeTerminalAction({ ...params, timeout: timeoutSeconds });
+    const maxActionResultBytes = 4000;
+    const text = formatTerminalResultText(result).slice(0, maxActionResultBytes);
 
     if (callback) {
       await callback({ text });

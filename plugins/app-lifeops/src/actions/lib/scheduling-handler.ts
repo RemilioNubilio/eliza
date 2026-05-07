@@ -29,12 +29,8 @@ import type {
   Memory,
   State,
 } from "@elizaos/core";
-import {
-  ModelType,
-  runWithTrajectoryContext,
-} from "@elizaos/core";
+import { ModelType, runWithTrajectoryContext } from "@elizaos/core";
 import type { LifeOpsCalendarEvent } from "@elizaos/shared";
-import { parseJsonModelRecord } from "../../utils/json-model-output.js";
 import {
   type LifeOpsMeetingPreferences,
   type LifeOpsMeetingPreferencesBlackout,
@@ -45,6 +41,7 @@ import {
 } from "../../lifeops/owner-profile.js";
 import { LifeOpsService, LifeOpsServiceError } from "../../lifeops/service.js";
 import { getZonedDateParts } from "../../lifeops/time.js";
+import { parseJsonModelRecord } from "../../utils/json-model-output.js";
 import { hasLifeOpsAccess, INTERNAL_URL } from "../lifeops-google-helpers.js";
 import {
   messageText as getMessageText,
@@ -480,6 +477,8 @@ export const proposeMeetingTimesAction: Action & {
     "candidate slots; SCHEDULING tracks the negotiation lifecycle around them.",
   descriptionCompressed:
     "Propose available meeting slots from the owner's calendar and meeting preferences; not calendar CRUD or negotiation tracking.",
+  contexts: ["calendar", "contacts", "tasks"],
+  roleGate: { minRole: "OWNER" },
   suppressPostActionContinuation: true,
   validate: async (runtime, message) => hasLifeOpsAccess(runtime, message),
   handler: async (runtime, message, state, options, callback) => {
@@ -677,6 +676,8 @@ export const checkAvailabilityAction: Action = {
     "time window. Returns a free/busy summary and any overlapping events.",
   descriptionCompressed:
     "Check owner free/busy for one ISO-8601 time window and list overlapping events.",
+  contexts: ["calendar", "contacts", "tasks"],
+  roleGate: { minRole: "OWNER" },
   validate: async (runtime, message) => hasLifeOpsAccess(runtime, message),
   handler: async (runtime, message, state, options, callback) => {
     const respond = makeSchedulingRespond({
@@ -851,6 +852,8 @@ export const updateMeetingPreferencesAction: Action & {
     "sleep windows, no-call hours, and other recurring scheduling rules.",
   descriptionCompressed:
     "Persist owner meeting preferences: preferred hours, blackout windows, default duration, and travel buffer.",
+  contexts: ["calendar", "contacts", "tasks", "settings"],
+  roleGate: { minRole: "OWNER" },
   suppressPostActionContinuation: true,
   validate: async (runtime, message) => hasLifeOpsAccess(runtime, message),
   handler: async (runtime, message, state, options, callback) => {
@@ -1081,7 +1084,7 @@ async function resolveSchedulingPlanWithLlm(args: {
     "Plan the scheduling negotiation action for this request.",
     "The user may speak in any language.",
     "Use the current request, the structured parameters, and recent conversation context.",
-    "Return TOON only with exactly these fields:",
+    "Return JSON only as a single object with exactly these fields:",
     "  subaction: one of start, propose, respond, finalize, cancel, list_active, list_proposals, or null",
     "  shouldAct: boolean",
     "  response: short natural-language reply when shouldAct is false or clarification is needed",
@@ -1096,31 +1099,8 @@ async function resolveSchedulingPlanWithLlm(args: {
     "If the user is making a first-turn calendar request, asking for recurring time, asking to bundle meetings while traveling, or asking for missed-call repair, this action is the wrong tool. Return shouldAct=false so the planner can choose OWNER_CALENDAR, TRIAGE_MESSAGES, or SEND_DRAFT instead.",
     "Set shouldAct=false when the user is vague or only asks for general scheduling help.",
     "",
-    "Examples:",
-    "request: start scheduling lunch with Jill",
-    "subaction: start",
-    "shouldAct: true",
-    "response: null",
-    "",
-    "request: propose Tuesday at 3 with negotiationId/startAt/endAt params",
-    "subaction: propose",
-    "shouldAct: true",
-    "response: null",
-    "",
-    "request: mark that proposal accepted with proposalId/response params",
-    "subaction: respond",
-    "shouldAct: true",
-    "response: null",
-    "",
-    "request: confirm that slot with proposalId/confirmed params",
-    "subaction: finalize",
-    "shouldAct: true",
-    "response: null",
-    "",
-    "request: help me schedule something",
-    "subaction: null",
-    "shouldAct: false",
-    "response: Do you want to start, propose, respond, finalize, cancel, or list scheduling negotiations?",
+    'Example: {"subaction":"start","shouldAct":true,"response":null}',
+    'Example clarification: {"subaction":null,"shouldAct":false,"response":"Do you want to start, propose, respond, finalize, cancel, or list scheduling negotiations?"}',
     "",
     `Current request:\n${currentMessage}`,
     `Resolved intent:\n${args.intent}`,
@@ -1207,6 +1187,8 @@ export const schedulingAction: Action & {
     "or SEND_DRAFT.",
   descriptionCompressed:
     "Multi-turn scheduling negotiation lifecycle: start, propose, respond, finalize, cancel, and list negotiations/proposals.",
+  contexts: ["calendar", "contacts", "tasks", "messaging"],
+  roleGate: { minRole: "OWNER" },
   suppressPostActionContinuation: true,
   validate: async (runtime, message) => hasOwnerAccess(runtime, message),
   handler: async (
@@ -1473,9 +1455,8 @@ export const schedulingAction: Action & {
         // Selection + execution were correct: the user asked to schedule, the
         // action ran, and the lifeops service surfaced a needs-human signal
         // (no counterparty contact, missing scheduling field, dispatch
-        // failed, etc.). Mark as awaiting-confirmation so the runtime stops
-        // the multi-step continuation and the benchmark scorer treats this
-        // as completed.
+        // failed, etc.). Mark as awaiting-confirmation so the native planner
+        // stops chaining and the benchmark scorer treats this as completed.
         return respond({
           success: false,
           scenario: "scheduling_negotiation_service_error",

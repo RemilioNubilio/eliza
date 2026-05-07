@@ -17,13 +17,26 @@ import type { AgentSkillsService } from "../services/skills";
 import { extractSlugFromMessage } from "./parse-helpers";
 import { createAgentSkillsActionValidator } from "./validators";
 
+const INSTALLED_SKILL_MATCH_LIMIT = 100;
+
 export const uninstallSkillAction: Action = {
 	name: "UNINSTALL_SKILL",
+	contexts: ["automation", "settings"],
+	contextGate: { anyOf: ["automation", "settings"] },
+	roleGate: { minRole: "USER" },
 	similes: ["REMOVE_SKILL", "DELETE_SKILL"],
 	description:
 		"Uninstall a non-bundled skill. Bundled skills cannot be removed. " +
 		'Provide the skill slug, e.g. "uninstall weather".',
 	descriptionCompressed: "Remove non-bundled skill.",
+	parameters: [
+		{
+			name: "slug",
+			description: "Installed skill slug or name to uninstall.",
+			required: false,
+			schema: { type: "string" },
+		},
+	],
 	validate: createAgentSkillsActionValidator({
 		keywords: ["uninstall", "remove", "delete", "skill"],
 		regex:
@@ -58,7 +71,7 @@ export const uninstallSkillAction: Action = {
 		}
 
 		// Find the skill
-		const loadedSkills = service.getLoadedSkills();
+		const loadedSkills = service.getLoadedSkills().slice(0, INSTALLED_SKILL_MATCH_LIMIT);
 		const match =
 			loadedSkills.find(
 				(s) => s.slug === slug || s.name.toLowerCase() === slug.toLowerCase(),

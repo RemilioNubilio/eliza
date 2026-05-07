@@ -10,7 +10,7 @@ import {
   logger,
   type Memory,
   ModelType,
-  parseToonActionParams,
+  parseJSONObjectFromText,
   type State,
 } from "@elizaos/core";
 import type { NostrService } from "../service.js";
@@ -26,19 +26,23 @@ interface SendDmParams {
   toPubkey: string;
 }
 
+const MAX_NOSTR_DM_CHARS = 4_000;
+const MAX_NOSTR_DM_CHUNKS = 10;
+const MAX_NOSTR_RESULT_RELAYS = 10;
+const NOSTR_DM_ACTION_TIMEOUT_MS = 30_000;
+
 const SEND_DM_TEMPLATE = `# Task: Extract Nostr DM parameters
 Based on the conversation, determine what message to send and to whom.
 
 Recent conversation:
 {{recentMessages}}
 
-Output a TOON action-call block:
+Respond with JSON only, no prose or fences:
 
-actions: NOSTR_SEND_DM
-params:
-  NOSTR_SEND_DM:
-    text: message content here
-    toPubkey: npub1... or hex pubkey or current
+{
+  "text": "message content here",
+  "toPubkey": "npub1... or hex pubkey or current"
+}
 `;
 
 export const sendDm: Action = {
@@ -46,6 +50,23 @@ export const sendDm: Action = {
   similes: ["SEND_NOSTR_DM", "NOSTR_MESSAGE", "NOSTR_TEXT", "DM_NOSTR"],
   description: "Send an encrypted direct message via Nostr (NIP-04)",
   descriptionCompressed: "send encrypt direct message via Nostr (NIP-04)",
+  contexts: ["messaging", "connectors"],
+  contextGate: { anyOf: ["messaging", "connectors"] },
+  roleGate: { minRole: "USER" },
+  parameters: [
+    {
+      name: "text",
+      description: "Direct message text to send.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "toPubkey",
+      description: "Recipient npub, hex pubkey, or current.",
+      required: false,
+      schema: { type: "string", default: "current" },
+    },
+  ],
   validate: async (_runtime: IAgentRuntime, message: Memory, _state?: State): Promise<boolean> => {
     return message.content.source === "nostr";
   },
@@ -82,11 +103,13 @@ export const sendDm: Action = {
         prompt,
       });
 
-      const parsed = parseToonActionParams(String(response));
-      const actionParams = parsed.get("NOSTR_SEND_DM");
+      const actionParams = parseJSONObjectFromText(String(response)) as Record<
+        string,
+        unknown
+      > | null;
       if (actionParams?.text) {
         dmInfo = {
-          text: String(actionParams.text),
+          text: String(actionParams.text).slice(0, MAX_NOSTR_DM_CHARS),
           toPubkey: String(actionParams.toPubkey || "current"),
         };
         break;
@@ -131,10 +154,11 @@ export const sendDm: Action = {
     }
 
     // Split message if too long
-    const chunks = splitMessageForNostr(dmInfo.text);
+    const chunks = splitMessageForNostr(dmInfo.text).slice(0, MAX_NOSTR_DM_CHUNKS);
 
     // Send message(s)
     let lastResult: { eventId?: string; relays?: string[] } | undefined;
+    const timeoutMs = NOSTR_DM_ACTION_TIMEOUT_MS;
     for (const chunk of chunks) {
       const result = await nostrService.sendDm({
         toPubkey: targetPubkey,
@@ -151,7 +175,10 @@ export const sendDm: Action = {
         return { success: false, error: result.error };
       }
 
-      lastResult = { eventId: result.eventId, relays: result.relays };
+      lastResult = {
+        eventId: result.eventId,
+        relays: result.relays?.slice(0, MAX_NOSTR_RESULT_RELAYS),
+      };
       logger.debug(`Sent Nostr DM: ${result.eventId}`);
     }
 
@@ -169,6 +196,7 @@ export const sendDm: Action = {
         eventId: lastResult?.eventId,
         relays: lastResult?.relays,
         chunksCount: chunks.length,
+        timeoutMs,
       },
     };
   },

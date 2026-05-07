@@ -10,7 +10,7 @@ import type {
   Memory,
   State,
 } from "@elizaos/core";
-import { composePromptFromState, logger, ModelType, parseToonKeyValue } from "@elizaos/core";
+import { composePromptFromState, logger, ModelType, parseJSONObjectFromText } from "@elizaos/core";
 import type { IMessageService } from "../service.js";
 import { IMESSAGE_SERVICE_NAME, isValidIMessageTarget, normalizeIMessageTarget } from "../types.js";
 
@@ -25,9 +25,11 @@ Extract the following:
 1. text: The message content to send
 2. to: The recipient (phone number, email, or "current" to reply)
 
-Respond with TOON only:
-text: message to send
-to: phone/email or current
+Respond with JSON only, with no prose or fences:
+{
+  "text": "message to send",
+  "to": "phone/email or current"
+}
 `;
 
 interface SendMessageParams {
@@ -35,28 +37,20 @@ interface SendMessageParams {
   to: string;
 }
 
-function parseSendMessageParams(response: string): SendMessageParams | null {
-  const toon = parseToonKeyValue<Record<string, unknown>>(response);
-  if (toon?.text) {
-    return {
-      text: String(toon.text),
-      to: String(toon.to || "current"),
-    };
-  }
+const MAX_IMESSAGE_TEXT_CHARS = 4_000;
+const IMESSAGE_ACTION_TIMEOUT_MS = 30_000;
 
-  try {
-    const parsed = JSON.parse(response) as unknown;
-    if (parsed && typeof parsed === "object" && "text" in parsed) {
-      const record = parsed as Record<string, unknown>;
-      if (record.text) {
-        return {
-          text: String(record.text),
-          to: String(record.to || "current"),
-        };
-      }
-    }
-  } catch {
-    return null;
+function truncateActionText(text: string, maxChars: number): string {
+  return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text;
+}
+
+function parseSendMessageParams(response: string): SendMessageParams | null {
+  const parsed = parseJSONObjectFromText(response) as Record<string, unknown> | null;
+  if (parsed?.text) {
+    return {
+      text: truncateActionText(String(parsed.text), MAX_IMESSAGE_TEXT_CHARS),
+      to: String(parsed.to || "current"),
+    };
   }
 
   return null;
@@ -67,6 +61,23 @@ export const sendMessage: Action = {
   similes: ["SEND_IMESSAGE", "IMESSAGE_TEXT", "TEXT_IMESSAGE", "SEND_IMSG"],
   description: "Send a text message via iMessage (macOS only)",
   descriptionCompressed: "Send iMessage (macOS).",
+  contexts: ["phone", "messaging", "connectors"],
+  contextGate: { anyOf: ["phone", "messaging", "connectors"] },
+  roleGate: { minRole: "USER" },
+  parameters: [
+    {
+      name: "text",
+      description: "Message text to send.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "to",
+      description: "Phone number, email address, or current conversation.",
+      required: false,
+      schema: { type: "string", default: "current" },
+    },
+  ],
   suppressPostActionContinuation: true,
 
   validate: async (runtime: IAgentRuntime, message: Memory, _state?: State): Promise<boolean> => {
@@ -175,6 +186,10 @@ export const sendMessage: Action = {
       }
       return { success: false, error: "Could not extract message parameters" };
     }
+    msgInfo = {
+      ...msgInfo,
+      text: msgInfo.text.slice(0, MAX_IMESSAGE_TEXT_CHARS),
+    };
 
     // Determine target
     let targetId: string | undefined;
@@ -203,6 +218,7 @@ export const sendMessage: Action = {
     }
 
     // Send message
+    const timeoutMs = IMESSAGE_ACTION_TIMEOUT_MS;
     const result = await imessageService.sendMessage(targetId, msgInfo.text);
 
     if (!result.success) {
@@ -222,6 +238,7 @@ export const sendMessage: Action = {
       data: {
         to: targetId,
         messageId: result.messageId,
+        timeoutMs,
         suppressVisibleCallback: true,
         suppressActionResultClipboard: true,
       },

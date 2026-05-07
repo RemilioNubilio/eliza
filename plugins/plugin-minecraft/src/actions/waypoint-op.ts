@@ -11,7 +11,7 @@ import type {
 import type { JsonValue } from "../protocol.js";
 import { MINECRAFT_SERVICE_TYPE, type MinecraftService } from "../services/minecraft-service.js";
 import { WAYPOINTS_SERVICE_TYPE, type WaypointsService } from "../services/waypoints-service.js";
-import { emit, mergedInput, readString } from "./helpers.js";
+import { emit, mergedInput, readString, withMinecraftTimeout } from "./helpers.js";
 
 const ACTION_NAME = "MC_WAYPOINT_OP";
 
@@ -47,6 +47,9 @@ function parseWaypointName(text: string, params: Record<string, unknown>): strin
 
 export const minecraftWaypointOpAction: Action = {
   name: ACTION_NAME,
+  contexts: ["automation", "memory", "media"],
+  contextGate: { anyOf: ["automation", "memory", "media"] },
+  roleGate: { minRole: "USER" },
   similes: ["MC_WAYPOINT_SET", "MC_WAYPOINT_DELETE", "MC_WAYPOINT_GOTO"],
   description:
     "Manage Minecraft waypoints: set the current position as a named waypoint, delete a waypoint, or navigate to a saved waypoint.",
@@ -127,7 +130,7 @@ export const minecraftWaypointOpAction: Action = {
       }
 
       if (op === "set") {
-        const worldState = await mc.getWorldState();
+        const worldState = await withMinecraftTimeout(mc.getWorldState(), "minecraft world state");
         const pos = worldState.position;
         if (!pos) {
           return emit(
@@ -163,7 +166,10 @@ export const minecraftWaypointOpAction: Action = {
           success: false,
         });
       }
-      await mc.request("goto", { x: wp.x, y: wp.y, z: wp.z });
+      await withMinecraftTimeout(
+        mc.request("goto", { x: wp.x, y: wp.y, z: wp.z }),
+        "minecraft waypoint goto"
+      );
       return await emit(
         ACTION_NAME,
         callback,

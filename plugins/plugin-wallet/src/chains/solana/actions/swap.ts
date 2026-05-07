@@ -8,7 +8,7 @@ import {
   logger,
   type Memory,
   ModelType,
-  parseToonKeyValue,
+  parseJSONObjectFromText,
   type State,
   withStandaloneTrajectory,
 } from "@elizaos/core";
@@ -18,6 +18,9 @@ import { requireActionSpec } from "../generated/specs/spec-helpers";
 import type { SolanaService, SolanaSwapParams, SolanaSwapResult } from "../service";
 import type { Item } from "../types";
 import { confirmationRequired, isConfirmed } from "./confirmation";
+
+const SOLANA_SWAP_TIMEOUT_MS = 30_000;
+const WALLET_TOKEN_LOOKUP_LIMIT = 100;
 
 async function getTokenFromWallet(
   runtime: IAgentRuntime,
@@ -34,9 +37,9 @@ async function getTokenFromWallet(
       return null;
     }
 
-    const token = walletData.items.find(
-      (item: Item) => item.symbol.toLowerCase() === tokenSymbol.toLowerCase()
-    );
+    const token = walletData.items
+      .slice(0, WALLET_TOKEN_LOOKUP_LIMIT)
+      .find((item: Item) => item.symbol.toLowerCase() === tokenSymbol.toLowerCase());
 
     return token ? token.address : null;
   } catch (error) {
@@ -79,7 +82,7 @@ async function extractSwapParams(
       })
   );
 
-  return parseToonKeyValue(result) as ExtractedSwapParams;
+  return parseJSONObjectFromText(result) as ExtractedSwapParams;
 }
 
 function toAmount(value: string | number | null | undefined): number | null {
@@ -100,6 +103,41 @@ function normalizeTokenValue(value: string | null | undefined): string | null {
 export const executeSwap: Action = {
   name: spec.name,
   similes: spec.similes ? [...spec.similes] : [],
+  contexts: ["finance", "crypto", "wallet"],
+  contextGate: { anyOf: ["finance", "crypto", "wallet"] },
+  roleGate: { minRole: "USER" },
+  parameters: [
+    {
+      name: "fromToken",
+      description: "Input token symbol, mint address, or SOL.",
+      required: true,
+      schema: { type: "string" },
+    },
+    {
+      name: "toToken",
+      description: "Output token symbol, mint address, or SOL.",
+      required: true,
+      schema: { type: "string" },
+    },
+    {
+      name: "amount",
+      description: "Human-readable amount to swap.",
+      required: true,
+      schema: { type: "string" },
+    },
+    {
+      name: "slippageBps",
+      description: "Maximum slippage in basis points.",
+      required: false,
+      schema: { type: "number" },
+    },
+    {
+      name: "confirmed",
+      description: "Set true after preview confirmation to submit.",
+      required: false,
+      schema: { type: "boolean", default: false },
+    },
+  ],
   validate: async (
     runtime: IAgentRuntime,
     message: Memory,
@@ -199,13 +237,18 @@ export const executeSwap: Action = {
         });
       }
 
-      const swapResult = (await solanaService.handleWalletAction({
-        subaction: "swap",
-        chain: "solana",
-        ...swapParams,
-        mode: options?.dryRun === true ? "prepare" : "execute",
-        dryRun: options?.dryRun === true,
-      })) as SolanaSwapResult;
+      const swapResult = (await Promise.race([
+        solanaService.handleWalletAction({
+          subaction: "swap",
+          chain: "solana",
+          ...swapParams,
+          mode: options?.dryRun === true ? "prepare" : "execute",
+          dryRun: options?.dryRun === true,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Solana swap timeout")), SOLANA_SWAP_TIMEOUT_MS)
+        ),
+      ])) as SolanaSwapResult;
 
       callback?.({
         text: swapResult.dryRun

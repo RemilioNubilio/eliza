@@ -70,6 +70,13 @@ function readUserId(options?: HandlerOptions | unknown): string | null {
     : null;
 }
 
+const MAX_SLACK_USER_INFO_TEXT_CHARS = 2_000;
+const SLACK_USER_INFO_TIMEOUT_MS = 30_000;
+
+function truncateActionText(text: string, maxChars: number): string {
+  return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text;
+}
+
 export const getUserInfo: Action = {
   name: "SLACK_GET_USER_INFO",
   similes: [
@@ -81,6 +88,9 @@ export const getUserInfo: Action = {
   ],
   description: "Get information about a Slack user",
   descriptionCompressed: "Get Slack user info.",
+  contexts: ["messaging", "connectors"],
+  contextGate: { anyOf: ["messaging", "connectors"] },
+  roleGate: { minRole: "USER" },
   parameters: [
     {
       name: "userId",
@@ -234,9 +244,13 @@ export const getUserInfo: Action = {
     ]
       .filter(Boolean)
       .join("\n");
+    const timeoutMs = SLACK_USER_INFO_TIMEOUT_MS;
 
     const response: Content = {
-      text: `User information for ${displayName}:\n\n${userDetails}`,
+      text: truncateActionText(
+        `User information for ${displayName}:\n\n${userDetails}`,
+        MAX_SLACK_USER_INFO_TEXT_CHARS,
+      ),
       source: message.content.source,
     };
 
@@ -267,6 +281,7 @@ export const getUserInfo: Action = {
         statusText: user.profile.statusText,
         statusEmoji: user.profile.statusEmoji,
         avatar: user.profile.image192 || user.profile.image72,
+        timeoutMs,
       },
     };
   },

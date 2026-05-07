@@ -104,12 +104,29 @@ const formatUserInfo = (
 };
 
 const spec = requireActionSpec("DISCORD_GET_USER_INFO");
+const MAX_DISCORD_USER_INFO_TEXT_CHARS = 2_000;
+const DISCORD_USER_INFO_TIMEOUT_MS = 30_000;
+
+function truncateActionText(text: string, maxChars: number): string {
+	return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text;
+}
 
 export const getUserInfo: Action = {
 	name: spec.name,
 	similes: spec.similes ? [...spec.similes] : [],
 	description: spec.description,
 	descriptionCompressed: spec.descriptionCompressed,
+	contexts: ["messaging", "connectors"],
+	contextGate: { anyOf: ["messaging", "connectors"] },
+	roleGate: { minRole: "USER" },
+	parameters: [
+		{
+			name: "userIdentifier",
+			description: "Discord user id, mention, username, or current user.",
+			required: false,
+			schema: { type: "string", default: "current" },
+		},
+	],
 	validate: async (
 		runtime: any,
 		message: any,
@@ -278,7 +295,11 @@ export const getUserInfo: Action = {
 				};
 			}
 
-			const infoText = formatUserInfo(member, userInfo.detailed);
+			const timeoutMs = DISCORD_USER_INFO_TIMEOUT_MS;
+			const infoText = truncateActionText(
+				formatUserInfo(member, userInfo.detailed),
+				MAX_DISCORD_USER_INFO_TEXT_CHARS,
+			);
 
 			const response: Content = {
 				text: infoText,
@@ -288,7 +309,7 @@ export const getUserInfo: Action = {
 			if (callback) {
 				await callback?.(response);
 			}
-			return { success: true, text: response.text };
+			return { success: true, text: response.text, data: { timeoutMs } };
 		} catch (error) {
 			runtime.logger.error(
 				{

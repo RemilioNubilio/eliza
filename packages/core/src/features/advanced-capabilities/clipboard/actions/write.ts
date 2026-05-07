@@ -7,6 +7,7 @@ import {
 	type Memory,
 	type State,
 } from "../../../../types/index.ts";
+import { hasActionContextOrKeyword } from "../../../../utils/action-validation.ts";
 import { createClipboardService } from "../services/clipboardService.ts";
 import { requireActionSpec } from "../specs.ts";
 
@@ -72,68 +73,42 @@ function extractWriteInfo(
 }
 
 const spec = requireActionSpec("CLIPBOARD_WRITE");
+const MAX_TITLE_CHARS = 120;
+const MAX_TAGS = 12;
+const MAX_TAG_CHARS = 48;
+
+function truncateText(text: string, max: number): string {
+	return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
 
 export const clipboardWriteAction: Action = {
 	name: spec.name,
+	contexts: ["files", "knowledge", "agent_internal"],
+	roleGate: { minRole: "ADMIN" },
 	similes: spec.similes ? [...spec.similes] : [],
 	description: spec.description,
 
 	validate: async (
-		runtime: IAgentRuntime,
+		_runtime: IAgentRuntime,
 		message: Memory,
 		state?: State,
 		options?: HandlerOptions,
 	): Promise<boolean> => {
-		const __avTextRaw =
-			typeof message?.content?.text === "string" ? message.content.text : "";
-		const __avText = __avTextRaw.toLowerCase();
-		const __avKeywords = ["clipboard", "write"];
-		const __avKeywordOk = __avKeywords.some(
-			(kw) => kw.length > 0 && __avText.includes(kw),
-		);
-		const __avRegex = /\b(?:clipboard|write)\b/i;
-		const __avRegexOk = __avRegex.test(__avText);
-		const __avSource = String(message?.content?.source ?? "");
-		const __avExpectedSource = "";
-		const __avSourceOk = __avExpectedSource
-			? __avSource === __avExpectedSource
-			: Boolean(__avSource || state || runtime?.agentId || runtime?.getService);
-		const __avOptions = options && typeof options === "object" ? options : {};
 		const __avParams = readParams(options);
 		if (isValidWriteInput(__avParams)) {
 			return true;
 		}
-		const __avInputOk =
-			__avText.trim().length > 0 ||
-			Object.keys(__avOptions as Record<string, unknown>).length > 0 ||
-			Boolean(message?.content && typeof message.content === "object");
-
-		if (!(__avKeywordOk && __avRegexOk && __avSourceOk && __avInputOk)) {
-			return false;
-		}
-
-		const __avLegacyValidate = async (
-			_runtime: IAgentRuntime,
-			message: Memory,
-		): Promise<boolean> => {
-			// Check for clipboard-related intent in the message
-			const text = (message.content?.text ?? "").toLowerCase();
-			const hasSaveIntent =
-				text.includes("save") ||
-				text.includes("note") ||
-				text.includes("remember") ||
-				text.includes("write") ||
-				text.includes("clipboard") ||
-				text.includes("jot down") ||
-				text.includes("store");
-
-			return hasSaveIntent;
-		};
-		try {
-			return Boolean(await __avLegacyValidate(runtime, message));
-		} catch {
-			return false;
-		}
+		return hasActionContextOrKeyword(message, state, {
+			contexts: ["files", "knowledge", "agent_internal"],
+			keywords: [
+				"clipboard",
+				"write note",
+				"save note",
+				"jot down",
+				"store note",
+				"remember this",
+			],
+		});
 	},
 
 	handler: async (
@@ -159,9 +134,15 @@ export const clipboardWriteAction: Action = {
 
 		try {
 			const service = createClipboardService(runtime);
-			const entry = await service.write(writeInfo.title, writeInfo.content, {
-				tags: writeInfo.tags,
-			});
+			const entry = await service.write(
+				truncateText(writeInfo.title, MAX_TITLE_CHARS),
+				writeInfo.content,
+				{
+					tags: writeInfo.tags
+						?.slice(0, MAX_TAGS)
+						.map((tag) => truncateText(tag, MAX_TAG_CHARS)),
+				},
+			);
 
 			const successMessage = `I've saved a note titled "${entry.title}" (ID: ${entry.id}).${
 				entry.tags?.length ? ` Tags: ${entry.tags.join(", ")}` : ""
@@ -175,7 +156,11 @@ export const clipboardWriteAction: Action = {
 				});
 			}
 
-			return { success: true, text: successMessage, entryId: entry.id };
+			return {
+				success: true,
+				text: successMessage,
+				data: { entryId: entry.id, title: entry.title },
+			};
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
 			logger.error("[ClipboardWrite] Error:", errorMsg);

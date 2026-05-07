@@ -32,9 +32,20 @@ export type TrajectoryLlmPurpose = (typeof TRAJECTORY_LLM_PURPOSES)[number];
 export type TrajectoryLlmCallDetails = {
 	model: string;
 	modelVersion?: string;
+	modelType?: string;
+	provider?: string;
 	systemPrompt: string;
 	userPrompt: string;
+	prompt?: string;
+	messages?: unknown[];
+	tools?: unknown;
+	toolChoice?: unknown;
+	responseSchema?: unknown;
+	providerOptions?: unknown;
 	response: string;
+	toolCalls?: unknown[];
+	finishReason?: string;
+	providerMetadata?: unknown;
 	reasoning?: string;
 	temperature: number;
 	maxTokens: number;
@@ -52,6 +63,37 @@ export type TrajectoryLlmCallDetails = {
 	latencyMs: number;
 	promptTokens?: number;
 	completionTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheCreationInputTokens?: number;
+};
+
+export type TrajectoryProviderAccessParams = {
+	stepId: string;
+	providerName: string;
+	data: Record<string, string | number | boolean | null>;
+	purpose: string;
+	query?: Record<string, string | number | boolean | null>;
+	runId?: string;
+	roomId?: string;
+	messageId?: string;
+	executionTraceId?: string;
+};
+
+export type TrajectoryProviderAccessLogger = {
+	logProviderAccess: (params: TrajectoryProviderAccessParams) => void;
+};
+
+export type TrajectoryRuntimeLlmCallParams = {
+	stepId: string;
+	modelSlot?: string;
+	runId?: string;
+	roomId?: string;
+	messageId?: string;
+	executionTraceId?: string;
+} & TrajectoryLlmCallDetails;
+
+export type TrajectoryRuntimeLlmCallLogger = {
+	logLlmCall: (params: TrajectoryRuntimeLlmCallParams) => void;
 };
 
 /**
@@ -67,10 +109,29 @@ export type RecordLlmCallDetails = Omit<
 	response?: string;
 };
 
+/**
+ * Trajectory-shaped input for context-object export: either a slice of the
+ * canonical {@link Trajectory} type or a loosely-typed detail/DB row
+ * (`Record` metadata/metrics) used by trajectory services.
+ */
+export type ContextObjectTrajectoryExportTrajectoryInput =
+	| Partial<
+			Pick<Trajectory, "trajectoryId" | "agentId" | "metadata" | "metrics">
+	  >
+	| {
+			trajectoryId?: string;
+			agentId?: string;
+			source?: string;
+			status?: string;
+			startTime?: number;
+			endTime?: number;
+			durationMs?: number;
+			metadata?: Record<string, unknown>;
+			metrics?: Record<string, unknown>;
+	  };
+
 export type ContextObjectTrajectoryExportInput = {
-	trajectory?: Partial<
-		Pick<Trajectory, "trajectoryId" | "agentId" | "metadata" | "metrics">
-	> | null;
+	trajectory?: ContextObjectTrajectoryExportTrajectoryInput | null;
 	contextObject?: ContextObject | null;
 	events?: readonly ContextEvent[];
 	trajectoryId?: string;
@@ -271,7 +332,7 @@ export function buildContextObjectTrajectoryExport(
 	if (metrics) exportRecord.metrics = metrics;
 	if (sanitizedContextObject) {
 		exportRecord.contextObject =
-			sanitizedContextObject as ContextObjectTrajectoryExport["contextObject"];
+			sanitizedContextObject as unknown as ContextObjectTrajectoryExport["contextObject"];
 	}
 
 	return exportRecord;

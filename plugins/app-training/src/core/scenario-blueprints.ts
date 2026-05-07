@@ -523,7 +523,10 @@ const GENERATED_ACTION_SKIP = new Set(["NONE", "IGNORE", "STOP"]);
 
 const CONTEXT_KEYWORDS: Record<AgentContext, string[]> = {
   general: ["question", "follow up", "chat", "group"],
+  finance: ["money", "balance", "portfolio", "account"],
+  crypto: ["crypto", "token", "defi", "onchain"],
   wallet: ["wallet", "token", "swap", "balance"],
+  payments: ["payment", "invoice", "billing", "transfer"],
   knowledge: ["research", "lookup", "answer", "facts"],
   browser: ["link", "site", "page", "browser"],
   code: ["repo", "patch", "bug", "script"],
@@ -601,7 +604,7 @@ const ACTION_RECIPES: ScenarioRecipe[] = [
     minContextTurns: 10,
     maxContextTurns: 22,
     description: "long-context request",
-    hint: "Make the lead-in long and partly unrelated so the classifier must use the recent window rather than just the final line.",
+    hint: "Make the lead-in long and partly unrelated so the messageHandler router must use the recent window rather than just the final line.",
   },
 ];
 
@@ -707,8 +710,14 @@ function describeActionIntent(
 ): string {
   const readable = humanizeToken(actionName);
   switch (primaryContext) {
+    case "finance":
+      return `answer or act on a financial request for "${readable}"`;
+    case "crypto":
+      return `handle a crypto or DeFi request for "${readable}"`;
     case "wallet":
       return `perform the wallet action "${readable}"`;
+    case "payments":
+      return `handle a payment or billing request for "${readable}"`;
     case "knowledge":
       return `help with a knowledge task around "${readable}"`;
     case "browser":

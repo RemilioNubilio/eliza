@@ -14,6 +14,8 @@ import type { RobloxService } from "../services/RobloxService";
 import { type JsonValue, ROBLOX_SERVICE_NAME, type RobloxGameAction } from "../types";
 
 const actionName = "EXECUTE_ROBLOX_ACTION";
+const ROBLOX_ACTION_TIMEOUT_MS = 15_000;
+const MAX_ROBLOX_TARGET_IDS = 25;
 
 type RobloxActionParameters = Record<string, string | number | boolean | null>;
 
@@ -130,14 +132,25 @@ function readTargetPlayerIds(params: Record<string, unknown>, text: string): num
         typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN
       )
       .filter((value) => Number.isInteger(value) && value > 0);
-    if (ids.length) return ids;
+    if (ids.length) return ids.slice(0, MAX_ROBLOX_TARGET_IDS);
   }
 
   const single = readNumber(params, "targetPlayerId", "playerId", "userId");
   if (single !== null && Number.isInteger(single) && single > 0) return [single];
 
   const matches = [...text.matchAll(/\bplayer\s*(\d+)\b/gi)];
-  return matches.length ? matches.map((match) => Number.parseInt(match[1], 10)) : undefined;
+  return matches.length
+    ? matches.map((match) => Number.parseInt(match[1], 10)).slice(0, MAX_ROBLOX_TARGET_IDS)
+    : undefined;
+}
+
+function withRobloxTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out`)), ROBLOX_ACTION_TIMEOUT_MS)
+    ),
+  ]);
 }
 
 function sanitizeParameters(value: unknown): RobloxActionParameters {
@@ -191,6 +204,8 @@ function parseGameAction(text: string, params: Record<string, unknown>): RobloxG
 
 export const executeRobloxAction: Action = {
   name: actionName,
+  contexts: ["media", "automation"],
+  contextGate: { anyOf: ["media", "automation"] },
   similes: ["ROBLOX_RUN", "ROBLOX_TRIGGER", "ROBLOX_GAME_ACTION"],
   description:
     "Trigger a server-side Roblox game action such as move-npc, give-coins, teleport, spawn-entity, or start-event.",
@@ -252,11 +267,16 @@ export const executeRobloxAction: Action = {
       return { success: false, error: "Could not parse Roblox game action" };
     }
 
-    await service.executeAction(
-      runtime.agentId,
-      parsedAction.name,
-      parsedAction.parameters,
-      parsedAction.targetPlayerIds
+    const maxRobloxTargetIds = MAX_ROBLOX_TARGET_IDS;
+    const cappedTargetPlayerIds = parsedAction.targetPlayerIds?.slice(0, maxRobloxTargetIds);
+    await withRobloxTimeout(
+      service.executeAction(
+        runtime.agentId,
+        parsedAction.name,
+        parsedAction.parameters,
+        cappedTargetPlayerIds
+      ),
+      "roblox action"
     );
 
     await callback?.({
@@ -269,7 +289,7 @@ export const executeRobloxAction: Action = {
       data: {
         actionName: parsedAction.name,
         parameters: parsedAction.parameters,
-        targetPlayerIds: parsedAction.targetPlayerIds,
+        targetPlayerIds: cappedTargetPlayerIds,
       },
     };
   },

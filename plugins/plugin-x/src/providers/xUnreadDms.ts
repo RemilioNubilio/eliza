@@ -1,5 +1,4 @@
 import {
-  encodeToonValue,
   type IAgentRuntime,
   logger,
   type Memory,
@@ -12,7 +11,7 @@ import { resolveXFeedAdapter } from "../actions/x-feed-adapter.js";
 const DEFAULT_LIMIT = 20;
 
 function providerText(value: unknown): string {
-  return encodeToonValue({ x_unread_dms: value });
+  return JSON.stringify({ x_unread_dms: value }, null, 2);
 }
 
 export const xUnreadDmsProvider: Provider = {
@@ -20,6 +19,11 @@ export const xUnreadDmsProvider: Provider = {
   description: "Unread Twitter/X direct messages.",
   descriptionCompressed: "Unread X direct messages list.",
   dynamic: true,
+  contexts: ["social_posting", "messaging", "connectors"],
+  contextGate: { anyOf: ["social_posting", "messaging", "connectors"] },
+  cacheScope: "turn",
+  roleGate: { minRole: "ADMIN" },
+  cacheStable: false,
   get: async (
     runtime: IAgentRuntime,
     _message: Memory,

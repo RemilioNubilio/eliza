@@ -19,7 +19,6 @@ import type {
   State,
 } from "@elizaos/core";
 import { isCloudConnected } from "@elizaos/cloud-routing";
-import { encode as toonEncode } from "@toon-format/toon";
 
 // ── Overlay layout data (JSON-serializable, no React refs) ──────────────────
 
@@ -551,6 +550,8 @@ export function buildStreamOpAction(
 
   return {
     name: "STREAM_OP",
+    contexts: ["media", "automation", "connectors"],
+    contextGate: { anyOf: ["media", "automation", "connectors"] },
     description:
       "Control the local RTMP streaming pipeline for a target platform. Dispatches start, stop, and status calls to the dashboard stream API for twitch, youtube, x, or pumpfun.",
     descriptionCompressed:
@@ -688,16 +689,20 @@ export function buildStreamOpAction(
 
 /**
  * Provider that renders the live status of every supported streaming platform
- * as a TOON document. The pipeline currently exposes a single shared
+ * as JSON context. The pipeline currently exposes a single shared
  * `/api/stream/status` endpoint, so each platform row reflects that same
  * snapshot tagged with its destination label.
  */
 export const streamStatusProvider: Provider = {
   name: "streamStatus",
   description:
-    "Live RTMP pipeline status per supported platform (twitch, youtube, x, pumpfun) rendered as TOON.",
+    "Live RTMP pipeline status per supported platform (twitch, youtube, x, pumpfun) rendered as JSON.",
   descriptionCompressed: "RTMP status per platform.",
   dynamic: true,
+  contexts: ["media", "automation"],
+  contextGate: { anyOf: ["media", "automation"] },
+  cacheStable: false,
+  cacheScope: "turn",
   get: async (
     _runtime: IAgentRuntime,
     _message: Memory,
@@ -729,7 +734,7 @@ export const streamStatusProvider: Provider = {
     );
 
     return {
-      text: toonEncode({
+      text: JSON.stringify({
         stream_status: {
           count: rows.length,
           platforms: rows,

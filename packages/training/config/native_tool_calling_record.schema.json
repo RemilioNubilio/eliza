@@ -29,7 +29,7 @@
         "conversion": {
           "enum": [
             "native_direct",
-            "legacy_toon_compat",
+            "legacy_non_json",
             "legacy_xml_compat",
             "inferred",
             "synthetic"

@@ -22,8 +22,14 @@ import type {
   WorkspaceResult,
 } from "../services/workspace-service.js";
 
+const PROVISION_WORKSPACE_TIMEOUT_MS = 60_000;
+const WORKSPACE_PATH_MAX_CHARS = 500;
+
 export const provisionWorkspaceAction: Action = {
   name: "PROVISION_WORKSPACE",
+  contexts: ["code", "files", "tasks", "automation"],
+  contextGate: { anyOf: ["code", "files", "tasks", "automation"] },
+  roleGate: { minRole: "USER" },
 
   similes: [
     "CREATE_WORKSPACE",
@@ -168,19 +174,23 @@ export const provisionWorkspaceAction: Action = {
     }
 
     try {
-      const workspace: WorkspaceResult =
-        await workspaceService.provisionWorkspace({
+      const workspace: WorkspaceResult = await Promise.race([
+        workspaceService.provisionWorkspace({
           repo: repo ?? "",
           baseBranch: content.baseBranch,
           useWorktree: content.useWorktree,
           parentWorkspaceId,
-        });
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Workspace provisioning timeout")), PROVISION_WORKSPACE_TIMEOUT_MS),
+        ),
+      ]);
 
       // Store workspace in state
       if (state) {
         state.codingWorkspace = {
           id: workspace.id,
-          path: workspace.path,
+          path: workspace.path.slice(0, WORKSPACE_PATH_MAX_CHARS),
           branch: workspace.branch,
           isWorktree: workspace.isWorktree,
         };
@@ -189,7 +199,7 @@ export const provisionWorkspaceAction: Action = {
       if (callback) {
         await callback({
           text:
-            `Created workspace at ${workspace.path}\n` +
+            `Created workspace at ${workspace.path.slice(0, WORKSPACE_PATH_MAX_CHARS)}\n` +
             `Branch: ${workspace.branch}\n` +
             `Type: ${workspace.isWorktree ? "worktree" : "clone"}`,
         });
@@ -200,7 +210,7 @@ export const provisionWorkspaceAction: Action = {
         text: `Created workspace ${workspace.id}`,
         data: {
           workspaceId: workspace.id,
-          path: workspace.path,
+          path: workspace.path.slice(0, WORKSPACE_PATH_MAX_CHARS),
           branch: workspace.branch,
           isWorktree: workspace.isWorktree,
         },

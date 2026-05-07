@@ -1,5 +1,5 @@
 import {
-  parseToonKeyValue,
+  parseJSONObjectFromText,
   type Action,
   type ActionResult as CoreActionResult,
   type HandlerCallback,
@@ -126,7 +126,7 @@ function coerceParamValue(value: unknown): unknown {
 }
 
 function paramsFromText(text: string): ParamsRecord {
-  const parsed = parseToonKeyValue<ParamsRecord>(text);
+  const parsed = parseJSONObjectFromText(text) as ParamsRecord | null;
   if (!parsed) return {};
   const nested = isRecord(parsed.params) ? parsed.params : {};
   const params: ParamsRecord = { ...parsed, ...nested };
@@ -180,8 +180,10 @@ function pickSubactionFromParams(
 function createRouterAction(definition: Rs2004RouterDefinition): Action {
   return {
     name: definition.name,
-    description: `${definition.description} Return TOON: action: ${definition.name}, op: one of ${definition.subactions.map((s) => s.name).join("|")}.`,
+    description: `${definition.description} Return JSON with action: ${definition.name}, op: one of ${definition.subactions.map((s) => s.name).join("|")}.`,
     descriptionCompressed: definition.descriptionCompressed,
+    contexts: ["game", "automation", "world", "state"],
+    roleGate: { minRole: "ADMIN" },
     similes: definition.subactions.map((subaction) => subaction.description),
     examples: [],
     parameters: [
@@ -198,7 +200,7 @@ function createRouterAction(definition: Rs2004RouterDefinition): Action {
       {
         name: "params",
         description:
-          "Optional TOON object containing the fields required by the chosen op.",
+          "Optional JSON object containing the fields required by the chosen op.",
         descriptionCompressed: "Op fields.",
         required: false,
         schema: { type: "object" },
@@ -234,12 +236,22 @@ function createRouterAction(definition: Rs2004RouterDefinition): Action {
         return routerError(definition.name, errMessage);
       }
 
-      const result = await service.executeAction(
-        resolved.dispatch,
-        normalizeParams(params, resolved.dispatch),
-      );
-      callback?.({ text: result.message, action: definition.name });
-      return toRouterResult(result);
+      try {
+        const result = await service.executeAction(
+          resolved.dispatch,
+          normalizeParams(params, resolved.dispatch),
+        );
+        callback?.({ text: result.message, action: definition.name });
+        return toRouterResult(result);
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : `Unknown ${definition.name} failure.`;
+        const text = `${definition.name} failed: ${message}`;
+        callback?.({ text, action: definition.name });
+        return { success: false, text, error: message };
+      }
     },
   };
 }
@@ -252,6 +264,8 @@ export const rs2004WalkToAction: Action = {
   description:
     "Walk to a coordinate or named destination. Provide either destination: name OR x: N, z: N.",
   descriptionCompressed: WALK_TO_DESCRIPTION_COMPRESSED,
+  contexts: ["game", "automation", "world", "state"],
+  roleGate: { minRole: "ADMIN" },
   similes: ["MOVE_TO", "GOTO"],
   examples: [],
   parameters: [
@@ -303,9 +317,17 @@ export const rs2004WalkToAction: Action = {
       ...paramsFromText(resolveActionText(message)),
       ...paramsFromOptions(options),
     };
-    const result = await service.executeAction("walkTo", params);
-    callback?.({ text: result.message, action: "WALK_TO" });
-    return toRouterResult(result);
+    try {
+      const result = await service.executeAction("walkTo", params);
+      callback?.({ text: result.message, action: "WALK_TO" });
+      return toRouterResult(result);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown walk failure.";
+      const text = `WALK_TO failed: ${message}`;
+      callback?.({ text, action: "WALK_TO" });
+      return { success: false, text, error: message };
+    }
   },
 };
 

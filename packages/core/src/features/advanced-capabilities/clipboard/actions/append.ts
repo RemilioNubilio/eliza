@@ -7,6 +7,7 @@ import {
 	type Memory,
 	type State,
 } from "../../../../types/index.ts";
+import { hasActionContextOrKeyword } from "../../../../utils/action-validation.ts";
 import { createClipboardService } from "../services/clipboardService.ts";
 import { requireActionSpec } from "../specs.ts";
 
@@ -52,57 +53,35 @@ function extractAppendInfo(
 }
 
 const spec = requireActionSpec("CLIPBOARD_APPEND");
+const MAX_CONTEXT_ENTRIES = 20;
+const MAX_TITLE_CHARS = 120;
+const MAX_APPEND_CHARS = 12000;
+
+function truncateText(text: string, max: number): string {
+	return text.length <= max ? text : `${text.slice(0, max)}\n…[truncated]`;
+}
 
 export const clipboardAppendAction: Action = {
 	name: spec.name,
+	contexts: ["files", "knowledge", "agent_internal"],
+	roleGate: { minRole: "ADMIN" },
 	similes: spec.similes ? [...spec.similes] : [],
 	description: spec.description,
 
 	validate: async (
-		runtime: IAgentRuntime,
+		_runtime: IAgentRuntime,
 		message: Memory,
 		state?: State,
 		options?: HandlerOptions,
 	): Promise<boolean> => {
-		const __avTextRaw =
-			typeof message?.content?.text === "string" ? message.content.text : "";
-		const __avText = __avTextRaw.toLowerCase();
-		const __avKeywords = ["clipboard", "append"];
-		const __avKeywordOk = __avKeywords.some(
-			(kw) => kw.length > 0 && __avText.includes(kw),
-		);
-		const __avRegex = /\b(?:clipboard|append)\b/i;
-		const __avRegexOk = __avRegex.test(__avText);
-		const __avSource = String(message?.content?.source ?? "");
-		const __avExpectedSource = "";
-		const __avSourceOk = __avExpectedSource
-			? __avSource === __avExpectedSource
-			: Boolean(__avSource || state || runtime?.agentId || runtime?.getService);
-		const __avOptions = options && typeof options === "object" ? options : {};
 		const __avParams = readParams(options);
 		if (isValidAppendInput(__avParams)) {
 			return true;
 		}
-		const __avInputOk =
-			__avText.trim().length > 0 ||
-			Object.keys(__avOptions as Record<string, unknown>).length > 0 ||
-			Boolean(message?.content && typeof message.content === "object");
-
-		if (!(__avKeywordOk && __avRegexOk && __avSourceOk && __avInputOk)) {
-			return false;
-		}
-
-		const __avLegacyValidate = async (
-			_runtime: IAgentRuntime,
-			_message: Memory,
-		): Promise<boolean> => {
-			return true;
-		};
-		try {
-			return Boolean(await __avLegacyValidate(runtime, message));
-		} catch {
-			return false;
-		}
+		return hasActionContextOrKeyword(message, state, {
+			contexts: ["files", "knowledge", "agent_internal"],
+			keywords: ["clipboard", "append", "add to note", "add to clipboard"],
+		});
 	},
 
 	handler: async (
@@ -118,8 +97,13 @@ export const clipboardAppendAction: Action = {
 		// Get list of available entries for context
 		const entries = await service.list();
 		const entriesContext = entries
+			.slice(0, MAX_CONTEXT_ENTRIES)
 			.map((e) => `- ${e.id}: "${e.title}"`)
 			.join("\n");
+		const omittedContext =
+			entries.length > MAX_CONTEXT_ENTRIES
+				? `\n…${entries.length - MAX_CONTEXT_ENTRIES} more entries omitted.`
+				: "";
 
 		if (entries.length === 0) {
 			if (callback) {
@@ -137,7 +121,7 @@ export const clipboardAppendAction: Action = {
 		if (!appendInfo) {
 			if (callback) {
 				await callback({
-					text: `I couldn't determine which note to update or what to add. Available entries:\n${entriesContext}`,
+					text: `I couldn't determine which note to update or what to add. Available entries:\n${entriesContext}${omittedContext}`,
 					actions: ["CLIPBOARD_APPEND_FAILED"],
 					source: message.content.source,
 				});
@@ -151,7 +135,7 @@ export const clipboardAppendAction: Action = {
 			if (!exists) {
 				if (callback) {
 					await callback({
-						text: `Clipboard entry "${appendInfo.id}" not found. Available entries:\n${entriesContext}`,
+						text: `Clipboard entry "${appendInfo.id}" not found. Available entries:\n${entriesContext}${omittedContext}`,
 						actions: ["CLIPBOARD_APPEND_NOT_FOUND"],
 						source: message.content.source,
 					});
@@ -165,7 +149,7 @@ export const clipboardAppendAction: Action = {
 			// Write with append option
 			const entry = await service.write(
 				existingEntry.title,
-				appendInfo.content,
+				truncateText(appendInfo.content, MAX_APPEND_CHARS),
 				{
 					append: true,
 					tags: existingEntry.tags,
@@ -182,7 +166,16 @@ export const clipboardAppendAction: Action = {
 				});
 			}
 
-			return { success: true, text: successMessage, entry };
+			return {
+				success: true,
+				text: successMessage,
+				data: {
+					entryId: entry.id,
+					title: truncateText(entry.title, MAX_TITLE_CHARS),
+					appendedChars: Math.min(appendInfo.content.length, MAX_APPEND_CHARS),
+					truncated: appendInfo.content.length > MAX_APPEND_CHARS,
+				},
+			};
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
 			logger.error("[ClipboardAppend] Error:", errorMsg);

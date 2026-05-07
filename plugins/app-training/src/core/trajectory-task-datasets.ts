@@ -4,13 +4,18 @@ import type {
   Trajectory,
   TrajectoryLlmCall,
 } from "@elizaos/agent/types/trajectory";
+import {
+  buildElizaNativeTrajectoryRows,
+  ELIZA_NATIVE_TRAJECTORY_FORMAT,
+  type ElizaNativeTrajectoryRow,
+} from "@elizaos/core";
+import {
+  extractElizaNativeRowsFromExportText,
+  extractTrajectoriesFromExportText,
+  listTrajectoryCallEntries,
+} from "./trajectory-consumer.js";
 
-export interface GeminiTuningExample {
-  messages: Array<{
-    role: "system" | "user" | "model";
-    content: string;
-  }>;
-}
+export type ElizaNativeTrainingExample = ElizaNativeTrajectoryRow;
 
 export type TrajectoryTrainingTask =
   | "should_respond"
@@ -31,7 +36,7 @@ export interface TrajectoryTaskDatasetPaths {
 export interface TrajectoryTaskDatasetExport {
   counts: Record<TrajectoryTrainingTask, number>;
   paths: TrajectoryTaskDatasetPaths;
-  examples: Record<TrajectoryTrainingTask, GeminiTuningExample[]>;
+  examples: Record<TrajectoryTrainingTask, ElizaNativeTrainingExample[]>;
   summary: TrajectoryTaskDatasetSummary;
 }
 
@@ -45,7 +50,7 @@ export interface TrajectoryTaskDatasetSummary {
   generatedAt: string;
   trajectoryCount: number;
   llmCallCount: number;
-  skippedLegacyRows: number;
+  skippedNonNativeRows: number;
   warnings: string[];
   counts: Record<TrajectoryTrainingTask, number>;
   tasks: TrajectoryTrainingTask[];
@@ -64,7 +69,7 @@ const TASK_FILE_NAMES: Record<TrajectoryTrainingTask, string> = {
   media_description: "media_description_trajectories.jsonl",
 };
 
-type TaskExampleMap = Record<TrajectoryTrainingTask, GeminiTuningExample[]>;
+type TaskExampleMap = Record<TrajectoryTrainingTask, ElizaNativeTrainingExample[]>;
 type TaskCountMap = Record<TrajectoryTrainingTask, number>;
 type TaskTrajectoryIdMap = Record<TrajectoryTrainingTask, Set<string>>;
 
@@ -73,7 +78,7 @@ interface TrajectoryTaskExtractionResult {
   sourceCallCounts: TaskCountMap;
   sourceTrajectoryIds: TaskTrajectoryIdMap;
   llmCallCount: number;
-  skippedLegacyRows: number;
+  skippedNonNativeRows: number;
   warnings: string[];
 }
 
@@ -119,6 +124,21 @@ function normalizeToken(value: unknown): string {
     .replace(/[^a-z0-9:_-]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .replace(/_+/g, "_");
+}
+
+function normalizeTrainingTask(value: unknown): TrajectoryTrainingTask | null {
+  const normalized = normalizeToken(value);
+  if (
+    normalized === "should_respond" ||
+    normalized === "context_routing" ||
+    normalized === "action_planner" ||
+    normalized === "response" ||
+    normalized === "reply" ||
+    normalized === "media_description"
+  ) {
+    return normalized === "reply" ? "response" : normalized;
+  }
+  return null;
 }
 
 function collectCallHints(call: TrajectoryCallLike): string[] {
@@ -170,14 +190,6 @@ function looksLikePlannerCall(call: TrajectoryCallLike): boolean {
     /available actions/i.test(prompt) ||
     /actionNames/i.test(prompt)
   );
-}
-
-const MAX_TRAJECTORY_TEXT_LENGTH = 200_000;
-
-function clampTrajectoryText(text: string): string {
-  return text.length > MAX_TRAJECTORY_TEXT_LENGTH
-    ? text.slice(0, MAX_TRAJECTORY_TEXT_LENGTH)
-    : text;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -306,44 +318,62 @@ function inferTasksForCall(call: TrajectoryCallLike): TrajectoryTrainingTask[] {
 }
 
 function buildExampleForTask(
+  trajectory: Trajectory,
   call: TrajectoryCallLike,
   task: TrajectoryTrainingTask,
-): GeminiTuningExample | null {
-  const systemPrompt = call.systemPrompt?.trim();
-  const userPrompt = call.userPrompt?.trim();
+): ElizaNativeTrainingExample | null {
   const response = call.response?.trim();
+  const trajectoryId = String(trajectory.trajectoryId ?? "");
+  const callId =
+    typeof call.callId === "string" && call.callId.trim().length > 0
+      ? call.callId
+      : `${trajectoryId}-call`;
 
-  if (!systemPrompt || !userPrompt || !response) {
+  if (!response) {
     return null;
   }
 
   if (task === "should_respond" || task === "context_routing") {
-    const messageHandlerResponse = normalizeMessageHandlerJson(response);
-    if (!messageHandlerResponse) {
+    if (!normalizeMessageHandlerJson(response)) {
       return null;
     }
-    return {
-      messages: [
-        { role: "system", content: clampTrajectoryText(systemPrompt) },
-        { role: "user", content: userPrompt },
-        { role: "model", content: messageHandlerResponse },
-      ],
-    };
   }
 
+  const row = buildElizaNativeTrajectoryRows([trajectory]).find(
+    (candidate) => candidate.callId === callId,
+  );
+  if (!row) return null;
+
   return {
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-      { role: "model", content: response },
-    ],
+    ...row,
+    format: ELIZA_NATIVE_TRAJECTORY_FORMAT,
+    metadata: {
+      ...row.metadata,
+      task_type: task,
+      source_dataset: `eliza_native/${task}`,
+      trajectory_id: trajectoryId,
+      call_id: callId,
+      agent_id: String(trajectory.agentId ?? "unknown"),
+      trajectory_source:
+        typeof trajectory.metadata?.source === "string"
+          ? trajectory.metadata.source
+          : row.metadata.trajectory_source,
+    },
   };
 }
 
 function collectTrajectoryExamplesByTask(
-  trajectories: Trajectory[],
+  trajectoriesInput: Trajectory[] | string,
   tasks?: readonly TrajectoryTrainingTask[],
 ): TrajectoryTaskExtractionResult {
+  const nativeRows =
+    typeof trajectoriesInput === "string"
+      ? extractElizaNativeRowsFromExportText(trajectoriesInput)
+      : [];
+  const trajectories =
+    typeof trajectoriesInput === "string"
+      ? extractTrajectoriesFromExportText(trajectoriesInput)
+      : trajectoriesInput;
   const requestedTasks = new Set<TrajectoryTrainingTask>(
     tasks ?? [
       "should_respond",
@@ -357,40 +387,65 @@ function collectTrajectoryExamplesByTask(
   const sourceCallCounts = createEmptyCountMap();
   const sourceTrajectoryIds = createEmptyTrajectoryIdMap();
   let llmCallCount = 0;
-  let skippedLegacyRows = 0;
+  let skippedNonNativeRows = 0;
   const warnings: string[] = [];
   const warnSkip = (message: string): void => {
-    skippedLegacyRows += 1;
+    skippedNonNativeRows += 1;
     warnings.push(message);
     console.warn(message);
   };
 
+  if (nativeRows.length > 0) {
+    for (const row of nativeRows) {
+      llmCallCount += 1;
+      const task =
+        normalizeTrainingTask(row.metadata?.task_type) ??
+        normalizeTrainingTask(row.purpose) ??
+        normalizeTrainingTask(row.stepType) ??
+        normalizeTrainingTask(row.actionType);
+      if (!task || !requestedTasks.has(task)) {
+        continue;
+      }
+      examples[task].push(row);
+      sourceCallCounts[task] += 1;
+      if (typeof row.trajectoryId === "string") {
+        sourceTrajectoryIds[task].add(row.trajectoryId);
+      }
+    }
+    return {
+      examples,
+      sourceCallCounts,
+      sourceTrajectoryIds,
+      llmCallCount,
+      skippedNonNativeRows,
+      warnings,
+    };
+  }
+
   for (const trajectory of trajectories) {
     const trajectoryId = trajectory.trajectoryId;
-    for (const step of trajectory.steps ?? []) {
-      for (const llmCall of step.llmCalls ?? []) {
-        llmCallCount += 1;
-        const call = llmCall as TrajectoryCallLike;
-        const inferredTasks = inferTasksForCall(call);
-        for (const task of inferredTasks) {
-          if (!requestedTasks.has(task)) {
-            continue;
-          }
-
-          const example = buildExampleForTask(call, task);
-          if (!example) {
-            if (task === "should_respond" || task === "context_routing") {
-              warnSkip(
-                `[trajectory-task-datasets] skipped legacy ${task} row from trajectory ${trajectoryId} call ${call.callId ?? "unknown"}; expected native messageHandler JSON`,
-              );
-            }
-            continue;
-          }
-
-          examples[task].push(example);
-          sourceCallCounts[task] += 1;
-          sourceTrajectoryIds[task].add(trajectoryId);
+    for (const entry of listTrajectoryCallEntries(trajectory)) {
+      llmCallCount += 1;
+      const call = entry.call as TrajectoryCallLike;
+      const inferredTasks = inferTasksForCall(call);
+      for (const task of inferredTasks) {
+        if (!requestedTasks.has(task)) {
+          continue;
         }
+
+        const example = buildExampleForTask(trajectory, call, task);
+        if (!example) {
+          if (task === "should_respond" || task === "context_routing") {
+            warnSkip(
+              `[trajectory-task-datasets] skipped non-native ${task} row from trajectory ${trajectoryId} call ${call.callId ?? "unknown"}; expected native messageHandler JSON`,
+            );
+          }
+          continue;
+        }
+
+        examples[task].push(example);
+        sourceCallCounts[task] += 1;
+        sourceTrajectoryIds[task].add(trajectoryId);
       }
     }
   }
@@ -400,26 +455,34 @@ function collectTrajectoryExamplesByTask(
     sourceCallCounts,
     sourceTrajectoryIds,
     llmCallCount,
-    skippedLegacyRows,
+    skippedNonNativeRows,
     warnings,
   };
 }
 
 export function extractTrajectoryExamplesByTask(
-  trajectories: Trajectory[],
+  trajectories: Trajectory[] | string,
   tasks?: readonly TrajectoryTrainingTask[],
-): Record<TrajectoryTrainingTask, GeminiTuningExample[]> {
+): Record<TrajectoryTrainingTask, ElizaNativeTrainingExample[]> {
   return collectTrajectoryExamplesByTask(trajectories, tasks).examples;
 }
 
 export async function exportTrajectoryTaskDatasets(
-  trajectories: Trajectory[],
+  trajectories: Trajectory[] | string,
   outputDir: string,
   tasks?: readonly TrajectoryTrainingTask[],
 ): Promise<TrajectoryTaskDatasetExport> {
   await mkdir(outputDir, { recursive: true });
 
   const extraction = collectTrajectoryExamplesByTask(trajectories, tasks);
+  const normalizedTrajectories =
+    typeof trajectories === "string"
+      ? extractTrajectoriesFromExportText(trajectories)
+      : trajectories;
+  const nativeRows =
+    typeof trajectories === "string"
+      ? extractElizaNativeRowsFromExportText(trajectories)
+      : [];
   const { examples } = extraction;
   const counts: Record<TrajectoryTrainingTask, number> = {
     should_respond: examples.should_respond.length,
@@ -439,9 +502,12 @@ export async function exportTrajectoryTaskDatasets(
   };
   const summary: TrajectoryTaskDatasetSummary = {
     generatedAt: new Date().toISOString(),
-    trajectoryCount: trajectories.length,
+    trajectoryCount:
+      normalizedTrajectories.length > 0
+        ? normalizedTrajectories.length
+        : new Set(nativeRows.map((row) => row.trajectoryId)).size,
     llmCallCount: extraction.llmCallCount,
-    skippedLegacyRows: extraction.skippedLegacyRows,
+    skippedNonNativeRows: extraction.skippedNonNativeRows,
     warnings: extraction.warnings,
     counts,
     tasks: [

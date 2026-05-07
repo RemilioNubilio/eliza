@@ -14,7 +14,7 @@ import {
   logger,
   type Memory,
   ModelType,
-  parseToonKeyValue,
+  parseJSONObjectFromText,
   type State,
 } from "@elizaos/core";
 import type { GoogleChatService } from "../service.js";
@@ -38,7 +38,12 @@ interface GoogleChatOpInfo {
   emoji?: string;
   messageName?: string;
   remove: boolean;
+  timeoutMs?: number;
 }
+
+const MAX_GOOGLE_CHAT_TEXT_CHARS = 4_000;
+const MAX_GOOGLE_CHAT_REACTIONS = 50;
+const GOOGLE_CHAT_ACTION_TIMEOUT_MS = 30_000;
 
 const messageOpTemplate = `# Task: Extract Google Chat message operation parameters.
 
@@ -51,19 +56,22 @@ Operations:
 - send: send a message to a space. Provide \`text\`, \`space\` (spaces/xxx or "current"), and optional \`thread\`.
 - react: add or remove an emoji reaction. Provide \`emoji\`, \`messageName\` (spaces/xxx/messages/yyy), and \`remove\` (true to remove).
 
-Respond with TOON only:
-op: send
-text:
-space: current
-thread:
-emoji:
-messageName:
-remove: false`;
+Respond with JSON only, with no prose or fences:
+{
+  "op": "send",
+  "text": "",
+  "space": "current",
+  "thread": "",
+  "emoji": "",
+  "messageName": "",
+  "remove": false
+}`;
 
 function parseInfo(raw: unknown): GoogleChatOpInfo | null {
-  const parsed = parseToonKeyValue<Record<string, unknown>>(
-    typeof raw === "string" ? raw : String(raw)
-  );
+  const parsed = parseJSONObjectFromText(typeof raw === "string" ? raw : String(raw)) as Record<
+    string,
+    unknown
+  > | null;
   if (!parsed) {
     return null;
   }
@@ -153,6 +161,7 @@ async function handleSend(
       space: targetSpace,
       messageName: lastResult?.messageName,
       chunksCount: chunks.length,
+      timeoutMs: info.timeoutMs,
     },
   };
 }
@@ -188,7 +197,7 @@ async function handleReact(
   if (info.remove) {
     const reactions = await service.listReactions(targetMessage);
     const botUser = service.getBotUser();
-    const toRemove = reactions.filter((r) => {
+    const toRemove = reactions.slice(0, MAX_GOOGLE_CHAT_REACTIONS).filter((r) => {
       const userName = r.user?.name;
       if (botUser && userName !== botUser && userName !== "users/app") {
         return false;
@@ -212,6 +221,7 @@ async function handleReact(
       data: {
         op: "react",
         removed: toRemove.length,
+        timeoutMs: info.timeoutMs,
       },
     };
   }
@@ -234,6 +244,7 @@ async function handleReact(
       op: "react",
       reactionName: result.name,
       emoji: info.emoji,
+      timeoutMs: info.timeoutMs,
     },
   };
 }
@@ -251,6 +262,41 @@ export const messageOp: Action = {
   ],
   description: "Google Chat message operation router (send, react).",
   descriptionCompressed: "Google Chat message ops: send, react.",
+  contexts: ["messaging", "connectors"],
+  contextGate: { anyOf: ["messaging", "connectors"] },
+  roleGate: { minRole: "USER" },
+  parameters: [
+    {
+      name: "op",
+      description: "Operation to run: send or react.",
+      required: false,
+      schema: { type: "string", enum: ["send", "react"] },
+    },
+    {
+      name: "text",
+      description: "Message text for send.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "space",
+      description: "Google Chat space id/name or current space.",
+      required: false,
+      schema: { type: "string", default: "current" },
+    },
+    {
+      name: "messageName",
+      description: "Target Google Chat message resource name for reaction.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "emoji",
+      description: "Reaction emoji.",
+      required: false,
+      schema: { type: "string" },
+    },
+  ],
   suppressPostActionContinuation: true,
 
   validate: async (_runtime: IAgentRuntime, message: Memory, _state?: State): Promise<boolean> => {
@@ -295,6 +341,11 @@ export const messageOp: Action = {
       });
       return { success: false, error: "Could not extract op parameters" };
     }
+    info = {
+      ...info,
+      text: info.text?.slice(0, MAX_GOOGLE_CHAT_TEXT_CHARS),
+      timeoutMs: GOOGLE_CHAT_ACTION_TIMEOUT_MS,
+    };
 
     if (info.op === "react") {
       return handleReact(service, currentState, message, info, callback);

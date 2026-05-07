@@ -10,7 +10,7 @@ import {
   logger,
   type Memory,
   ModelType,
-  parseToonKeyValue,
+  parseJSONObjectFromText,
   type State,
   withStandaloneTrajectory,
 } from "@elizaos/core";
@@ -18,6 +18,9 @@ import { runIntentModel } from "../../../utils/intent-trajectory";
 import { SOLANA_SERVICE_NAME } from "../constants";
 import type { SolanaService, SolanaTransferParams, SolanaTransferResult } from "../service";
 import { confirmationRequired, isConfirmed } from "./confirmation";
+
+const SOLANA_ACTION_TIMEOUT_MS = 30_000;
+const SOLANA_ERROR_MAX_CHARS = 1_000;
 
 interface TransferContent extends Content {
   tokenAddress: string | null;
@@ -66,7 +69,7 @@ async function extractTransferContent(runtime: IAgentRuntime, prompt: string): P
       })
   );
 
-  return parseToonKeyValue(result);
+  return parseJSONObjectFromText(result);
 }
 
 /**
@@ -82,6 +85,27 @@ function recentMessagesFromState(state: State | undefined): unknown[] {
   return Array.isArray(messages) ? messages : [];
 }
 
+function selectedContextMatches(state: State | undefined, contexts: readonly string[]): boolean {
+  const selected = new Set<string>();
+  const collect = (value: unknown) => {
+    if (!Array.isArray(value)) return;
+    for (const item of value) {
+      if (typeof item === "string") selected.add(item);
+    }
+  };
+  collect((state?.values as Record<string, unknown> | undefined)?.selectedContexts);
+  collect((state?.data as Record<string, unknown> | undefined)?.selectedContexts);
+  const contextObject = (state?.data as Record<string, unknown> | undefined)?.contextObject as
+    | {
+        trajectoryPrefix?: { selectedContexts?: unknown };
+        metadata?: { selectedContexts?: unknown };
+      }
+    | undefined;
+  collect(contextObject?.trajectoryPrefix?.selectedContexts);
+  collect(contextObject?.metadata?.selectedContexts);
+  return contexts.some((context) => selected.has(context));
+}
+
 import { transferTemplate } from "../generated/prompts/typescript/prompts.js";
 import { requireActionSpec } from "../generated/specs/spec-helpers";
 
@@ -90,6 +114,35 @@ const spec = requireActionSpec("SOLANA_TRANSFER");
 export default {
   name: spec.name,
   similes: spec.similes ? [...spec.similes] : [],
+  contexts: ["finance", "crypto", "wallet", "payments"],
+  contextGate: { anyOf: ["finance", "crypto", "wallet", "payments"] },
+  roleGate: { minRole: "USER" },
+  parameters: [
+    {
+      name: "amount",
+      description: "Human-readable SOL or SPL token amount.",
+      required: true,
+      schema: { type: "string" },
+    },
+    {
+      name: "recipient",
+      description: "Recipient Solana address.",
+      required: true,
+      schema: { type: "string" },
+    },
+    {
+      name: "fromToken",
+      description: "Token symbol, mint address, or SOL.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "confirmed",
+      description: "Set true after preview confirmation to submit.",
+      required: false,
+      schema: { type: "boolean", default: false },
+    },
+  ],
   validate: async (
     runtime: IAgentRuntime,
     message: Memory,
@@ -100,7 +153,45 @@ export default {
       return false;
     }
 
-    const keywords = ["transfer", "send", "give", "pay", "sol", "token"];
+    if (selectedContextMatches(state, ["finance", "crypto", "wallet", "payments"])) {
+      return true;
+    }
+    const keywords = [
+      "transfer",
+      "send",
+      "give",
+      "pay",
+      "sol",
+      "token",
+      "wallet",
+      "crypto",
+      "recipient",
+      "address",
+      "transfiere",
+      "enviar",
+      "pagar",
+      "billetera",
+      "transférer",
+      "envoyer",
+      "payer",
+      "portefeuille",
+      "überweisen",
+      "senden",
+      "zahlen",
+      "wallet",
+      "trasferisci",
+      "invia",
+      "paga",
+      "転送",
+      "送金",
+      "支払",
+      "转账",
+      "发送",
+      "支付",
+      "송금",
+      "보내",
+      "지불",
+    ];
     const currentText =
       typeof message.content?.text === "string" ? message.content.text.toLowerCase() : "";
     if (keywords.some((keyword) => currentText.includes(keyword))) {
@@ -150,7 +241,11 @@ export default {
           content: { error: "Invalid transfer content" },
         });
       }
-      return;
+      return {
+        success: false,
+        text: "Need a valid recipient address and amount to transfer.",
+        error: "Invalid transfer content",
+      };
     }
 
     if (!isTransferContent(content)) {
@@ -160,7 +255,11 @@ export default {
           content: { error: "Invalid transfer content" },
         });
       }
-      return;
+      return {
+        success: false,
+        text: "Need a valid recipient address and amount to transfer.",
+        error: "Invalid transfer content",
+      };
     }
 
     const transferParams: SolanaTransferParams = {
@@ -190,13 +289,18 @@ export default {
         throw new Error("SolanaService not initialized");
       }
 
-      const walletResult = await solanaService.handleWalletAction({
-        subaction: "transfer",
-        chain: "solana",
-        ...transferParams,
-        mode: options?.dryRun === true ? "prepare" : "execute",
-        dryRun: options?.dryRun === true,
-      });
+      const walletResult = await Promise.race([
+        solanaService.handleWalletAction({
+          subaction: "transfer",
+          chain: "solana",
+          ...transferParams,
+          mode: options?.dryRun === true ? "prepare" : "execute",
+          dryRun: options?.dryRun === true,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Solana transfer timeout")), SOLANA_ACTION_TIMEOUT_MS)
+        ),
+      ]);
       if (!("kind" in walletResult)) {
         throw new Error("SolanaService returned a non-transfer wallet action result");
       }
@@ -218,7 +322,20 @@ export default {
         });
       }
 
-      return;
+      return {
+        success: true,
+        text: transferResult.dryRun
+          ? `Solana transfer dry run completed for ${transferResult.amount} ${transferResult.kind === "sol" ? "SOL" : "tokens"}.`
+          : `Sent ${transferResult.amount} ${transferResult.kind === "sol" ? "SOL" : "tokens"}. Transaction hash: ${transferResult.signature}`,
+        values: {
+          success: true,
+          signature: transferResult.signature,
+          dryRun: transferResult.dryRun,
+          amount: transferResult.amount,
+          recipient: transferResult.recipient,
+        },
+        data: transferResult,
+      };
     } catch (error) {
       logger.error({ error }, "Error during transfer");
       if (callback) {
@@ -227,13 +344,28 @@ export default {
             ? error.message
             : typeof error === "string"
               ? error
-              : JSON.stringify(error);
+              : JSON.stringify(error).slice(0, SOLANA_ERROR_MAX_CHARS);
         callback({
           text: `Transfer failed: ${message}`,
           content: { error: message },
         });
       }
-      return;
+      return {
+        success: false,
+        text: `Transfer failed: ${
+          error instanceof Error
+            ? error.message
+            : typeof error === "string"
+              ? error
+              : JSON.stringify(error).slice(0, SOLANA_ERROR_MAX_CHARS)
+        }`,
+        error:
+          error instanceof Error
+            ? error.message
+            : typeof error === "string"
+              ? error
+              : JSON.stringify(error).slice(0, SOLANA_ERROR_MAX_CHARS),
+      };
     }
   },
 

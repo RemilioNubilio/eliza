@@ -314,7 +314,15 @@ export function formatActionParameters(parameters: ActionParameter[]): string {
 }
 
 function formatParameterType(schema: ActionParameterSchema): string {
-	switch (schema.type) {
+	if (schema.anyOf?.length) {
+		return `(${schema.anyOf.map(formatParameterType).join(" | ")})`;
+	}
+	if (schema.oneOf?.length) {
+		return schema.oneOf.map(formatParameterType).join(" | ");
+	}
+
+	const primitiveType = schema.type;
+	switch (primitiveType) {
 		case "string":
 			return "string";
 		case "number":
@@ -329,8 +337,10 @@ function formatParameterType(schema: ActionParameterSchema): string {
 				: "array";
 		case "object":
 			return "object";
+		case undefined:
+			return "unknown";
 		default:
-			return schema.type;
+			return primitiveType;
 	}
 }
 
@@ -347,13 +357,19 @@ export function parseActionParams(
 
 	const record = parsed as Record<string, unknown>;
 	const candidate =
-		record.params && typeof record.params === "object" && !Array.isArray(record.params)
+		record.params &&
+		typeof record.params === "object" &&
+		!Array.isArray(record.params)
 			? (record.params as Record<string, unknown>)
 			: record;
 	const result = new Map<string, ActionParameters>();
 
 	for (const [actionName, paramsValue] of Object.entries(candidate)) {
-		if (!paramsValue || typeof paramsValue !== "object" || Array.isArray(paramsValue)) {
+		if (
+			!paramsValue ||
+			typeof paramsValue !== "object" ||
+			Array.isArray(paramsValue)
+		) {
 			continue;
 		}
 
@@ -369,12 +385,6 @@ export function parseActionParams(
 
 	return result;
 }
-
-/**
- * Backward-compatible export name for older callers. Runtime-owned paths use
- * JSON/native params; this alias intentionally no longer parses TOON strings.
- */
-export const parseToonActionParams = parseActionParams;
 
 function parseActionParamsJson(input: string): Record<string, unknown> | null {
 	const trimmed = input.trim();

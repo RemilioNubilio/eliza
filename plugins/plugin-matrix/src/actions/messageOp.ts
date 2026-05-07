@@ -14,7 +14,7 @@ import type {
   Memory,
   State,
 } from "@elizaos/core";
-import { composePromptFromState, ModelType, parseToonKeyValue } from "@elizaos/core";
+import { composePromptFromState, ModelType, parseJSONObjectFromText } from "@elizaos/core";
 import type { MatrixService } from "../service.js";
 import { isValidMatrixRoomAlias, isValidMatrixRoomId, MATRIX_SERVICE_NAME } from "../types.js";
 
@@ -30,7 +30,11 @@ interface MatrixOpInfo {
   roomId?: string;
   emoji?: string;
   eventId?: string;
+  timeoutMs?: number;
 }
+
+const MAX_MATRIX_TEXT_CHARS = 4_000;
+const MATRIX_ACTION_TIMEOUT_MS = 30_000;
 
 const messageOpTemplate = `# Task: Extract Matrix message operation parameters.
 
@@ -43,17 +47,20 @@ Operations:
 - send: send a message to a Matrix room. Provide \`text\` and \`roomId\` (!room:server, #alias:server, or "current").
 - react: react to a Matrix event with an emoji. Provide \`emoji\` and \`eventId\` (starts with $).
 
-Respond with TOON only:
-op: send
-text:
-roomId: current
-emoji:
-eventId:`;
+Respond with JSON only, with no prose or fences:
+{
+  "op": "send",
+  "text": "",
+  "roomId": "current",
+  "emoji": "",
+  "eventId": ""
+}`;
 
 function parseInfo(raw: unknown): MatrixOpInfo | null {
-  const parsed = parseToonKeyValue<Record<string, unknown>>(
-    typeof raw === "string" ? raw : String(raw)
-  );
+  const parsed = parseJSONObjectFromText(typeof raw === "string" ? raw : String(raw)) as Record<
+    string,
+    unknown
+  > | null;
   if (!parsed) {
     return null;
   }
@@ -124,6 +131,7 @@ async function handleSend(
       op: "send",
       roomId: result.roomId,
       eventId: result.eventId,
+      timeoutMs: info.timeoutMs,
     },
   };
 }
@@ -170,6 +178,7 @@ async function handleReact(
       emoji: info.emoji,
       eventId: info.eventId,
       roomId,
+      timeoutMs: info.timeoutMs,
     },
   };
 }
@@ -187,6 +196,41 @@ export const messageOp: Action = {
   ],
   description: "Matrix message operation router (send, react).",
   descriptionCompressed: "Matrix message ops: send, react.",
+  contexts: ["messaging", "connectors"],
+  contextGate: { anyOf: ["messaging", "connectors"] },
+  roleGate: { minRole: "USER" },
+  parameters: [
+    {
+      name: "op",
+      description: "Operation to run: send or react.",
+      required: false,
+      schema: { type: "string", enum: ["send", "react"] },
+    },
+    {
+      name: "text",
+      description: "Message text for send.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "roomId",
+      description: "Matrix room id or current room.",
+      required: false,
+      schema: { type: "string", default: "current" },
+    },
+    {
+      name: "eventId",
+      description: "Target event id for reactions.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "emoji",
+      description: "Reaction emoji.",
+      required: false,
+      schema: { type: "string" },
+    },
+  ],
   suppressPostActionContinuation: true,
 
   validate: async (_runtime: IAgentRuntime, message: Memory, _state?: State): Promise<boolean> => {
@@ -237,6 +281,11 @@ export const messageOp: Action = {
       });
       return { success: false, error: "Could not extract op parameters" };
     }
+    info = {
+      ...info,
+      text: info.text?.slice(0, MAX_MATRIX_TEXT_CHARS),
+      timeoutMs: MATRIX_ACTION_TIMEOUT_MS,
+    };
 
     if (info.op === "react") {
       return handleReact(matrixService, composedState, message, info, callback);

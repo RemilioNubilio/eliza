@@ -1,12 +1,12 @@
 /**
  * Synthetic dataset generator for fine-tuning the shouldRespond + context-routing
- * classifier and the action planner.
+ * messageHandler router and the action planner.
  *
  * Architecture:
  * 1. Takes scenario blueprints and expands each into N variants
  * 2. Uses a teacher model (Claude/GPT-5) to generate realistic conversations
  * 3. Randomizes agent name per sample to prevent statistical pollution
- * 4. Exports in Gemini supervised tuning JSONL format
+ * 4. Exports in eliza_native_v1 model-boundary JSONL format
  *
  * Teacher model selection:
  * - ANTHROPIC_API_KEY → Claude Sonnet 4
@@ -20,6 +20,12 @@ import { join } from "node:path";
 import type { Trajectory } from "@elizaos/agent/types/trajectory";
 import type { IAgentRuntime, RecordLlmCallDetails } from "@elizaos/core";
 import * as ElizaCore from "@elizaos/core";
+import {
+  buildElizaNativeTrajectoryRows,
+  ELIZA_NATIVE_TRAJECTORY_FORMAT,
+  type ElizaNativeTrajectoryRow,
+  iterateTrajectoryLlmCalls,
+} from "@elizaos/core";
 import {
   ACTION_CONTEXT_MAP,
   ALL_CONTEXTS,
@@ -82,8 +88,8 @@ export interface TrainingSample {
   agentName: string;
   /** The conversation messages (multi-turn) */
   messages: ConversationMessage[];
-  /** Expected classifier output */
-  expectedOutput: ClassifierOutput;
+  /** Expected messageHandler routing output */
+  expectedOutput: RoutingOutput;
   /** Metadata for filtering/analysis */
   metadata: SampleMetadata;
 }
@@ -95,7 +101,7 @@ export interface ConversationMessage {
   content: string;
 }
 
-export interface ClassifierOutput {
+export interface RoutingOutput {
   decision: "RESPOND" | "IGNORE" | "STOP";
   primaryContext: AgentContext;
   secondaryContexts: AgentContext[];
@@ -105,7 +111,7 @@ export interface ClassifierOutput {
 
 export interface MessageHandlerTrainingOutput {
   messageHandler: {
-    action: ClassifierOutput["decision"];
+    action: RoutingOutput["decision"];
     simple: boolean;
     contexts: AgentContext[];
     thought: string;
@@ -123,16 +129,7 @@ export interface SampleMetadata {
   totalVariants: number;
 }
 
-/**
- * Gemini supervised tuning format.
- * See: https://cloud.google.com/vertex-ai/generative-ai/docs/models/gemini-use-supervised-tuning
- */
-export interface GeminiTuningExample {
-  messages: Array<{
-    role: "system" | "user" | "model";
-    content: string;
-  }>;
-}
+export type ElizaNativeTrainingExample = ElizaNativeTrajectoryRow;
 
 // ==================== Name pools ====================
 
@@ -448,7 +445,7 @@ function randomParticipants(count: number, exclude: string[] = []): string[] {
 // ==================== Prompt construction ====================
 
 function buildTeacherSystemPrompt(): string {
-  return `You are a synthetic data generator for training an AI agent's message classifier.
+  return `You are a synthetic data generator for training an AI agent's v5 messageHandler router.
 Your task is to generate realistic multi-turn group chat conversations.
 
 IMPORTANT RULES:
@@ -457,7 +454,7 @@ IMPORTANT RULES:
 3. Messages should feel natural - casual, varied length, sometimes with typos.
 4. Group chats should have 3-6 participants plus optionally the agent.
 5. The agent's messages (when present) should be clearly from an AI assistant.
-6. NEVER include the expected classifier output in the conversation itself.
+6. NEVER include the expected messageHandler routing output in the conversation itself.
 7. Messages should be diverse in tone: some short, some long, some with emoji.
 
 Output format:
@@ -520,7 +517,7 @@ Remember:
 - Each message has "name" and "content"
 - Make it feel natural and realistic
 - Vary message lengths and tones
-- The last message should be the one the classifier evaluates`;
+- The last message should be the one the messageHandler router evaluates`;
 }
 
 function stripOutputFences(raw: string): string {
@@ -694,7 +691,7 @@ export async function generateSample(
     content: m.content,
   }));
 
-  const expectedOutput: ClassifierOutput = {
+  const expectedOutput: RoutingOutput = {
     decision: blueprint.decision,
     primaryContext: blueprint.primaryContext,
     secondaryContexts: blueprint.secondaryContexts ?? [],
@@ -814,31 +811,83 @@ export async function generateDataset(
 // ==================== Export formats ====================
 
 /**
- * Convert a training sample to Gemini supervised tuning format.
+ * Convert a training sample to the canonical Eliza native model-boundary format.
  * The system message contains the shouldRespond prompt template,
- * the user message contains the conversation, and the model message
- * contains the expected native JSON output.
+ * the user message contains the conversation, and response.text contains the
+ * expected native JSON output.
  */
-export function toGeminiFormat(
+export function toElizaNativeFormat(
   sample: TrainingSample,
   includeContextRouting: boolean = true,
-): GeminiTuningExample {
+): ElizaNativeTrainingExample {
   const systemContent = buildShouldRespondSystemPrompt(
     sample,
     includeContextRouting,
   );
   const userContent = buildShouldRespondUserPrompt(sample);
-  const modelContent = buildClassifierJsonResponse(
+  const responseText = buildMessageHandlerJsonResponse(
     sample,
     includeContextRouting,
   );
 
   return {
-    messages: [
-      { role: "system", content: systemContent },
-      { role: "user", content: userContent },
-      { role: "model", content: modelContent },
-    ],
+    format: ELIZA_NATIVE_TRAJECTORY_FORMAT,
+    schemaVersion: 1,
+    boundary: "vercel_ai_sdk.generateText",
+    trajectoryId: sample.id,
+    agentId: sample.agentName,
+    source: "app-training",
+    status: "completed",
+    stepId: `${sample.id}:message-handler`,
+    callId: `${sample.id}:message-handler:call-1`,
+    stepIndex: 0,
+    callIndex: 0,
+    timestamp: Date.parse(sample.metadata.generatedAt) || Date.now(),
+    purpose: "should_respond",
+    actionType: "app-training.synthetic.message_handler",
+    stepType: includeContextRouting ? "context_routing" : "should_respond",
+    tags: ["synthetic", "message_handler"],
+    model: "teacher",
+    request: {
+      messages: [
+        { role: "system", content: systemContent },
+        { role: "user", content: userContent },
+      ],
+    },
+    response: {
+      text: responseText,
+    },
+    metadata: {
+      task_type: includeContextRouting ? "context_routing" : "should_respond",
+      source_dataset: "app_training_synthetic",
+      trajectory_id: sample.id,
+      step_id: `${sample.id}:message-handler`,
+      call_id: `${sample.id}:message-handler:call-1`,
+      agent_id: sample.agentName,
+      blueprint_id: sample.blueprintId,
+      platform: sample.metadata.platform,
+      pattern: sample.metadata.pattern,
+    },
+    trajectoryTotals: {
+      stepCount: 1,
+      llmCallCount: 1,
+      providerAccessCount: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+    },
+    cacheStats: {
+      totalInputTokens: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      cachedCallCount: 0,
+      cacheReadCallCount: 0,
+      cacheWriteCallCount: 0,
+      tokenUsageEstimatedCallCount: 0,
+    },
   };
 }
 
@@ -974,7 +1023,7 @@ function buildShouldRespondUserPrompt(sample: TrainingSample): string {
   ].join("\n");
 }
 
-function buildClassifierJsonResponse(
+function buildMessageHandlerJsonResponse(
   sample: TrainingSample,
   includeContextRouting: boolean,
 ): string {
@@ -1043,10 +1092,10 @@ function normalizeMessageHandlerJson(response: string): string | null {
 }
 
 /**
- * Export the full dataset to JSONL files for Gemini supervised tuning.
+ * Export the full dataset to JSONL files for Eliza native model-boundary tuning.
  * Creates separate files for should_respond and context_routing.
  */
-export async function exportToGeminiJSONL(
+export async function exportToElizaNativeJSONL(
   samples: TrainingSample[],
   outputDir: string,
 ): Promise<{
@@ -1057,24 +1106,30 @@ export async function exportToGeminiJSONL(
   await mkdir(outputDir, { recursive: true });
 
   // Combined (shouldRespond + context routing)
-  const combinedPath = join(outputDir, "combined_training.jsonl");
+  const combinedPath = join(outputDir, "combined_training.eliza-native.jsonl");
   const combinedLines = samples
-    .map((s) => JSON.stringify(toGeminiFormat(s, true)))
+    .map((s) => JSON.stringify(toElizaNativeFormat(s, true)))
     .join("\n");
   await writeFile(combinedPath, `${combinedLines}\n`);
 
   // shouldRespond only (no context routing — for Flash Lite)
-  const shouldRespondPath = join(outputDir, "should_respond_training.jsonl");
+  const shouldRespondPath = join(
+    outputDir,
+    "should_respond_training.eliza-native.jsonl",
+  );
   const srLines = samples
-    .map((s) => JSON.stringify(toGeminiFormat(s, false)))
+    .map((s) => JSON.stringify(toElizaNativeFormat(s, false)))
     .join("\n");
   await writeFile(shouldRespondPath, `${srLines}\n`);
 
   // Context routing only (for samples where decision is RESPOND)
-  const contextRoutingPath = join(outputDir, "context_routing_training.jsonl");
+  const contextRoutingPath = join(
+    outputDir,
+    "context_routing_training.eliza-native.jsonl",
+  );
   const crLines = samples
     .filter((s) => s.expectedOutput.decision === "RESPOND")
-    .map((s) => JSON.stringify(toGeminiFormat(s, true)))
+    .map((s) => JSON.stringify(toElizaNativeFormat(s, true)))
     .join("\n");
   await writeFile(contextRoutingPath, `${crLines}\n`);
 
@@ -1127,33 +1182,34 @@ export async function exportTrajectoriesAsTraining(
   agentName: string,
   outputPath: string,
 ): Promise<number> {
-  const examples: GeminiTuningExample[] = [];
-  let skippedLegacyRows = 0;
+  const examples: ElizaNativeTrainingExample[] = [];
+  let skippedNonNativeRows = 0;
   void agentName;
 
   for (const trajectory of trajectories) {
-    for (const step of trajectory.steps ?? []) {
-      for (const call of step.llmCalls ?? []) {
-        if (
-          call.purpose === "should_respond" &&
-          call.systemPrompt &&
-          call.userPrompt &&
-          call.response
-        ) {
-          const response = normalizeMessageHandlerJson(call.response);
-          if (!response) {
-            skippedLegacyRows += 1;
-            console.warn(
-              `[dataset-generator] skipped legacy should_respond row from trajectory ${trajectory.trajectoryId} call ${call.callId ?? "unknown"}; expected native messageHandler JSON`,
-            );
-            continue;
-          }
+    for (const call of iterateTrajectoryLlmCalls(trajectory)) {
+      if (call.purpose === "should_respond") {
+        const response = normalizeMessageHandlerJson(call.response ?? "");
+        if (!response) {
+          skippedNonNativeRows += 1;
+          console.warn(
+            `[dataset-generator] skipped non-native should_respond row from trajectory ${trajectory.trajectoryId} call ${call.callId ?? "unknown"}; expected native messageHandler JSON`,
+          );
+          continue;
+        }
+
+        const row = buildElizaNativeTrajectoryRows([trajectory]).find(
+          (candidate) => candidate.callId === call.callId,
+        );
+        if (row) {
           examples.push({
-            messages: [
-              { role: "system", content: call.systemPrompt },
-              { role: "user", content: call.userPrompt },
-              { role: "model", content: response },
-            ],
+            ...row,
+            response: { ...row.response, text: response },
+            metadata: {
+              ...row.metadata,
+              task_type: "should_respond",
+              source_dataset: "runtime_trajectory_boundary",
+            },
           });
         }
       }
@@ -1163,9 +1219,9 @@ export async function exportTrajectoriesAsTraining(
   const content = examples.map((e) => JSON.stringify(e)).join("\n");
   await writeFile(outputPath, `${content}\n`);
 
-  if (skippedLegacyRows > 0) {
+  if (skippedNonNativeRows > 0) {
     console.warn(
-      `[dataset-generator] skipped ${skippedLegacyRows} legacy should_respond rows while exporting ${outputPath}`,
+      `[dataset-generator] skipped ${skippedNonNativeRows} non-native should_respond rows while exporting ${outputPath}`,
     );
   }
 

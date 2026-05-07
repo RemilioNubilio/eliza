@@ -10,17 +10,18 @@ import type {
   State,
 } from "@elizaos/core";
 import {
+  getActiveRoutingContextsForTurn,
   logger,
   ModelType,
   runWithTrajectoryContext,
 } from "@elizaos/core";
-import { parseJsonModelRecord } from "../utils/json-model-output.js";
 import type {
   LifeOpsXDm,
   LifeOpsXFeedItem,
   LifeOpsXFeedType,
 } from "@elizaos/shared";
 import { LifeOpsService, LifeOpsServiceError } from "../lifeops/service.js";
+import { parseJsonModelRecord } from "../utils/json-model-output.js";
 import { recentConversationTexts as collectRecentConversationTexts } from "./lib/recent-context.js";
 import { messageText } from "./lifeops-google-helpers.js";
 
@@ -42,6 +43,79 @@ type XReadLlmPlan = {
   shouldAct?: boolean | null;
   response?: string;
 };
+
+const X_READ_CONTEXTS = [
+  "social_posting",
+  "messaging",
+  "contacts",
+  "web",
+] as const;
+const X_READ_KEYWORDS = [
+  "x",
+  "twitter",
+  "tweet",
+  "tweets",
+  "dm",
+  "dms",
+  "direct message",
+  "timeline",
+  "feed",
+  "mentions",
+  "search",
+  "post",
+  "posts",
+  "mensaje directo",
+  "menciones",
+  "buscar",
+  "rechercher",
+  "mention",
+  "direktnachricht",
+  "suchen",
+  "cerca",
+  "menzioni",
+  "pesquisar",
+  "ツイート",
+  "検索",
+  "メンション",
+  "推文",
+  "搜索",
+  "提及",
+] as const;
+
+function hasXReadContext(message: Memory, state?: State): boolean {
+  const active = new Set(
+    getActiveRoutingContextsForTurn(state, message).map((context) =>
+      `${context}`.toLowerCase(),
+    ),
+  );
+  const collect = (value: unknown) => {
+    if (!Array.isArray(value)) return;
+    for (const item of value) {
+      if (typeof item === "string") active.add(item.toLowerCase());
+    }
+  };
+  collect(
+    (state?.values as Record<string, unknown> | undefined)?.selectedContexts,
+  );
+  collect(
+    (state?.data as Record<string, unknown> | undefined)?.selectedContexts,
+  );
+  return X_READ_CONTEXTS.some((context) => active.has(context));
+}
+
+function hasXReadIntent(message: Memory, state?: State): boolean {
+  const text = [
+    typeof message.content?.text === "string" ? message.content.text : "",
+    typeof state?.values?.recentMessages === "string"
+      ? state.values.recentMessages
+      : "",
+  ]
+    .join("\n")
+    .toLowerCase();
+  return X_READ_KEYWORDS.some((keyword) =>
+    text.includes(keyword.toLowerCase()),
+  );
+}
 
 function normalizeSubaction(value: unknown): XReadSubaction | null {
   if (typeof value !== "string") return null;
@@ -127,7 +201,7 @@ async function resolveXReadPlanWithLlm(args: {
     "Plan the X read action for this request.",
     "The user may speak in any language.",
     "Use the current request plus recent conversation context.",
-    "Return TOON only with exactly these fields:",
+    "Return JSON only as a single object with exactly these fields:",
     "  subaction: one of read_dms, read_feed, search, or null",
     "  feedType: one of home_timeline or mentions when subaction is read_feed, otherwise null",
     "  query: short search query when subaction is search, otherwise empty or null",
@@ -141,13 +215,9 @@ async function resolveXReadPlanWithLlm(args: {
     "Set feedType=mentions when the user asks for mentions; otherwise use home_timeline for feed reads.",
     "Set shouldAct=false when the user is vague or only asks for general X help.",
     "",
-    "Examples:",
-    '  "check my X DMs" -> subaction: read_dms; feedType: null; query: null; limit: null; shouldAct: true; response: null',
-    '  "show me my mentions" -> subaction: read_feed; feedType: mentions; query: null; limit: null; shouldAct: true; response: null',
-    '  "search X for Eliza" -> subaction: search; feedType: null; query: Eliza; limit: null; shouldAct: true; response: null',
-    '  "help me with X" -> subaction: null; feedType: null; query: null; limit: null; shouldAct: false; response: Do you want me to read your X DMs, timeline, mentions, or run a search?',
+    'Example: {"subaction":"read_dms","feedType":null,"query":null,"limit":null,"shouldAct":true,"response":null}',
     "",
-    "Return TOON only.",
+    "Return JSON only.",
     "Current request:",
     currentMessage || "(empty)",
     "Resolved intent:",
@@ -427,10 +497,22 @@ export const xAction: Action & {
     "Read X/Twitter DMs, the home timeline or mentions feed, or run a recent search.",
   descriptionCompressed:
     "X/Twitter read: read_dms (rank action-needed first) | read_feed(home_timeline|mentions) | search(query) owner",
+  contexts: [...X_READ_CONTEXTS],
+  contextGate: { anyOf: [...X_READ_CONTEXTS] },
+  roleGate: { minRole: "OWNER" },
   suppressPostActionContinuation: true,
 
-  validate: async (runtime, message) => {
+  validate: async (runtime, message, state) => {
     if (!(await hasOwnerAccess(runtime, message))) return false;
+    if (!hasXReadContext(message, state) && !hasXReadIntent(message, state)) {
+      const params = (message.content ?? {}) as Record<string, unknown>;
+      if (
+        !normalizeSubaction(params.subaction) &&
+        typeof params.query !== "string"
+      ) {
+        return false;
+      }
+    }
     const service = new LifeOpsService(runtime);
     const isUsable = (status: {
       grant?: unknown;

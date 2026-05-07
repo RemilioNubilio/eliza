@@ -10,12 +10,15 @@ import type {
 } from "@elizaos/core";
 import type { JsonValue } from "../protocol.js";
 import { MINECRAFT_SERVICE_TYPE, type MinecraftService } from "../services/minecraft-service.js";
-import { emit, mergedInput, readString } from "./helpers.js";
+import { emit, mergedInput, readString, withMinecraftTimeout } from "./helpers.js";
 
 const ACTION_NAME = "MC_CHAT";
 
 export const minecraftChatAction: Action = {
   name: ACTION_NAME,
+  contexts: ["messaging", "automation", "media"],
+  contextGate: { anyOf: ["messaging", "automation", "media"] },
+  roleGate: { minRole: "USER" },
   similes: ["MC_SAY", "MC_MESSAGE"],
   description: "Send a chat message in Minecraft.",
   descriptionCompressed: "Send chat message in Minecraft.",
@@ -51,11 +54,12 @@ export const minecraftChatAction: Action = {
     }
 
     try {
-      await service.chat(text);
+      const maxChatPreviewLength = 500;
+      await withMinecraftTimeout(service.chat(text), "minecraft chat");
       return await emit(
         ACTION_NAME,
         callback,
-        `Sent Minecraft chat: ${text}`,
+        `Sent Minecraft chat: ${text.slice(0, maxChatPreviewLength)}`,
         message.content.source,
         { success: true, values: { sent: true } }
       );

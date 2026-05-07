@@ -11,9 +11,12 @@ import type {
   Memory,
   State,
 } from "@elizaos/core";
-import { composePromptFromState, ModelType, parseToonKeyValue } from "@elizaos/core";
+import { composePromptFromState, ModelType, parseJSONObjectFromText } from "@elizaos/core";
 import type { MatrixService } from "../service.js";
 import { isValidMatrixRoomAlias, isValidMatrixRoomId, MATRIX_SERVICE_NAME } from "../types.js";
+
+const MAX_MATRIX_ROOM_REF_CHARS = 255;
+const MATRIX_JOIN_ACTION_TIMEOUT_MS = 30_000;
 
 const JOIN_ROOM_TEMPLATE = `You are helping to extract a Matrix room identifier.
 
@@ -24,17 +27,32 @@ Recent conversation:
 
 Extract the room ID (!room:server) or room alias (#alias:server) to join.
 
-Respond with TOON only:
-room: !room:matrix.org
+Respond with JSON only, with no prose or fences:
+{
+  "room": "!room:matrix.org"
+}
 
-Or:
-room: #alias:matrix.org`;
+or:
+{
+  "room": "#alias:matrix.org"
+}`;
 
 export const joinRoom: Action = {
   name: "MATRIX_JOIN_ROOM",
   similes: ["JOIN_MATRIX_ROOM", "ENTER_ROOM"],
   description: "Join a Matrix room by ID or alias",
   descriptionCompressed: "Join Matrix room by id or alias.",
+  contexts: ["messaging", "connectors"],
+  contextGate: { anyOf: ["messaging", "connectors"] },
+  roleGate: { minRole: "USER" },
+  parameters: [
+    {
+      name: "room",
+      description: "Matrix room id (!room:server) or alias (#alias:server).",
+      required: false,
+      schema: { type: "string" },
+    },
+  ],
 
   validate: async (_runtime: IAgentRuntime, message: Memory, _state?: State): Promise<boolean> => {
     return message.content.source === "matrix";
@@ -77,9 +95,9 @@ export const joinRoom: Action = {
         prompt,
       });
 
-      const parsed = parseToonKeyValue<Record<string, unknown>>(String(response));
+      const parsed = parseJSONObjectFromText(String(response)) as Record<string, unknown> | null;
       if (parsed?.room) {
-        const roomStr = String(parsed.room).trim();
+        const roomStr = String(parsed.room).trim().slice(0, MAX_MATRIX_ROOM_REF_CHARS);
         if (isValidMatrixRoomId(roomStr) || isValidMatrixRoomAlias(roomStr)) {
           room = roomStr;
           break;
@@ -99,6 +117,7 @@ export const joinRoom: Action = {
 
     // Join room
     try {
+      const timeoutMs = MATRIX_JOIN_ACTION_TIMEOUT_MS;
       const roomId = await matrixService.joinRoom(room);
 
       if (callback) {
@@ -113,6 +132,7 @@ export const joinRoom: Action = {
         data: {
           roomId,
           joined: room,
+          timeoutMs,
         },
       };
     } catch (err) {

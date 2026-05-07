@@ -5,11 +5,11 @@ import {
   composePromptFromState,
   type HandlerCallback,
   type HandlerOptions,
-  type IAgentRuntime,
-  type Memory,
-  ModelType,
-  parseToonKeyValue,
-  type State,
+	type IAgentRuntime,
+	type Memory,
+	ModelType,
+	parseJSONObjectFromText,
+	type State,
 } from "@elizaos/core";
 import { isValidGroupId, normalizeE164 } from "../types";
 import {
@@ -33,7 +33,11 @@ interface SignalOpInfo {
   targetTimestamp?: number;
   targetAuthor?: string;
   remove: boolean;
+  timeoutMs?: number;
 }
+
+const MAX_SIGNAL_TEXT_CHARS = 4_000;
+const SIGNAL_ACTION_TIMEOUT_MS = 30_000;
 
 const messageOpTemplate = `# Task: Extract Signal message operation parameters.
 
@@ -46,19 +50,21 @@ Operations:
 - send: send a text message. Provide \`text\` and \`recipient\` (E.164 phone, group id, or "current").
 - react: react to a Signal message. Provide \`emoji\`, \`targetTimestamp\`, \`targetAuthor\`, and \`remove\` (true to remove).
 
-Respond with TOON only:
-op: send
-text:
-recipient: current
-emoji:
-targetTimestamp:
-targetAuthor:
-remove: false`;
+Respond with JSON only, with no prose or fences:
+{
+  "op": "send",
+  "text": "",
+  "recipient": "current",
+  "emoji": "",
+  "targetTimestamp": null,
+  "targetAuthor": "",
+  "remove": false
+}`;
 
 function parseInfo(raw: unknown): SignalOpInfo | null {
-  const parsed = parseToonKeyValue<Record<string, unknown>>(
+  const parsed = parseJSONObjectFromText(
     typeof raw === "string" ? raw : String(raw)
-  );
+  ) as Record<string, unknown> | null;
   if (!parsed) {
     return null;
   }
@@ -164,6 +170,7 @@ async function handleSend(
       op: "send",
       timestamp: result.timestamp,
       recipient: targetRecipient,
+      timeoutMs: info.timeoutMs,
       suppressVisibleCallback: true,
       suppressActionResultClipboard: true,
     },
@@ -203,6 +210,7 @@ async function handleReact(
       targetTimestamp: info.targetTimestamp,
       targetAuthor: info.targetAuthor,
       action: info.remove ? "removed" : "added",
+      timeoutMs: info.timeoutMs,
       suppressVisibleCallback: true,
       suppressActionResultClipboard: true,
     },
@@ -222,6 +230,47 @@ export const messageOp: Action = {
   ],
   description: "Signal message operation router (send, react).",
   descriptionCompressed: "Signal message ops: send, react.",
+  contexts: ["phone", "messaging", "connectors"],
+  contextGate: { anyOf: ["phone", "messaging", "connectors"] },
+  roleGate: { minRole: "USER" },
+  parameters: [
+    {
+      name: "op",
+      description: "Operation to run: send or react.",
+      required: false,
+      schema: { type: "string", enum: ["send", "react"] },
+    },
+    {
+      name: "text",
+      description: "Message text for send.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "recipient",
+      description: "E.164 phone number, Signal group id, or current.",
+      required: false,
+      schema: { type: "string", default: "current" },
+    },
+    {
+      name: "emoji",
+      description: "Reaction emoji.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "targetAuthor",
+      description: "Signal author id for the message being reacted to.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "targetTimestamp",
+      description: "Signal timestamp for the message being reacted to.",
+      required: false,
+      schema: { type: "number" },
+    },
+  ],
   suppressPostActionContinuation: true,
 
   validate: async (runtime: IAgentRuntime, message: Memory, _state?: State): Promise<boolean> => {
@@ -291,6 +340,11 @@ export const messageOp: Action = {
       });
       return { success: false, error: "Could not extract op parameters" };
     }
+    info = {
+      ...info,
+      text: info.text?.slice(0, MAX_SIGNAL_TEXT_CHARS),
+      timeoutMs: SIGNAL_ACTION_TIMEOUT_MS,
+    };
 
     if (info.op === "react") {
       return handleReact(service, runtime, composedState, message, info, callback);

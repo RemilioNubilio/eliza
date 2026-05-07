@@ -13,10 +13,13 @@ import type {
 } from "@elizaos/core";
 import { composePromptFromState, ModelType } from "@elizaos/core";
 import type { TwitchService } from "../service.js";
-import { parseToonKeyValue } from "../toon.js";
 import { normalizeChannel, TWITCH_SERVICE_NAME } from "../types.js";
+import { parseJSONObjectFromText } from "@elizaos/core";
 
 type TwitchChannelOp = "join" | "leave";
+
+const MAX_TWITCH_CHANNEL_NAME_CHARS = 80;
+const TWITCH_CHANNEL_ACTION_TIMEOUT_MS = 30_000;
 
 const CHANNEL_TEMPLATE = `You are helping to extract Twitch channel join/leave parameters.
 
@@ -27,9 +30,11 @@ Extract:
 op: join or leave
 channel: channel name without #
 
-Respond with TOON only:
-op: join
-channel:`;
+Respond with JSON only, with no prose or fences:
+{
+  "op": "join",
+  "channel": ""
+}`;
 
 function readStringOption(
   options: Record<string, unknown> | undefined,
@@ -45,6 +50,10 @@ function normalizeOp(value: string | null): TwitchChannelOp | null {
     return normalized;
   }
   return null;
+}
+
+function truncateActionText(text: string, maxChars: number): string {
+  return text.length > maxChars ? text.slice(0, maxChars) : text;
 }
 
 function inferOp(text: string): TwitchChannelOp | null {
@@ -67,7 +76,7 @@ async function extractChannelParams(
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const response = await runtime.useModel(ModelType.TEXT_SMALL, { prompt });
-    const parsed = parseToonKeyValue<Record<string, unknown>>(String(response));
+    const parsed = parseJSONObjectFromText(String(response)) as Record<string, unknown> | null;
     const op = normalizeOp(parsed?.op ? String(parsed.op) : null);
     if (op) {
       return {
@@ -92,6 +101,9 @@ export const twitchChannelAction: Action = {
   ],
   description: "Join or leave a Twitch channel.",
   descriptionCompressed: "Twitch channel ops: join, leave.",
+  contexts: ["messaging", "connectors"],
+  contextGate: { anyOf: ["messaging", "connectors"] },
+  roleGate: { minRole: "USER" },
   parameters: [
     {
       name: "op",
@@ -137,6 +149,7 @@ export const twitchChannelAction: Action = {
 
     const optionOp = normalizeOp(readStringOption(options, "op"));
     const optionChannel = readStringOption(options, "channel");
+    const timeoutMs = TWITCH_CHANNEL_ACTION_TIMEOUT_MS;
     const inferredOp = inferOp(message.content.text ?? "");
     const extracted =
       optionOp && optionChannel
@@ -145,9 +158,9 @@ export const twitchChannelAction: Action = {
 
     const op = optionOp ?? inferredOp ?? extracted?.op ?? null;
     const channel = optionChannel
-      ? normalizeChannel(optionChannel)
+      ? normalizeChannel(truncateActionText(optionChannel, MAX_TWITCH_CHANNEL_NAME_CHARS))
       : extracted?.channel
-        ? normalizeChannel(extracted.channel)
+        ? normalizeChannel(truncateActionText(extracted.channel, MAX_TWITCH_CHANNEL_NAME_CHARS))
         : null;
 
     if (!op) {
@@ -174,7 +187,7 @@ export const twitchChannelAction: Action = {
         });
         return {
           success: true,
-          data: { op, channel, alreadyJoined: true },
+          data: { op, channel, alreadyJoined: true, timeoutMs },
         };
       }
 
@@ -183,7 +196,7 @@ export const twitchChannelAction: Action = {
         text: `Joined channel #${channel}.`,
         source: String(message.content.source ?? "twitch"),
       });
-      return { success: true, data: { op, channel } };
+      return { success: true, data: { op, channel, timeoutMs } };
     }
 
     const joinedChannels = twitchService.getJoinedChannels();
@@ -208,7 +221,7 @@ export const twitchChannelAction: Action = {
       text: `Left channel #${channel}.`,
       source: String(message.content.source ?? "twitch"),
     });
-    return { success: true, data: { op, channel } };
+    return { success: true, data: { op, channel, timeoutMs } };
   },
   examples: [
     [

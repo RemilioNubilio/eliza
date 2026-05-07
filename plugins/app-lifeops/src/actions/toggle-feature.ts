@@ -88,10 +88,11 @@ async function extractToggleWithLlm(args: {
 
   const prompt = [
     "Decide which LifeOps feature flag the owner is asking to toggle, if any.",
-    "Return TOON only with exactly these keys:",
+    "Return JSON only as a single object with exactly these keys:",
     "featureKey: string|null",
     "enabled: boolean|null",
     "reason: string|null",
+    'Example: {"featureKey":"browser.automation","enabled":false,"reason":"wants manual control"}',
     "",
     "Allowed featureKey values (use null when no good match):",
     buildFeatureCatalog(),
@@ -164,6 +165,8 @@ export const toggleFeatureAction: Action = {
     "The set of feature keys is closed — do not invent new ones.",
   descriptionCompressed:
     "toggle LifeOps feature flight-booking push-notifs browser-automation escalation: enable | disable; closed feature key set",
+  contexts: ["settings", "automation", "connectors"],
+  roleGate: { minRole: "OWNER" },
   validate: async (runtime, message) => hasOwnerAccess(runtime, message),
   handler: async (
     runtime: IAgentRuntime,

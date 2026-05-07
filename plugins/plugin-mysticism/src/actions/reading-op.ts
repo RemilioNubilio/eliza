@@ -455,6 +455,8 @@ async function finalizeReading(
 
 export const readingOpAction: Action = {
   name: "READING_OP",
+  contexts: ["knowledge", "general"],
+  contextGate: { anyOf: ["knowledge", "general"] },
   similes: [
     "TAROT_READING",
     "READ_TAROT",
@@ -549,9 +551,9 @@ export const readingOpAction: Action = {
       };
     }
 
-    const text = message.content.text ?? "";
+    const text = (message.content.text ?? "").slice(0, 2_000);
     const questionRaw = readParam(options, "question");
-    const question = typeof questionRaw === "string" ? questionRaw : undefined;
+    const question = typeof questionRaw === "string" ? questionRaw.slice(0, 2_000) : undefined;
 
     if (subRaw === "start") {
       return handleStart(service, message, typeRaw, text, question, callback);

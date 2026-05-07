@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gte, inArray, isNotNull, lt, notInArray, sql } from "drizzle-orm";
+import { ensureAgentSandboxSchema } from "@/db/ensure-agent-sandbox-schema";
 import { sqlRows } from "@/db/execute-helpers";
 import { dbRead, dbWrite } from "@/db/helpers";
 import {
@@ -14,6 +15,7 @@ import {
   WARM_POOL_ORG_ID,
   WARM_POOL_USER_ID,
 } from "@/db/schemas/agent-sandboxes";
+import { jobs } from "@/db/schemas/jobs";
 import { AGENT_MANAGED_DISCORD_KEY } from "@/lib/services/eliza-agent-config";
 import { ObjectNamespaces } from "@/lib/storage/object-namespace";
 import { getObjectText, offloadJsonField } from "@/lib/storage/object-store";
@@ -94,6 +96,7 @@ export class AgentSandboxesRepository {
   // Reads
 
   async findById(id: string): Promise<AgentSandbox | undefined> {
+    await ensureAgentSandboxSchema();
     const [r] = await dbRead
       .select()
       .from(agentSandboxes)
@@ -102,7 +105,18 @@ export class AgentSandboxesRepository {
     return r;
   }
 
+  async findOrganizationIdById(id: string): Promise<string | undefined> {
+    await ensureAgentSandboxSchema();
+    const [r] = await dbRead
+      .select({ organizationId: agentSandboxes.organization_id })
+      .from(agentSandboxes)
+      .where(eq(agentSandboxes.id, id))
+      .limit(1);
+    return r?.organizationId;
+  }
+
   async findByIdAndOrg(id: string, orgId: string): Promise<AgentSandbox | undefined> {
+    await ensureAgentSandboxSchema();
     const [r] = await dbRead
       .select()
       .from(agentSandboxes)
@@ -112,6 +126,7 @@ export class AgentSandboxesRepository {
   }
 
   async findByIdAndOrgForWrite(id: string, orgId: string): Promise<AgentSandbox | undefined> {
+    await ensureAgentSandboxSchema();
     const [r] = await dbWrite
       .select()
       .from(agentSandboxes)
@@ -121,6 +136,7 @@ export class AgentSandboxesRepository {
   }
 
   async listByOrganization(orgId: string): Promise<AgentSandbox[]> {
+    await ensureAgentSandboxSchema();
     return dbRead
       .select()
       .from(agentSandboxes)
@@ -129,6 +145,7 @@ export class AgentSandboxesRepository {
   }
 
   async findBySandboxId(sandboxId: string): Promise<AgentSandbox | undefined> {
+    await ensureAgentSandboxSchema();
     const [r] = await dbRead
       .select()
       .from(agentSandboxes)
@@ -139,6 +156,7 @@ export class AgentSandboxesRepository {
 
   /** List active (non-terminal) sandboxes on a specific docker node. */
   async listByNodeId(nodeId: string): Promise<AgentSandbox[]> {
+    await ensureAgentSandboxSchema();
     const terminalStatuses: AgentSandboxStatus[] = ["stopped", "error"];
     return dbRead
       .select()
@@ -162,9 +180,8 @@ export class AgentSandboxesRepository {
   }
 
   async findRunningSandbox(id: string, orgId: string): Promise<AgentSandbox | undefined> {
-    // Use dbWrite (primary) instead of dbRead (replica) to ensure fresh data.
-    // The VPS worker writes bridge_url/status to primary, and read replicas
-    // may lag behind, causing the wallet proxy to return "not running".
+    await ensureAgentSandboxSchema();
+    // Use dbWrite (primary) for fresh read-after-write data from the VPS worker.
     const [r] = await dbWrite
       .select()
       .from(agentSandboxes)
@@ -180,6 +197,7 @@ export class AgentSandboxesRepository {
   }
 
   async findByManagedDiscordGuildId(guildId: string): Promise<AgentSandbox[]> {
+    await ensureAgentSandboxSchema();
     const trimmedGuildId = guildId.trim();
     if (!trimmedGuildId) {
       return [];
@@ -201,12 +219,54 @@ export class AgentSandboxesRepository {
   // Writes
 
   async create(data: NewAgentSandbox): Promise<AgentSandbox> {
+    await ensureAgentSandboxSchema();
     const [r] = await dbWrite.insert(agentSandboxes).values(data).returning();
     if (!r) throw new Error("Failed to create Agent sandbox record");
     return r;
   }
 
+  async markStuckProvisioningWithoutActiveJobAsError(cutoff: Date): Promise<
+    Array<{
+      agentId: string;
+      agentName: string | null;
+      organizationId: string;
+      updatedAt: Date | null;
+    }>
+  > {
+    await ensureAgentSandboxSchema();
+    return dbWrite
+      .update(agentSandboxes)
+      .set({
+        status: "error",
+        error_message:
+          "Agent was stuck in provisioning state with no active provisioning job. " +
+          "This usually means a container crashed before the provisioning job could be created, " +
+          "or the job was lost. Please try starting the agent again.",
+        updated_at: new Date(),
+      })
+      .where(
+        and(
+          eq(agentSandboxes.status, "provisioning"),
+          lt(agentSandboxes.updated_at, cutoff),
+          sql`NOT EXISTS (
+            SELECT 1 FROM ${jobs}
+            WHERE  ${jobs.agent_id} = ${agentSandboxes.id}::text
+            AND    ${jobs.organization_id} = ${agentSandboxes.organization_id}
+            AND    ${jobs.type} = 'agent_provision'
+            AND    ${jobs.status} IN ('pending', 'in_progress')
+          )`,
+        ),
+      )
+      .returning({
+        agentId: agentSandboxes.id,
+        agentName: agentSandboxes.agent_name,
+        organizationId: agentSandboxes.organization_id,
+        updatedAt: agentSandboxes.updated_at,
+      });
+  }
+
   async update(id: string, data: Partial<NewAgentSandbox>): Promise<AgentSandbox | undefined> {
+    await ensureAgentSandboxSchema();
     const [r] = await dbWrite
       .update(agentSandboxes)
       .set({ ...data, updated_at: new Date() })
@@ -221,6 +281,7 @@ export class AgentSandboxesRepository {
    * recovery in ProvisioningJobService is the time-based gate.
    */
   async trySetProvisioning(id: string): Promise<AgentSandbox | undefined> {
+    await ensureAgentSandboxSchema();
     const [r] = await dbWrite
       .update(agentSandboxes)
       .set({
@@ -239,6 +300,7 @@ export class AgentSandboxesRepository {
   }
 
   async delete(id: string, orgId: string): Promise<boolean> {
+    await ensureAgentSandboxSchema();
     const r = await dbWrite
       .delete(agentSandboxes)
       .where(and(eq(agentSandboxes.id, id), eq(agentSandboxes.organization_id, orgId)))
@@ -253,6 +315,7 @@ export class AgentSandboxesRepository {
    * Optionally filter by image so a stale image doesn't inflate the count.
    */
   async countUnclaimedPool(filter: { image?: string } = {}): Promise<number> {
+    await ensureAgentSandboxSchema();
     const conditions = [
       eq(agentSandboxes.pool_status, "unclaimed"),
       eq(agentSandboxes.status, "running"),
@@ -271,6 +334,7 @@ export class AgentSandboxesRepository {
    * provisioning). Used to size in-flight replenish work.
    */
   async countAllPoolEntries(): Promise<{ ready: number; provisioning: number }> {
+    await ensureAgentSandboxSchema();
     const [ready] = await dbRead
       .select({ count: sql<number>`count(*)::int` })
       .from(agentSandboxes)
@@ -295,6 +359,7 @@ export class AgentSandboxesRepository {
    * Excludes pool sentinel org rows.
    */
   async countUserProvisionsSince(sinceMs: number): Promise<number> {
+    await ensureAgentSandboxSchema();
     const since = new Date(Date.now() - sinceMs);
     const [row] = await dbRead
       .select({ count: sql<number>`count(*)::int` })
@@ -314,6 +379,7 @@ export class AgentSandboxesRepository {
    * Excludes pool sentinel org rows. Used by the forecast.
    */
   async countUserProvisionsByHour(windowHours: number): Promise<number[]> {
+    await ensureAgentSandboxSchema();
     if (windowHours <= 0) return [];
     const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
     const rows = await sqlRows<{ bucket: string; count: number }>(
@@ -345,6 +411,7 @@ export class AgentSandboxesRepository {
 
   /** All ready unclaimed pool rows — for health probing and image rollout. */
   async listUnclaimedPool(): Promise<AgentSandbox[]> {
+    await ensureAgentSandboxSchema();
     return dbRead
       .select()
       .from(agentSandboxes)
@@ -357,6 +424,7 @@ export class AgentSandboxesRepository {
    * reap stuck containers so the pool replenisher can retry.
    */
   async findStuckPoolProvisioning(staleThresholdMs: number): Promise<AgentSandbox[]> {
+    await ensureAgentSandboxSchema();
     const cutoff = new Date(Date.now() - staleThresholdMs);
     return dbRead
       .select()
@@ -390,6 +458,7 @@ export class AgentSandboxesRepository {
     characterId?: string | null;
     expectedUpdatedAt?: Date | string | null;
   }): Promise<AgentSandbox | null> {
+    await ensureAgentSandboxSchema();
     return dbWrite.transaction(async (tx) => {
       const poolRows = await sqlRows<AgentSandbox>(
         tx,
@@ -474,6 +543,7 @@ export class AgentSandboxesRepository {
   async createPoolEntry(
     data: Omit<NewAgentSandbox, "organization_id" | "user_id" | "pool_status">,
   ): Promise<AgentSandbox> {
+    await ensureAgentSandboxSchema();
     const [row] = await dbWrite
       .insert(agentSandboxes)
       .values({
@@ -489,6 +559,7 @@ export class AgentSandboxesRepository {
 
   /** Hard-delete a pool entry by id. Caller is responsible for stopping the container. */
   async deletePoolEntry(id: string): Promise<boolean> {
+    await ensureAgentSandboxSchema();
     const r = await dbWrite
       .delete(agentSandboxes)
       .where(and(eq(agentSandboxes.id, id), eq(agentSandboxes.pool_status, "unclaimed")))
@@ -498,6 +569,7 @@ export class AgentSandboxesRepository {
 
   /** Mark a pool entry ready (called after health check passes post-provision). */
   async markPoolEntryReady(id: string): Promise<AgentSandbox | undefined> {
+    await ensureAgentSandboxSchema();
     const [r] = await dbWrite
       .update(agentSandboxes)
       .set({

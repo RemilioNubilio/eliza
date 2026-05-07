@@ -1,5 +1,5 @@
 import {
-  parseToonKeyValue,
+  parseJSONObjectFromText,
   type Action,
   type ActionResult,
   type HandlerCallback,
@@ -31,7 +31,7 @@ function coerceParamValue(value: unknown): unknown {
 }
 
 function paramsFromText(text: string): ParamsRecord {
-  const parsed = parseToonKeyValue<ParamsRecord>(text);
+  const parsed = parseJSONObjectFromText(text) as ParamsRecord | null;
   if (!parsed) return {};
   const nested = isRecord(parsed.params) ? parsed.params : {};
   const params: ParamsRecord = { ...parsed, ...nested };
@@ -161,8 +161,10 @@ function dispatchJournalOp(
 function createRouterAction(definition: ScapeRouterDefinition): Action {
   return {
     name: definition.name,
-    description: `${definition.description} Return TOON: action: ${definition.name}, op: one of ${definition.subactions.map((s) => s.name).join("|")}.`,
+    description: `${definition.description} Return JSON with action: ${definition.name}, op: one of ${definition.subactions.map((s) => s.name).join("|")}.`,
     descriptionCompressed: definition.descriptionCompressed,
+    contexts: ["game", "automation", "world", "state"],
+    roleGate: { minRole: "ADMIN" },
     similes: definition.subactions.map((subaction) => subaction.description),
     examples: [],
     parameters: [
@@ -179,7 +181,7 @@ function createRouterAction(definition: ScapeRouterDefinition): Action {
       {
         name: "params",
         description:
-          "Optional TOON object containing the fields required by the chosen op.",
+          "Optional JSON object containing the fields required by the chosen op.",
         descriptionCompressed: "Op fields.",
         required: false,
         schema: { type: "object" },
@@ -218,12 +220,18 @@ function createRouterAction(definition: ScapeRouterDefinition): Action {
         return { success: false, text };
       }
 
+      const timeoutMs = 15_000;
       const result =
         definition.name === "INVENTORY_OP"
-          ? await dispatchInventoryOp(service, resolved.subaction, params)
+          ? await Promise.race([
+              dispatchInventoryOp(service, resolved.subaction, params),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("scape router timed out")), timeoutMs),
+              ),
+            ])
           : dispatchJournalOp(service, resolved.subaction, params);
 
-      const text = result.message ?? (result.success ? "ok" : "failed");
+      const text = (result.message ?? (result.success ? "ok" : "failed")).slice(0, 2000);
       callback?.({ text, action: definition.name });
       return { success: result.success, text };
     },

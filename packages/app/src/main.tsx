@@ -106,6 +106,7 @@ import {
   PtyConsoleDrawer,
 } from "@elizaos/app-task-coordinator";
 import { FineTuningView } from "@elizaos/app-training/ui";
+import "@elizaos/app-trajectory-logger/register";
 import "@elizaos/app-shopify/register";
 import "@elizaos/app-vincent/client";
 import { useVincentState } from "@elizaos/app-vincent";
@@ -753,7 +754,7 @@ function injectPopoutApiBase(): void {
 }
 
 function injectDetachedShellApiBase(): void {
-  const apiBase = new URLSearchParams(window.location.search).get("apiBase");
+  const apiBase = getWindowUrlSearchParams().get("apiBase");
   if (apiBase) validateAndSetApiBase(apiBase);
 }
 

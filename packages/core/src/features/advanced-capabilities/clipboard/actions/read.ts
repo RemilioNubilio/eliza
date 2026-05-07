@@ -7,6 +7,7 @@ import {
 	type Memory,
 	type State,
 } from "../../../../types/index.ts";
+import { hasActionContextOrKeyword } from "../../../../utils/action-validation.ts";
 import { createClipboardService } from "../services/clipboardService.ts";
 import { requireActionSpec } from "../specs.ts";
 
@@ -59,57 +60,35 @@ function extractReadInfo(
 }
 
 const spec = requireActionSpec("CLIPBOARD_READ");
+const DEFAULT_READ_LINES = 80;
+const MAX_READ_LINES = 200;
+const MAX_READ_CHARS = 12000;
+
+function truncateText(text: string, max: number): string {
+	return text.length <= max ? text : `${text.slice(0, max)}\n…[truncated]`;
+}
 
 export const clipboardReadAction: Action = {
 	name: spec.name,
+	contexts: ["files", "knowledge", "agent_internal"],
+	roleGate: { minRole: "ADMIN" },
 	similes: spec.similes ? [...spec.similes] : [],
 	description: spec.description,
 
 	validate: async (
-		runtime: IAgentRuntime,
+		_runtime: IAgentRuntime,
 		message: Memory,
 		state?: State,
 		options?: HandlerOptions,
 	): Promise<boolean> => {
-		const __avTextRaw =
-			typeof message?.content?.text === "string" ? message.content.text : "";
-		const __avText = __avTextRaw.toLowerCase();
-		const __avKeywords = ["clipboard", "read"];
-		const __avKeywordOk = __avKeywords.some(
-			(kw) => kw.length > 0 && __avText.includes(kw),
-		);
-		const __avRegex = /\b(?:clipboard|read)\b/i;
-		const __avRegexOk = __avRegex.test(__avText);
-		const __avSource = String(message?.content?.source ?? "");
-		const __avExpectedSource = "";
-		const __avSourceOk = __avExpectedSource
-			? __avSource === __avExpectedSource
-			: Boolean(__avSource || state || runtime?.agentId || runtime?.getService);
-		const __avOptions = options && typeof options === "object" ? options : {};
 		const __avParams = readParams(options);
 		if (isValidReadInput(__avParams)) {
 			return true;
 		}
-		const __avInputOk =
-			__avText.trim().length > 0 ||
-			Object.keys(__avOptions as Record<string, unknown>).length > 0 ||
-			Boolean(message?.content && typeof message.content === "object");
-
-		if (!(__avKeywordOk && __avRegexOk && __avSourceOk && __avInputOk)) {
-			return false;
-		}
-
-		const __avLegacyValidate = async (
-			_runtime: IAgentRuntime,
-			_message: Memory,
-		): Promise<boolean> => {
-			return true;
-		};
-		try {
-			return Boolean(await __avLegacyValidate(runtime, message));
-		} catch {
-			return false;
-		}
+		return hasActionContextOrKeyword(message, state, {
+			contexts: ["files", "knowledge", "agent_internal"],
+			keywords: ["clipboard", "read note", "open note", "show note"],
+		});
 	},
 
 	handler: async (
@@ -155,7 +134,10 @@ export const clipboardReadAction: Action = {
 		try {
 			const entry = await service.read(readInfo.id, {
 				from: readInfo.from,
-				lines: readInfo.lines,
+				lines:
+					readInfo.lines === undefined
+						? DEFAULT_READ_LINES
+						: Math.min(Math.max(1, Math.floor(readInfo.lines)), MAX_READ_LINES),
 			});
 
 			const lineInfo =
@@ -163,7 +145,8 @@ export const clipboardReadAction: Action = {
 					? ` (lines ${readInfo.from}-${(readInfo.from ?? 1) + (readInfo.lines ?? 10)})`
 					: "";
 
-			const successMessage = `**${entry.title}**${lineInfo}\n\n${entry.content}`;
+			const boundedContent = truncateText(entry.content, MAX_READ_CHARS);
+			const successMessage = `**${entry.title}**${lineInfo}\n\n${boundedContent}`;
 
 			if (callback) {
 				await callback({
@@ -173,7 +156,16 @@ export const clipboardReadAction: Action = {
 				});
 			}
 
-			return { success: true, text: successMessage, entry };
+			return {
+				success: true,
+				text: successMessage,
+				data: {
+					id: entry.id,
+					title: entry.title,
+					content: boundedContent,
+					truncated: boundedContent.length < entry.content.length,
+				},
+			};
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
 			logger.error("[ClipboardRead] Error:", errorMsg);

@@ -7,8 +7,12 @@ import {
 import { isSelfEditEnabled } from "@elizaos/shared";
 import { hasOwnerAccess } from "../security/access.js";
 
+const MAX_PROMPT_KEY_CHARS = 160;
+
 export const updateCorePromptAction: Action = {
   name: "UPDATE_CORE_PROMPT",
+  contexts: ["admin", "settings", "agent_internal"],
+  roleGate: { minRole: "OWNER" },
   similes: ["SET_CORE_PROMPT", "EDIT_CORE_PROMPT"],
   description:
     "Overrides a core system prompt in the database cache. Use this to permanently change how the agent thinks or formats its output.",
@@ -28,7 +32,10 @@ export const updateCorePromptAction: Action = {
       const params = options.parameters as
         | { promptKey?: string; promptText?: string }
         | undefined;
-      const promptKey = params?.promptKey;
+      const promptKey =
+        typeof params?.promptKey === "string"
+          ? params.promptKey.slice(0, MAX_PROMPT_KEY_CHARS)
+          : undefined;
       const promptText = params?.promptText;
 
       if (!promptKey || typeof promptText !== "string") {
@@ -66,6 +73,20 @@ export const updateCorePromptAction: Action = {
       };
     }
   },
+  parameters: [
+    {
+      name: "promptKey",
+      description: "The core prompt cache key to override.",
+      required: true,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "promptText",
+      description: "The full replacement prompt text.",
+      required: true,
+      schema: { type: "string" as const },
+    },
+  ],
   examples: [
     [
       {

@@ -27,7 +27,7 @@ export interface StructuredOutputFailure {
 	source: "dynamicPromptExecFromState";
 	kind: "model_error" | "parse_error" | "parse_problem" | "validation_error";
 	model: string;
-	format: "JSON" | "TOON";
+	format: "JSON";
 	schemaFields: string[];
 	attempts: number;
 	maxRetries: number;
@@ -68,7 +68,7 @@ export interface ProviderCacheEntry
 }
 
 /**
- * Working memory entry for multi-step action execution
+ * Working memory entry for action execution
  */
 export interface WorkingMemoryEntry
 	extends Omit<
@@ -109,11 +109,11 @@ export interface StateData
 	entity?: Entity;
 	/** Provider results cache keyed by provider name */
 	providers?: Record<string, ProviderCacheEntry>;
-	/** Current action plan for multi-step actions */
+	/** Current action plan for queued action execution */
 	actionPlan?: ActionPlan;
 	/** Results from previous action executions */
 	actionResults?: ActionResult[];
-	/** Working memory for temporary state during multi-step action execution */
+	/** Working memory for temporary state during action execution */
 	workingMemory?: WorkingMemory;
 	/** Latest structured-output failure captured during this run */
 	structuredOutputFailure?: StructuredOutputFailure;
@@ -222,7 +222,7 @@ export type SchemaValueSpec = {
 };
 
 export type SchemaRow = SchemaValueSpec & {
-	/** Field name in structured TOON or JSON output */
+	/** Field name in structured JSON output */
 	field: string;
 	/**
 	 * Control per-field validation codes for streaming (levels 0-1 only).

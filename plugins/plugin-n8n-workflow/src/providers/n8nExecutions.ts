@@ -1,5 +1,4 @@
 import {
-  encodeToonValue,
   type IAgentRuntime,
   logger,
   type Memory,
@@ -24,7 +23,7 @@ interface ExecutionRow {
 }
 
 /**
- * Provider that surfaces recent n8n workflow execution history as a TOON table.
+ * Provider that surfaces recent n8n workflow execution history as JSON context.
  *
  * Replaces the legacy GET_N8N_EXECUTIONS action. Surfacing executions through a
  * provider lets the planner reason over recent runs every turn without paying
@@ -34,6 +33,10 @@ export const n8nExecutionsProvider: Provider = {
   name: 'n8nExecutions',
   description: 'Recent n8n workflow execution history (status, start/stop, errors).',
   descriptionCompressed: 'Recent n8n workflow execution history.',
+  contexts: ['automation', 'connectors'],
+  contextGate: { anyOf: ['automation', 'connectors'] },
+  cacheScope: 'turn',
+  roleGate: { minRole: 'ADMIN' },
 
   get: async (runtime: IAgentRuntime, message: Memory, _state: State): Promise<ProviderResult> => {
     const service = runtime.getService<N8nWorkflowService>(N8N_WORKFLOW_SERVICE_TYPE);
@@ -47,9 +50,9 @@ export const n8nExecutionsProvider: Provider = {
 
       if (workflows.length === 0) {
         return {
-          text: encodeToonValue({
+          text: JSON.stringify({
             n8nExecutions: { status: 'no_workflows', executions: [] },
-          }),
+          }, null, 2),
           data: { executions: [] },
           values: { hasExecutions: false },
         };
@@ -98,23 +101,23 @@ export const n8nExecutionsProvider: Provider = {
 
       if (rows.length === 0) {
         return {
-          text: encodeToonValue({
+          text: JSON.stringify({
             n8nExecutions: { status: 'no_executions', executions: [] },
-          }),
+          }, null, 2),
           data: { executions: [] },
           values: { hasExecutions: false },
         };
       }
 
       return {
-        text: encodeToonValue({
+        text: JSON.stringify({
           n8nExecutions: {
             status: 'ready',
             instruction:
               "Recent execution rows for the user's n8n workflows. Use `error` to diagnose failed runs.",
             executions: rows,
           },
-        }),
+        }, null, 2),
         data: { executions: rows },
         values: { hasExecutions: true, executionCount: rows.length },
       };

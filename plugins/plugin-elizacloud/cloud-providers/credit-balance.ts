@@ -8,19 +8,27 @@ import type { CreditBalanceResponse } from "../types/cloud";
 const TOP_UP_URL = "https://www.elizacloud.ai/dashboard/settings?tab=billing";
 const creditCaches = new WeakMap<IAgentRuntime, { value: number; at: number }>();
 const TTL = 60_000;
+const MAX_CREDIT_TEXT_CHARS = 240;
 
 export const creditBalanceProvider: Provider = {
   name: "elizacloud_credits",
   description: "ElizaCloud credit balance",
   descriptionCompressed: "ElizaCloud credit balance.",
   dynamic: true,
+  contexts: ["settings", "finance"],
+  contextGate: { anyOf: ["settings", "finance"] },
+  cacheStable: false,
+  cacheScope: "turn",
   position: 91,
   async get(runtime: IAgentRuntime, _message: Memory, _state: State): Promise<ProviderResult> {
     const auth = runtime.getService("CLOUD_AUTH") as CloudAuthService | undefined;
     if (!auth?.isAuthenticated()) return { text: "" };
 
     const cached = creditCaches.get(runtime);
-    if (cached && Date.now() - cached.at < TTL) return format(cached.value);
+    if (cached && Date.now() - cached.at < TTL) {
+      const result = format(cached.value);
+      return { ...result, text: result.text.slice(0, MAX_CREDIT_TEXT_CHARS) };
+    }
 
     let balance: number;
     try {
@@ -30,13 +38,17 @@ export const creditBalanceProvider: Provider = {
       logger.warn(
         `[CloudCredits] Failed to fetch balance: ${err instanceof Error ? err.message : err}`
       );
-      if (cached) return format(cached.value);
-      return { text: "" };
+      if (cached) {
+        const result = format(cached.value);
+        return { ...result, text: result.text.slice(0, MAX_CREDIT_TEXT_CHARS) };
+      }
+      return { text: "", values: { cloudCreditsUnavailable: true }, data: {} };
     }
     creditCaches.set(runtime, { value: balance, at: Date.now() });
 
     if (balance < 1.0) logger.warn(`[CloudCredits] Low balance: $${balance.toFixed(2)}`);
-    return format(balance);
+    const result = format(balance);
+    return { ...result, text: result.text.slice(0, MAX_CREDIT_TEXT_CHARS) };
   },
 };
 

@@ -10,7 +10,7 @@ import {
   logger,
   type Memory,
   ModelType,
-  parseToonActionParams,
+  parseJSONObjectFromText,
   type State,
 } from "@elizaos/core";
 import type { NostrService } from "../service.js";
@@ -21,25 +21,30 @@ const PUBLISH_NOTE_TEMPLATE = `# Task: Extract a Nostr note (kind:1) from the co
 Recent conversation:
 {{recentMessages}}
 
-Extract the text content of the note to publish. Output a TOON action-call block:
+Extract the text content of the note to publish. Respond with JSON only, no prose or fences:
 
-actions: NOSTR_PUBLISH_NOTE
-params:
-  NOSTR_PUBLISH_NOTE:
-    text: the note content here
+{
+  "text": "the note content here"
+}
 `;
 
 interface PublishNoteParams {
   text: string;
 }
 
+const MAX_NOSTR_NOTE_CHARS = 4_000;
+const MAX_NOSTR_RESULT_RELAYS = 10;
+const NOSTR_ACTION_TIMEOUT_MS = 30_000;
+
 function readDirectText(_options: Record<string, unknown> | undefined): string | null {
   if (!_options) return null;
   const direct = _options.text;
-  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  if (typeof direct === "string" && direct.trim()) {
+    return direct.trim().slice(0, MAX_NOSTR_NOTE_CHARS);
+  }
   const params = (_options as { parameters?: Record<string, unknown> }).parameters;
   if (params && typeof params.text === "string" && params.text.trim()) {
-    return params.text.trim();
+    return params.text.trim().slice(0, MAX_NOSTR_NOTE_CHARS);
   }
   return null;
 }
@@ -50,6 +55,9 @@ export const publishNote: Action = {
   description:
     "Publish a Nostr text note (kind:1) to the configured relays. Use for short broadcast posts; use NOSTR_SEND_DM for private messages.",
   descriptionCompressed: "Publish Nostr note (kind:1) to relays.",
+  contexts: ["social_posting", "connectors"],
+  contextGate: { anyOf: ["social_posting", "connectors"] },
+  roleGate: { minRole: "USER" },
   parameters: [
     {
       name: "text",
@@ -90,11 +98,10 @@ export const publishNote: Action = {
       let params: PublishNoteParams | null = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         const response = await runtime.useModel(ModelType.TEXT_SMALL, { prompt });
-        const parsed = parseToonActionParams(String(response));
-        const actionParams = parsed.get("NOSTR_PUBLISH_NOTE");
-        const candidateText = actionParams?.text;
+        const parsed = parseJSONObjectFromText(String(response)) as Record<string, unknown> | null;
+        const candidateText = parsed?.text;
         if (typeof candidateText === "string" && candidateText.trim()) {
-          params = { text: candidateText.trim() };
+          params = { text: candidateText.trim().slice(0, MAX_NOSTR_NOTE_CHARS) };
           break;
         }
       }
@@ -115,6 +122,7 @@ export const publishNote: Action = {
       { src: "plugin:nostr", op: "NOSTR_PUBLISH_NOTE", textLength: noteText.length },
       "Publishing Nostr note"
     );
+    const timeoutMs = NOSTR_ACTION_TIMEOUT_MS;
     const result = await nostrService.publishNote(noteText);
 
     if (!result.success) {
@@ -138,8 +146,9 @@ export const publishNote: Action = {
       success: true,
       data: {
         eventId: result.eventId,
-        relays: result.relays,
+        relays: result.relays?.slice(0, MAX_NOSTR_RESULT_RELAYS),
         text: noteText,
+        timeoutMs,
       },
     };
   },

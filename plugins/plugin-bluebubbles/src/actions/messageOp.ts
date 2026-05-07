@@ -26,9 +26,12 @@ interface MessageOpInfo {
 	emoji?: string;
 	messageId?: string;
 	remove: boolean;
+	timeoutMs?: number;
 }
 
 const VALID_OPS: ReadonlySet<MessageOp> = new Set(["send", "react"]);
+const MAX_BLUEBUBBLES_TEXT_CHARS = 4_000;
+const BLUEBUBBLES_ACTION_TIMEOUT_MS = 30_000;
 
 const messageOpTemplate = `# Task: Extract BlueBubbles (iMessage) message operation parameters
 
@@ -187,6 +190,7 @@ async function handleSend(
 			op: "send",
 			messageGuid: result.guid,
 			chatGuid,
+			timeoutMs: BLUEBUBBLES_ACTION_TIMEOUT_MS,
 			suppressVisibleCallback: true,
 			suppressActionResultClipboard: true,
 		},
@@ -258,6 +262,7 @@ async function handleReact(
 			messageGuid,
 			chatGuid,
 			remove: info.remove,
+			timeoutMs: info.timeoutMs,
 			suppressVisibleCallback: true,
 			suppressActionResultClipboard: true,
 		},
@@ -279,6 +284,41 @@ export const bluebubblesMessageOp: Action = {
 	description:
 		"BlueBubbles iMessage operation router. Send a reply or react to a message by setting op (send | react).",
 	descriptionCompressed: "Bluebubbles message ops: send, react.",
+	contexts: ["phone", "messaging", "connectors"],
+	contextGate: { anyOf: ["phone", "messaging", "connectors"] },
+	roleGate: { minRole: "USER" },
+	parameters: [
+		{
+			name: "op",
+			description: "Operation to run: send or react.",
+			required: false,
+			schema: { type: "string", enum: ["send", "react"] },
+		},
+		{
+			name: "text",
+			description: "Message text for send.",
+			required: false,
+			schema: { type: "string" },
+		},
+		{
+			name: "to",
+			description: "BlueBubbles chat guid, handle, or current conversation.",
+			required: false,
+			schema: { type: "string", default: "current" },
+		},
+		{
+			name: "messageGuid",
+			description: "Target message guid for reactions.",
+			required: false,
+			schema: { type: "string" },
+		},
+		{
+			name: "emoji",
+			description: "Reaction emoji.",
+			required: false,
+			schema: { type: "string" },
+		},
+	],
 	suppressPostActionContinuation: true,
 	examples,
 
@@ -362,6 +402,11 @@ export const bluebubblesMessageOp: Action = {
 			}
 			return { success: false, error: "Could not extract op parameters" };
 		}
+		info = {
+			...info,
+			text: info.text?.slice(0, MAX_BLUEBUBBLES_TEXT_CHARS),
+			timeoutMs: BLUEBUBBLES_ACTION_TIMEOUT_MS,
+		};
 
 		switch (info.op) {
 			case "send":

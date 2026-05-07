@@ -47,7 +47,7 @@
     "build:server": "turbo run build --filter=@elizaos/server --no-cache",
     "lint": "turbo run lint && node scripts/run-examples-benchmarks.mjs lint",
     "lint:check": "turbo run lint:check",
-    "typecheck": "turbo run typecheck && node scripts/run-examples-benchmarks.mjs typecheck",
+    "typecheck": "NODE_OPTIONS='--max-old-space-size=8192' turbo run typecheck --filter='!@elizaos/example-code' && node scripts/run-examples-benchmarks.mjs typecheck",
     "lint:all": "bun run lint:check && bun run typecheck",
     "pre-commit": "bun run scripts/pre-commit-lint.js",
     "release": "bunx lerna publish from-package --dist-tag latest --force-publish --yes --no-verify-access",
@@ -134,6 +134,7 @@
     "vitest": "^4.0.17"
   },
   "resolutions": {
+    "@elizaos/core": "workspace:*",
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "@types/react": "19.2.14",
@@ -146,6 +147,7 @@
     "@solana/web3.js": "1.98.4"
   },
   "overrides": {
+    "@elizaos/core": "workspace:*",
     "@biomejs/biome": "2.4.14",
     "@types/node": "25.6.0",
     "@nrwl/devkit": "19.8.4",

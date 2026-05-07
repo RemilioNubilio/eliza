@@ -1,35 +1,29 @@
 import { v4 } from "uuid";
 import z from "zod";
-import {
-	formatActionNames,
-	formatActions,
-	parseActionParams,
-	validateActionParams,
-} from "../actions";
+import { formatActionNames, formatActions } from "../actions";
 import { actionToTool } from "../actions/to-tool";
 import { createUniqueUuid } from "../entities";
 import {
 	formatTaskCompletionStatus,
-	getTaskCompletionCacheKey,
 	type TaskCompletionAssessment,
 } from "../features/advanced-capabilities/evaluators/task-completion";
 import { looksLikeNonActionableChatter } from "../features/basic-capabilities/providers/non-actionable-chatter";
 import { logger } from "../logger";
+import { imageDescriptionTemplate } from "../prompts";
 import {
-	imageDescriptionTemplate,
-	messageHandlerTemplate,
-	multiStepDecisionTemplate,
-	multiStepSummaryTemplate,
-	postActionDecisionTemplate,
-} from "../prompts";
-import {
-	v5MessageHandlerSchema,
+	createV5MessageHandlerTool,
+	V5_MESSAGE_HANDLER_TOOL_NAME,
 	v5MessageHandlerTemplate,
 } from "../prompts/message-handler";
 import { checkSenderRole } from "../roles";
 import { filterByContextGate } from "../runtime/context-gates";
-import { createContextObject } from "../runtime/context-object";
+import { computePrefixHashes, hashString } from "../runtime/context-hash";
+import {
+	appendContextEvent,
+	createContextObject,
+} from "../runtime/context-object";
 import type { ContextRegistry } from "../runtime/context-registry";
+import { renderContextObject } from "../runtime/context-renderer";
 import {
 	type EvaluatorEffects,
 	type EvaluatorOutput,
@@ -45,7 +39,12 @@ import {
 	routeMessageHandlerOutput,
 } from "../runtime/message-handler";
 import {
+	buildModelInputBudget,
+	withModelInputBudgetProviderOptions,
+} from "../runtime/model-input-budget";
+import {
 	actionResultToPlannerToolResult,
+	cacheProviderOptions,
 	type PlannerRuntime,
 	type PlannerToolCall,
 	type PlannerToolResult,
@@ -63,20 +62,16 @@ import {
 	getModelStreamChunkDeliveryDepth,
 	runWithStreamingContext,
 } from "../streaming-context";
-import {
-	runWithTrajectoryContext,
-	setTrajectoryPurpose,
-} from "../trajectory-context";
+import { runWithTrajectoryContext } from "../trajectory-context";
 import type {
 	Action,
-	ActionParameters,
 	ActionResult,
 	AgentContext,
 	HandlerCallback,
 	MessageHandlerResult,
+	Provider,
 	StreamChunkCallback,
 } from "../types/components";
-import { isActionConfirmationStatus } from "../types/components";
 import type { ContextEvent, ContextObject } from "../types/context-object";
 import type { ContextDefinition, RoleGateRole } from "../types/contexts";
 import type { Room } from "../types/environment";
@@ -91,8 +86,11 @@ import type {
 	ShouldRespondModelType,
 } from "../types/message-service";
 import type {
+	ChatMessage,
 	GenerateTextAttachment,
+	GenerateTextParams,
 	GenerateTextResult,
+	PromptSegment,
 	TextToSpeechParams,
 	ToolDefinition,
 } from "../types/model";
@@ -104,15 +102,26 @@ import {
 	parallelWithShouldRespondPipelineHookContext,
 	preShouldRespondPipelineHookContext,
 } from "../types/pipeline-hooks";
-import type { Content, Media, MentionContext, UUID } from "../types/primitives";
+import type {
+	Content,
+	JsonValue,
+	Media,
+	MentionContext,
+	UUID,
+} from "../types/primitives";
 import { asUUID, ChannelType, ContentType } from "../types/primitives";
 import type { IAgentRuntime } from "../types/runtime";
 import type { State } from "../types/state";
+import type {
+	StreamingContextEventPayload,
+	StreamingEvaluationPayload,
+	StreamingToolCallPayload,
+	StreamingToolResultPayload,
+} from "../types/streaming";
 import {
-	composePromptFromState,
 	getLocalServerUrl,
 	parseBooleanFromText,
-	parseToonKeyValue,
+	parseJSONObjectFromText,
 	truncateToCompleteSentence,
 } from "../utils";
 import {
@@ -127,13 +136,11 @@ import {
 	type ContextRoutingDecision,
 	getActiveRoutingContexts,
 	inferContextRoutingFromMessage,
-	mergeContextRouting,
 	parseContextList,
 	parseContextRoutingMetadata,
 	setContextRoutingMetadata,
 } from "../utils/context-routing";
 import { getUserMessageText } from "../utils/message-text";
-import { createStreamingContext, MarkableExtractor } from "../utils/streaming";
 import {
 	extractFirstSentence,
 	hasFirstSentence,
@@ -212,8 +219,8 @@ function getPlannerActionObjectName(action: Record<string, unknown>): string {
 	return typeof rawName === "string" ? unwrapPlannerIdentifier(rawName) : "";
 }
 
-function attachInlineToonActionParams(
-	parsedToon: Record<string, unknown>,
+function attachInlinePlannerActionParams(
+	parsedPlanner: Record<string, unknown>,
 	actionName: string,
 	params: unknown,
 ): void {
@@ -221,31 +228,35 @@ function attachInlineToonActionParams(
 		return;
 	}
 
-	const existingParams = parsedToon.params;
+	const existingParams = parsedPlanner.params;
 	const nextParams =
 		isRecord(existingParams) && !Array.isArray(existingParams)
 			? { ...existingParams }
 			: {};
 	nextParams[actionName.trim().toUpperCase()] = params;
-	parsedToon.params = nextParams;
+	parsedPlanner.params = nextParams;
 }
 
 export function extractPlannerActionNames(
-	parsedToon: Record<string, unknown>,
+	parsedPlanner: Record<string, unknown>,
 ): string[] {
 	return (() => {
-		if (typeof parsedToon.actions === "string") {
-			return parsedToon.actions
+		if (typeof parsedPlanner.actions === "string") {
+			return parsedPlanner.actions
 				.split(",")
 				.map((action) => unwrapPlannerIdentifier(String(action)))
 				.filter((action) => action.length > 0);
 		}
-		if (Array.isArray(parsedToon.actions)) {
-			return parsedToon.actions
+		if (Array.isArray(parsedPlanner.actions)) {
+			return parsedPlanner.actions
 				.map((action) => {
 					if (isRecord(action)) {
 						const actionName = getPlannerActionObjectName(action);
-						attachInlineToonActionParams(parsedToon, actionName, action.params);
+						attachInlinePlannerActionParams(
+							parsedPlanner,
+							actionName,
+							action.params,
+						);
 						return actionName;
 					}
 					return unwrapPlannerIdentifier(String(action));
@@ -256,11 +267,11 @@ export function extractPlannerActionNames(
 	})();
 }
 
-function normalizePlannerActions(
-	parsedToon: Record<string, unknown>,
+function _normalizePlannerActions(
+	parsedPlanner: Record<string, unknown>,
 	runtime: IAgentRuntime,
 ): string[] {
-	const normalizedActions = extractPlannerActionNames(parsedToon);
+	const normalizedActions = extractPlannerActionNames(parsedPlanner);
 
 	const finalActions =
 		!runtime.isActionPlanningEnabled() && normalizedActions.length > 1
@@ -318,7 +329,7 @@ function normalizePlannerActions(
 	}
 
 	const replyText =
-		typeof parsedToon.text === "string" ? parsedToon.text.trim() : "";
+		typeof parsedPlanner.text === "string" ? parsedPlanner.text.trim() : "";
 	if (replyText.length > 0) return ["REPLY"];
 
 	// Fallthrough: no valid action, no text. By the time the planner ran,
@@ -382,10 +393,10 @@ export function resolvePlannerActionName(
 }
 
 function normalizePlannerProviders(
-	parsedToon: Record<string, unknown>,
+	parsedPlanner: Record<string, unknown>,
 	runtime?: IAgentRuntime,
 ): string[] {
-	const providerNames = extractPlannerProviderNames(parsedToon);
+	const providerNames = extractPlannerProviderNames(parsedPlanner);
 
 	if (!runtime) {
 		return providerNames;
@@ -499,8 +510,8 @@ function extractStructuredProviderList(rawProviders: string): string[] {
 }
 
 // Schemas for LLM-emitted provider lists embedded as JSON strings inside the
-// planner TOON output. The planner sometimes returns providers as a JSON array
-// of strings or as a `{ providers: string[] }` object instead of a TOON list.
+// planner output. The planner sometimes returns providers as a JSON array of
+// strings or as a `{ providers: string[] }` object.
 // We coerce non-string entries to string and validate downstream.
 const ProviderJsonArraySchema = z.array(z.unknown());
 const ProviderJsonEnvelopeSchema = z.object({
@@ -508,9 +519,9 @@ const ProviderJsonEnvelopeSchema = z.object({
 });
 
 export function extractPlannerProviderNames(
-	parsedToon: Record<string, unknown>,
+	parsedPlanner: Record<string, unknown>,
 ): string[] {
-	const rawProviders = parsedToon.providers;
+	const rawProviders = parsedPlanner.providers;
 	if (typeof rawProviders === "string") {
 		const trimmedProviders = rawProviders.trim();
 		if (!trimmedProviders) {
@@ -610,12 +621,21 @@ export function extractPlannerProviderNames(
 }
 
 const CORE_RESPONSE_STATE_PROVIDERS = [
+	"UI_CONTEXT",
 	"ENTITIES",
-	"CHARACTER",
 	"RECENT_MESSAGES",
-	"ACTIONS",
-	"PROVIDERS",
+	"ATTACHMENTS",
+	"PLATFORM_CHAT_CONTEXT",
+	"PLATFORM_USER_CONTEXT",
 ];
+
+const V5_MODEL_CONTEXT_PROVIDER_EXCLUSIONS = new Set([
+	"ACTIONS",
+	"ACTION_STATE",
+	"CHARACTER",
+	"EVALUATORS",
+	"PROVIDERS",
+]);
 
 const STRUCTURED_RESPONSE_STATE_PROVIDERS = ["ACTIONS", "PROVIDERS"];
 const FOCUSED_PROVIDER_REPLY_STATE_PROVIDERS = ["CHARACTER", "RECENT_MESSAGES"];
@@ -639,7 +659,7 @@ function composeResponseState(
 	return runtime.composeState(message, providers, true, skipCache);
 }
 
-function composeStructuredResponseState(
+function _composeStructuredResponseState(
 	runtime: IAgentRuntime,
 	message: Memory,
 	skipCache = false,
@@ -666,7 +686,39 @@ function composeProviderGroundedResponseState(
 	);
 }
 
-function composeFocusedProviderReplyState(
+function selectV5PlannerStateProviderNames(args: {
+	runtime: IAgentRuntime;
+	message: Memory;
+	selectedContexts: readonly AgentContext[];
+	userRoles: readonly RoleGateRole[];
+}): string[] {
+	const providerNames = new Set<string>(CORE_RESPONSE_STATE_PROVIDERS);
+	if (hasInboundBenchmarkContext(args.message)) {
+		providerNames.add("CONTEXT_BENCH");
+	}
+
+	const providers = Array.isArray(args.runtime.providers)
+		? (args.runtime.providers as Provider[])
+		: [];
+	for (const provider of filterByContextGate(
+		providers,
+		args.selectedContexts,
+		args.userRoles,
+	)) {
+		const name = provider.name?.trim();
+		if (!name || provider.private) {
+			continue;
+		}
+		if (V5_MODEL_CONTEXT_PROVIDER_EXCLUSIONS.has(name.toUpperCase())) {
+			continue;
+		}
+		providerNames.add(name);
+	}
+
+	return [...providerNames];
+}
+
+function _composeFocusedProviderReplyState(
 	runtime: IAgentRuntime,
 	message: Memory,
 	providers: string[],
@@ -680,7 +732,7 @@ function composeFocusedProviderReplyState(
 	);
 }
 
-function ensureActionStateValues(
+function _ensureActionStateValues(
 	runtime: IAgentRuntime,
 	message: Memory,
 	state: State,
@@ -780,7 +832,7 @@ function ensureActionStateValues(
  * @param text - Text that may contain Handlebars-like syntax
  * @returns Text with {{ escaped to prevent interpretation
  */
-function escapeHandlebars(text: string): string {
+function _escapeHandlebars(text: string): string {
 	// Single-pass replacement to avoid double-escaping triple braces.
 	return text.replace(/\{\{\{|\{\{/g, (match) => `\\${match}`);
 }
@@ -815,7 +867,7 @@ function sanitizeAttachmentsForStorage(
 	});
 }
 
-function resolvePromptAttachments(
+function _resolvePromptAttachments(
 	attachments: Media[] | undefined,
 ): GenerateTextAttachment[] | undefined {
 	if (!attachments?.length) {
@@ -863,8 +915,6 @@ function resolvePromptAttachments(
 type ResolvedMessageOptions = {
 	maxRetries: number;
 	timeoutDuration: number;
-	useMultiStep: boolean;
-	maxMultiStepIterations: number;
 	continueAfterActions: boolean;
 	keepExistingResponses: boolean;
 	onStreamChunk?: StreamChunkCallback;
@@ -913,19 +963,6 @@ function normalizeShouldRespondModelType(
 			return "response-handler";
 	}
 }
-
-/**
- * Multi-step workflow action result with action name tracking
- */
-interface MultiStepActionResult extends ActionResult {
-	data: { actionName: string };
-}
-
-/**
- * Multi-step workflow state - uses standard State since StateData.actionResults
- * already supports ActionResult[] properly
- */
-type MultiStepState = State;
 
 /**
  * Strategy mode for response generation
@@ -997,6 +1034,93 @@ function createV5ReplyStrategyResult(args: {
 	};
 }
 
+function asProviderRecord(value: unknown):
+	| {
+			text?: unknown;
+			providerName?: unknown;
+	  }
+	| undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return undefined;
+	}
+	return value as {
+		text?: unknown;
+		providerName?: unknown;
+	};
+}
+
+function appendStateProviderEvents(
+	events: ContextEvent[],
+	state: State,
+	allowedProviderNames?: readonly string[],
+): void {
+	const providers = state.data?.providers;
+	const allowed = allowedProviderNames
+		? new Set(allowedProviderNames.map((name) => name.toUpperCase()))
+		: null;
+	if (!providers || typeof providers !== "object") {
+		const fallbackText =
+			typeof state.text === "string" ? state.text.trim() : "";
+		if (fallbackText) {
+			events.push({
+				id: "state:fallback",
+				type: "provider",
+				source: "composeState",
+				name: "COMPOSED_STATE",
+				text: fallbackText,
+			});
+		}
+		return;
+	}
+
+	const providerOrder = Array.isArray(state.data.providerOrder)
+		? state.data.providerOrder.map((name) => String(name))
+		: Object.keys(providers).sort();
+	const seen = new Set<string>();
+	for (const providerName of providerOrder) {
+		if (seen.has(providerName)) {
+			continue;
+		}
+		seen.add(providerName);
+		if (allowed && !allowed.has(providerName.toUpperCase())) {
+			continue;
+		}
+		const provider = asProviderRecord(
+			(providers as Record<string, unknown>)[providerName],
+		);
+		if (!provider) {
+			continue;
+		}
+		const text = typeof provider.text === "string" ? provider.text.trim() : "";
+		if (!text) {
+			continue;
+		}
+		events.push({
+			id: `provider:${providerName}`,
+			type: "provider",
+			source: "composeState",
+			name:
+				typeof provider.providerName === "string"
+					? provider.providerName
+					: providerName,
+			text,
+		});
+	}
+}
+
+function renderCharacterBio(value: unknown): string {
+	if (typeof value === "string") {
+		return value.trim();
+	}
+	if (Array.isArray(value)) {
+		return value
+			.map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+			.filter(Boolean)
+			.join(" ");
+	}
+	return "";
+}
+
 function createV5MessageContextObject(args: {
 	runtime: IAgentRuntime;
 	message: Memory;
@@ -1005,6 +1129,7 @@ function createV5MessageContextObject(args: {
 	includeTools?: boolean;
 	toolActions?: readonly Action[];
 	userRoles?: readonly RoleGateRole[];
+	availableContexts?: readonly ContextDefinition[];
 }): ContextObject {
 	const events: ContextEvent[] = [];
 	const addInstruction = (
@@ -1024,25 +1149,9 @@ function createV5MessageContextObject(args: {
 		});
 	};
 
-	addInstruction(
-		"character",
-		[
-			args.runtime.character.name
-				? `agent_name: ${args.runtime.character.name}`
-				: "",
-			typeof args.runtime.character.system === "string"
-				? args.runtime.character.system
-				: "",
-		]
-			.filter(Boolean)
-			.join("\n"),
-		true,
-	);
-	addInstruction("composed_state", args.state.text, false);
-
-	const availableContexts = parseContextList(
-		args.state.values?.[AVAILABLE_CONTEXTS_STATE_KEY],
-	);
+	const availableContexts =
+		args.availableContexts?.map((definition) => definition.id) ??
+		parseContextList(args.state.values?.[AVAILABLE_CONTEXTS_STATE_KEY]);
 	addInstruction(
 		"available_contexts",
 		`available_contexts: ${
@@ -1050,14 +1159,13 @@ function createV5MessageContextObject(args: {
 		}`,
 		true,
 	);
-
-	if (args.selectedContexts?.length) {
-		addInstruction(
-			"selected_contexts",
-			`selected_contexts: ${args.selectedContexts.join(", ")}`,
-			false,
-		);
-	}
+	appendStateProviderEvents(
+		events,
+		args.state,
+		hasInboundBenchmarkContext(args.message)
+			? [...CORE_RESPONSE_STATE_PROVIDERS, "CONTEXT_BENCH"]
+			: CORE_RESPONSE_STATE_PROVIDERS,
+	);
 
 	events.push({
 		id: String(args.message.id ?? "current-message"),
@@ -1106,6 +1214,37 @@ function createV5MessageContextObject(args: {
 		}
 	}
 
+	const characterContent = [
+		args.runtime.character.name
+			? `agent_name: ${args.runtime.character.name}`
+			: "",
+		renderCharacterBio(args.runtime.character.bio)
+			? `# About ${args.runtime.character.name ?? "the agent"}\n${renderCharacterBio(
+					args.runtime.character.bio,
+				)}`
+			: "",
+		typeof args.runtime.character.system === "string"
+			? args.runtime.character.system
+			: "",
+	]
+		.filter(Boolean)
+		.join("\n")
+		.trim();
+	const expandedTools = events
+		.filter((event) => event.type === "tool" && "tool" in event)
+		.map((event) => {
+			const tool = (
+				event as {
+					tool: { name: string; description?: string; parameters?: unknown };
+				}
+			).tool;
+			return {
+				name: tool.name,
+				description: tool.description,
+				parameters: tool.parameters as ToolDefinition["parameters"],
+				type: "function" as const,
+			};
+		});
 	return createContextObject({
 		id: String(args.message.id ?? v4()),
 		createdAt: Date.now(),
@@ -1114,6 +1253,25 @@ function createV5MessageContextObject(args: {
 			messageId: args.message.id,
 			selectedContexts: [...(args.selectedContexts ?? [])],
 		},
+		staticPrefix: {
+			characterPrompt: characterContent
+				? {
+						id: "character",
+						label: "character",
+						content: characterContent,
+						stable: true,
+					}
+				: undefined,
+			contextRegistryDigest: availableContexts.join(","),
+		},
+		trajectoryPrefix: {
+			selectedContexts: [...(args.selectedContexts ?? [])],
+			expandedTools,
+			createdAtStageId: "message-handler",
+		},
+		plannedQueue: [],
+		metrics: {},
+		limits: {},
 		events,
 	});
 }
@@ -1150,6 +1308,57 @@ async function collectValidatedPlannerActions(args: {
 	return available;
 }
 
+function filterSelectedContextsForRole(
+	contexts: readonly AgentContext[],
+	availableContexts: readonly ContextDefinition[],
+): AgentContext[] {
+	if (contexts.length === 0) {
+		return [];
+	}
+	if (availableContexts.length === 0) {
+		return [...new Set(contexts)];
+	}
+	const allowed = new Set(
+		availableContexts.map((definition) => String(definition.id)),
+	);
+	const selected: AgentContext[] = [];
+	const seen = new Set<string>();
+	for (const context of contexts) {
+		const id = String(context);
+		if (!allowed.has(id) || seen.has(id)) {
+			continue;
+		}
+		seen.add(id);
+		selected.push(context);
+	}
+	return selected;
+}
+
+async function generateDirectReplyOnce(args: {
+	runtime: IAgentRuntime;
+	message: Memory;
+	state: State;
+	messageHandler: MessageHandlerResult;
+}): Promise<string> {
+	const latestText = getUserMessageText(args.message) ?? "";
+	const prompt = [
+		"task: Write one direct reply to the user.",
+		"",
+		"context:",
+		args.state.text,
+		"",
+		`user_message: ${latestText}`,
+		`routing_thought: ${args.messageHandler.thought}`,
+		"",
+		"rules:",
+		"- answer directly in the agent's voice",
+		"- do not select actions or tools",
+		"- do not include internal reasoning",
+	].join("\n");
+	const raw = await args.runtime.useModel(ModelType.TEXT_SMALL, { prompt });
+	return getV5ModelText(raw).trim();
+}
+
 /**
  * Format the role-filtered context catalog as a compact bullet list for the
  * Stage 1 prompt. Each line is `- <id>: <description>` (or just `- <id>` when
@@ -1165,23 +1374,165 @@ export function formatAvailableContextsForPrompt(
 	return contexts
 		.map((definition) => {
 			const description = definition.description?.trim();
-			return description
-				? `- ${definition.id}: ${description}`
+			const selectionGuidance = definition.selectionGuidance?.trim();
+			const covers = definition.covers?.length
+				? definition.covers.join(", ")
+				: "";
+			const parts = [
+				description,
+				selectionGuidance ? `select_when: ${selectionGuidance}` : "",
+				covers ? `covers: ${covers}` : "",
+			].filter(Boolean);
+			return parts.length > 0
+				? `- ${definition.id}: ${parts.join(" ")}`
 				: `- ${definition.id}`;
 		})
 		.join("\n");
 }
 
-function renderV5MessageHandlerPrompt(
-	context: ContextObject,
-	availableContexts: readonly ContextDefinition[] = [],
+function renderContextSegmentBlock(segment: {
+	content: string;
+	label?: string;
+	id?: string;
+	stable?: boolean;
+}): string {
+	const label = segment.label ?? segment.id ?? "context";
+	return `${label}:\n${segment.content.trim()}`;
+}
+
+function normalizeMessageHandlerPromptSegments(
+	segments: PromptSegment[],
+): PromptSegment[] {
+	return segments
+		.filter((segment) => segment.content.trim().length > 0)
+		.map((segment, index) => ({
+			...segment,
+			content: `${index === 0 ? "" : "\n\n"}${segment.content.trim()}`,
+		}));
+}
+
+function renderV5MessageHandlerInstructions(
+	availableContexts: readonly ContextDefinition[],
+	options?: { directMessage?: boolean },
 ): string {
-	return v5MessageHandlerTemplate
-		.replace("{{contextObject}}", JSON.stringify(context, null, 2))
+	const template = options?.directMessage
+		? v5MessageHandlerTemplate
+				.replace(
+					"task: Decide processMessage and the plan for this message.",
+					"task: Decide the plan for this direct message.",
+				)
+				.replace(
+					"- choose processMessage=RESPOND only when the agent should answer or perform work for this message\n- choose processMessage=IGNORE when the message should be ignored\n- choose processMessage=STOP when the user asks the agent to stop or disengage\n",
+					"- this is a direct message, so processMessage is already hardcoded to RESPOND\n- do not include processMessage; only choose plan and thought\n",
+				)
+		: v5MessageHandlerTemplate;
+	return template
+		.replace("context:\n{{contextObject}}\n\n", "")
 		.replace(
 			"{{availableContexts}}",
 			formatAvailableContextsForPrompt(availableContexts),
+		)
+		.trim();
+}
+
+function renderV5MessageHandlerModelInput(
+	context: ContextObject,
+	availableContexts: readonly ContextDefinition[] = [],
+	options?: { directMessage?: boolean },
+): {
+	prompt: string;
+	messages: ChatMessage[];
+	promptSegments: PromptSegment[];
+} {
+	const rendered = renderContextObject(context);
+	const instructions = renderV5MessageHandlerInstructions(
+		availableContexts,
+		options,
+	);
+	const stableSegments = rendered.promptSegments.filter(
+		(segment) => segment.stable,
+	);
+	const dynamicSegments = rendered.promptSegments.filter(
+		(segment) => !segment.stable,
+	);
+	const promptSegments = normalizeMessageHandlerPromptSegments([
+		...stableSegments,
+		{ content: `message_handler_stage:\n${instructions}`, stable: true },
+		...dynamicSegments,
+	]);
+	const prompt = promptSegments.map((segment) => segment.content).join("");
+	const systemContent = normalizeMessageHandlerPromptSegments([
+		...stableSegments,
+		{ content: `message_handler_stage:\n${instructions}`, stable: true },
+	])
+		.map((segment) => renderContextSegmentBlock(segment))
+		.join("\n\n");
+	const userContent = normalizeMessageHandlerPromptSegments(dynamicSegments)
+		.map((segment) => renderContextSegmentBlock(segment))
+		.join("\n\n");
+	return {
+		prompt,
+		messages: [
+			{ role: "system", content: systemContent },
+			{ role: "user", content: userContent },
+		],
+		promptSegments,
+	};
+}
+
+function parseToolArguments(value: unknown): Record<string, unknown> | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		if (typeof value !== "string") {
+			return null;
+		}
+		try {
+			const parsed: unknown = JSON.parse(value);
+			return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+				? (parsed as Record<string, unknown>)
+				: null;
+		} catch {
+			return null;
+		}
+	}
+	return value as Record<string, unknown>;
+}
+
+function parseMessageHandlerNativeToolCall(
+	raw: GenerateTextResult,
+): MessageHandlerResult | null {
+	const toolCalls = Array.isArray(raw.toolCalls) ? raw.toolCalls : [];
+	for (const entry of toolCalls) {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+			continue;
+		}
+		const record = entry as unknown as Record<string, unknown>;
+		const name = String(
+			record.name ?? record.toolName ?? record.tool ?? record.action ?? "",
+		).trim();
+		if (name !== V5_MESSAGE_HANDLER_TOOL_NAME) {
+			continue;
+		}
+		const args = parseToolArguments(
+			record.arguments ?? record.args ?? record.input ?? record.params,
 		);
+		if (!args) {
+			return null;
+		}
+		return parseMessageHandlerOutput(JSON.stringify(args));
+	}
+	return null;
+}
+
+function parseMessageHandlerModelOutput(
+	raw: string | GenerateTextResult,
+): MessageHandlerResult | null {
+	if (typeof raw !== "string") {
+		return (
+			parseMessageHandlerNativeToolCall(raw) ??
+			parseMessageHandlerOutput(getV5ModelText(raw))
+		);
+	}
+	return parseMessageHandlerOutput(raw);
 }
 
 /**
@@ -1351,12 +1702,15 @@ export async function runV5MessageRuntimeStage1(args: {
 	state: State;
 	responseId: UUID;
 }): Promise<V5MessageRuntimeStage1Result> {
-	const context = createV5MessageContextObject(args);
 	const senderRole = await resolveStage1SenderRole(args.runtime, args.message);
 	const availableContexts = listAvailableContextsForRole(
 		args.runtime.contexts,
 		senderRole,
 	);
+	const context = createV5MessageContextObject({
+		...args,
+		availableContexts,
+	});
 
 	// G10/G11: construct the per-trajectory recorder. No-op when disabled via
 	// MILADY_TRAJECTORY_RECORDING=0. Failures inside the recorder must NEVER
@@ -1386,22 +1740,60 @@ export async function runV5MessageRuntimeStage1(args: {
 	let endStatus: "finished" | "errored" = "finished";
 	try {
 		const messageHandlerStartedAt = Date.now();
-		const messageHandlerPrompt = renderV5MessageHandlerPrompt(
+		const directMessageChannel =
+			args.message.content?.channelType === ChannelType.DM ||
+			args.message.content?.channelType === ChannelType.VOICE_DM ||
+			args.message.content?.channelType === ChannelType.API ||
+			args.message.content?.channelType === ChannelType.SELF;
+		const messageHandlerInput = renderV5MessageHandlerModelInput(
 			context,
 			availableContexts,
+			{ directMessage: directMessageChannel },
 		);
+		const messageHandlerPrompt = messageHandlerInput.prompt;
+		const stage1PrefixHashes = computePrefixHashes(
+			messageHandlerInput.promptSegments,
+		);
+		const stableStage1Segments = messageHandlerInput.promptSegments.filter(
+			(segment) => segment.stable,
+		);
+		const stableStage1PrefixHashes = computePrefixHashes(stableStage1Segments);
+		const stage1SystemContent =
+			typeof messageHandlerInput.messages[0]?.content === "string"
+				? messageHandlerInput.messages[0].content
+				: "";
+		const stage1PrefixHash =
+			stableStage1PrefixHashes[stableStage1PrefixHashes.length - 1]?.hash ??
+			hashString(`stage1:${stage1SystemContent}`);
+		const messageHandlerTools = [
+			createV5MessageHandlerTool({
+				directMessage: directMessageChannel,
+			}),
+		];
 		const rawMessageHandler = (await args.runtime.useModel(
 			ModelType.RESPONSE_HANDLER,
 			{
 				prompt: messageHandlerPrompt,
-				responseFormat: { type: "json_object" },
-				responseSchema: v5MessageHandlerSchema,
+				messages: messageHandlerInput.messages,
+				promptSegments: messageHandlerInput.promptSegments,
+				tools: messageHandlerTools,
+				toolChoice: "required",
+				providerOptions: withModelInputBudgetProviderOptions(
+					cacheProviderOptions({
+						prefixHash: stage1PrefixHash,
+						segmentHashes: stage1PrefixHashes.map((entry) => entry.segmentHash),
+					}),
+					buildModelInputBudget({
+						prompt: messageHandlerPrompt,
+						messages: messageHandlerInput.messages,
+						promptSegments: messageHandlerInput.promptSegments,
+						tools: messageHandlerTools,
+					}),
+				),
 			},
 		)) as string | GenerateTextResult;
 		const messageHandlerEndedAt = Date.now();
-		const messageHandler = parseMessageHandlerOutput(
-			getV5ModelText(rawMessageHandler),
-		);
+		const messageHandler = parseMessageHandlerModelOutput(rawMessageHandler);
 
 		if (!messageHandler) {
 			throw new Error(
@@ -1414,13 +1806,24 @@ export async function runV5MessageRuntimeStage1(args: {
 				recorder,
 				trajectoryId,
 				prompt: messageHandlerPrompt,
+				messages: messageHandlerInput.messages,
+				tools: messageHandlerTools,
+				toolChoice: "required",
 				raw: rawMessageHandler,
+				parsed: messageHandler,
 				startedAt: messageHandlerStartedAt,
 				endedAt: messageHandlerEndedAt,
+				segmentHashes: stage1PrefixHashes.map((entry) => entry.segmentHash),
+				prefixHash: stage1PrefixHash,
 				logger: args.runtime.logger,
 			});
 		}
 
+		messageHandler.contexts = filterSelectedContextsForRole(
+			messageHandler.plan.contexts,
+			availableContexts,
+		);
+		messageHandler.plan.contexts = messageHandler.contexts;
 		const route = routeMessageHandlerOutput(messageHandler);
 		if (route.type === "ignored" || route.type === "stopped") {
 			return {
@@ -1432,12 +1835,20 @@ export async function runV5MessageRuntimeStage1(args: {
 		}
 
 		if (route.type === "final_reply") {
+			const reply =
+				route.reply ||
+				(await generateDirectReplyOnce({
+					runtime: args.runtime,
+					message: args.message,
+					state: args.state,
+					messageHandler,
+				}));
 			return {
 				kind: "direct_reply",
 				messageHandler,
 				result: createV5ReplyStrategyResult({
 					...args,
-					text: route.reply,
+					text: reply,
 					thought: messageHandler.thought,
 				}),
 			};
@@ -1446,33 +1857,73 @@ export async function runV5MessageRuntimeStage1(args: {
 		const selectedContexts =
 			route.type === "planning_needed" ? route.contexts : [];
 		const userRoles = [senderRole];
+		const plannerProviderNames = selectV5PlannerStateProviderNames({
+			runtime: args.runtime,
+			message: args.message,
+			selectedContexts,
+			userRoles,
+		});
+		const recomposedPlannerState =
+			typeof args.runtime.composeState === "function"
+				? await args.runtime.composeState(
+						args.message,
+						plannerProviderNames,
+						true,
+					)
+				: args.state;
+		const plannerState = attachAvailableContexts(
+			recomposedPlannerState,
+			args.runtime,
+		);
 		const plannerActions = await collectValidatedPlannerActions({
 			runtime: args.runtime,
 			message: args.message,
-			state: args.state,
+			state: plannerState,
 			selectedContexts,
 			userRoles,
 		});
 		const plannerContext = createV5MessageContextObject({
 			...args,
+			state: plannerState,
 			selectedContexts,
 			includeTools: true,
 			toolActions: plannerActions,
 			userRoles,
+			availableContexts,
+		});
+		const plannerContextWithDecision = appendContextEvent(plannerContext, {
+			id: `message-handler:${messageHandlerEndedAt}`,
+			type: "message_handler",
+			source: "message-service",
+			createdAt: messageHandlerEndedAt,
+			metadata: {
+				processMessage: messageHandler.processMessage,
+				plan: {
+					contexts: messageHandler.plan.contexts,
+					...(messageHandler.plan.reply !== undefined
+						? { reply: messageHandler.plan.reply }
+						: {}),
+				} as JsonValue,
+				thought: messageHandler.thought,
+			},
 		});
 		const plannerRuntime: PlannerRuntime = {
 			useModel: (modelType, modelParams, provider) =>
-				args.runtime.useModel(modelType, modelParams, provider),
+				args.runtime.useModel(
+					modelType,
+					modelParams as GenerateTextParams,
+					provider,
+				),
 			logger: args.runtime.logger as PlannerRuntime["logger"],
 		};
-		const plannerTools = collectPlannerTools(plannerContext);
+		const plannerTools = collectPlannerTools(plannerContextWithDecision);
 		const evaluatorEffects: EvaluatorEffects = {
 			copyToClipboard: () => undefined,
 			messageToUser: () => undefined,
 		};
 		const plannerResult = await runPlannerLoop({
 			runtime: plannerRuntime,
-			context: plannerContext,
+			context: plannerContextWithDecision,
 			tools: plannerTools.length > 0 ? plannerTools : undefined,
 			evaluatorEffects,
 			recorder,
@@ -1481,10 +1932,10 @@ export async function runV5MessageRuntimeStage1(args: {
 				executeV5PlannedToolCall({
 					runtime: args.runtime,
 					toolCall,
-					plannerContext,
+					plannerContext: plannerContextWithDecision,
 					executorCtx: {
 						message: args.message,
-						state: args.state,
+						state: plannerState,
 						activeContexts: selectedContexts,
 						userRoles,
 						previousResults: collectPreviousActionResults(ctx.trajectory),
@@ -1513,6 +1964,7 @@ export async function runV5MessageRuntimeStage1(args: {
 			result: plannedText
 				? createV5ReplyStrategyResult({
 						...args,
+						state: plannerState,
 						text: plannedText,
 						thought:
 							plannerResult.evaluator?.thought ??
@@ -1522,7 +1974,7 @@ export async function runV5MessageRuntimeStage1(args: {
 				: {
 						responseContent: null,
 						responseMessages: [],
-						state: args.state,
+						state: plannerState,
 						mode: "none",
 					},
 		};
@@ -1545,18 +1997,24 @@ async function recordMessageHandlerStage(args: {
 	recorder: TrajectoryRecorder;
 	trajectoryId: string;
 	prompt: string;
+	messages?: ChatMessage[];
+	tools?: ToolDefinition[];
+	toolChoice?: unknown;
 	raw: string | GenerateTextResult;
+	parsed?: MessageHandlerResult;
 	startedAt: number;
 	endedAt: number;
+	segmentHashes?: string[];
+	prefixHash?: string;
 	logger?: IAgentRuntime["logger"];
 }): Promise<void> {
 	try {
-		const responseText =
-			typeof args.raw === "string" ? args.raw : (args.raw.text ?? "");
+		const responseText = getMessageHandlerResponseText(args.raw, args.parsed);
 		const usage =
 			typeof args.raw === "string"
 				? undefined
 				: extractMessageHandlerUsage(args.raw);
+		const modelName = extractMessageHandlerModelName(args.raw);
 		await args.recorder.recordStage(args.trajectoryId, {
 			stageId: `stage-msghandler-${args.startedAt}`,
 			kind: "messageHandler",
@@ -1565,11 +2023,22 @@ async function recordMessageHandlerStage(args: {
 			latencyMs: args.endedAt - args.startedAt,
 			model: {
 				modelType: String(ModelType.RESPONSE_HANDLER),
+				modelName,
 				provider: "default",
 				prompt: args.prompt,
+				messages: args.messages,
+				tools: args.tools,
+				toolChoice: args.toolChoice,
 				response: responseText,
+				toolCalls: extractMessageHandlerToolCalls(args.raw),
 				usage,
 			},
+			cache: args.prefixHash
+				? {
+						segmentHashes: args.segmentHashes ?? [],
+						prefixHash: args.prefixHash,
+					}
+				: undefined,
 		});
 	} catch (err) {
 		args.logger?.warn?.(
@@ -1577,6 +2046,69 @@ async function recordMessageHandlerStage(args: {
 			"[TrajectoryRecorder] failed to record messageHandler stage",
 		);
 	}
+}
+
+function extractMessageHandlerModelName(
+	raw: string | GenerateTextResult,
+): string | undefined {
+	if (typeof raw === "string") return undefined;
+	const meta = raw.providerMetadata;
+	if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+		const direct = (meta as Record<string, unknown>).modelName;
+		if (typeof direct === "string") return direct;
+		const model = (meta as Record<string, unknown>).model;
+		if (typeof model === "string") return model;
+	}
+	return undefined;
+}
+
+function getMessageHandlerResponseText(
+	raw: string | GenerateTextResult,
+	parsed?: MessageHandlerResult,
+): string {
+	if (typeof raw === "string") {
+		return raw;
+	}
+	if (typeof raw.text === "string" && raw.text.trim().length > 0) {
+		return raw.text;
+	}
+	return parsed ? JSON.stringify(parsed) : "";
+}
+
+function extractMessageHandlerToolCalls(
+	raw: string | GenerateTextResult,
+): Array<{ id?: string; name?: string; args?: Record<string, unknown> }> {
+	if (typeof raw === "string" || !Array.isArray(raw.toolCalls)) {
+		return [];
+	}
+	const toolCalls: Array<{
+		id?: string;
+		name?: string;
+		args?: Record<string, unknown>;
+	}> = [];
+	for (const entry of raw.toolCalls) {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+			continue;
+		}
+		const record = entry as unknown as Record<string, unknown>;
+		const name = String(
+			record.name ?? record.toolName ?? record.tool ?? record.action ?? "",
+		).trim();
+		const args = parseToolArguments(
+			record.arguments ?? record.args ?? record.input ?? record.params,
+		);
+		toolCalls.push({
+			id:
+				typeof record.id === "string"
+					? record.id
+					: typeof record.toolCallId === "string"
+						? record.toolCallId
+						: undefined,
+			name: name || undefined,
+			args: args ?? undefined,
+		});
+	}
+	return toolCalls;
 }
 
 function extractMessageHandlerUsage(raw: GenerateTextResult):
@@ -1868,7 +2400,7 @@ const EXPLICIT_INTENT_ACTIONS = new Set(
 	].map(normalizeActionIdentifier),
 );
 
-function shouldAttemptCanonicalActionRepair(
+function _shouldAttemptCanonicalActionRepair(
 	rawPlannerActions: string[],
 	normalizedActions: string[],
 ): boolean {
@@ -1923,8 +2455,8 @@ function buildCanonicalActionRepairPrompt(args: {
 		"If the user explicitly asked for an operational artifact or workflow, select the responsible action instead of replying inline.",
 		"If the subject is already present, do not ask a clarifying question just because the original planner used a generic lookup verb.",
 		"Map generic planner labels like LOOKUP, SEARCH, FETCH, GET, RETRIEVE, BRIEF, or BACKGROUND to the best canonical runtime action.",
-		"Return ONLY TOON with top-level fields: actions, providers, params, and optional text.",
-		"Use actions[n]: ACTION_NAME for selected actions and a params object keyed by action name when inputs are needed.",
+		"Return ONLY a JSON object with top-level fields: actions, providers, params, and optional text.",
+		'Use "actions": ["ACTION_NAME"] for selected actions and a params object keyed by action name when inputs are needed.',
 		"Do not include text unless there is truly no matching runtime action.",
 		"",
 		`user_message:\n${args.userText}`,
@@ -1941,15 +2473,19 @@ function buildCanonicalActionRepairPrompt(args: {
 		'user_message: "Pull up a dossier on Satya Nadella."',
 		"planner_actions_raw[1]: LOOKUP",
 		"output:",
-		"actions[1]: DOSSIER",
-		"providers[0]:",
-		"params:",
-		"  DOSSIER:",
-		"    subject: Satya Nadella",
+		JSON.stringify(
+			{
+				actions: ["DOSSIER"],
+				providers: [],
+				params: { DOSSIER: { subject: "Satya Nadella" } },
+			},
+			null,
+			2,
+		),
 	].join("\n");
 }
 
-async function repairCanonicalPlannerActions(args: {
+async function _repairCanonicalPlannerActions(args: {
 	runtime: IAgentRuntime;
 	message: Memory;
 	rawPlannerActions: string[];
@@ -2003,7 +2539,7 @@ async function repairCanonicalPlannerActions(args: {
 			{
 				field: "params",
 				description:
-					"Optional TOON object keyed by action name with repaired action params",
+					"Optional JSON object keyed by action name with repaired action params",
 				type: "object",
 				required: false,
 				validateField: false,
@@ -2020,38 +2556,14 @@ async function repairCanonicalPlannerActions(args: {
 		],
 		options: {
 			modelType: ModelType.TEXT_LARGE,
-			preferredEncapsulation: "toon",
+			preferredEncapsulation: "json",
 			contextCheckLevel: 0,
 			maxRetries: 1,
 		},
 	});
 }
 
-function shouldRunProviderFollowup(
-	responseContent: Pick<Content, "actions" | "providers"> | null | undefined,
-): boolean {
-	if (!responseContent?.providers?.length) {
-		return false;
-	}
-
-	const normalizedActions = (responseContent.actions ?? [])
-		.map((actionName) =>
-			typeof actionName === "string"
-				? normalizeActionIdentifier(actionName)
-				: "",
-		)
-		.filter((actionName) => actionName.length > 0);
-
-	if (normalizedActions.length === 0) {
-		return true;
-	}
-
-	return normalizedActions.every((actionName) =>
-		PROVIDER_FOLLOWUP_PASSIVE_ACTIONS.has(actionName),
-	);
-}
-
-function buildProviderFollowupPrompt(basePrompt: string): string {
+function _buildProviderFollowupPrompt(basePrompt: string): string {
 	return `${basePrompt}
 
 [PROVIDER FOLLOW-UP]
@@ -2063,7 +2575,7 @@ If KNOWLEDGE contains a direct answer, prefer that grounded answer even when AVA
 Do not ask "which file?" when the grounded KNOWLEDGE result already resolves the request.`;
 }
 
-function buildActionRescuePrompt(
+function _buildActionRescuePrompt(
 	basePrompt: string,
 	draftReply: string,
 ): string {
@@ -2087,7 +2599,7 @@ function buildActionRescuePrompt(
 	Keep REPLY/NONE only when no listed action actually owns the request.${draftSection}`;
 }
 
-function buildActionOnlyRescuePrompt(draftReply: string): string {
+function _buildActionOnlyRescuePrompt(draftReply: string): string {
 	const trimmedDraftReply = draftReply.trim();
 	const draftSection =
 		trimmedDraftReply.length > 0
@@ -2125,9 +2637,11 @@ Examples:
 	- "check disk space on this VPS with df -h" -> SHELL_COMMAND
 	- "what is the current BTC price in USD?" -> SEARCH
 
-${draftSection}Return TOON only:
-thought: short reasoning
-actions[1]: ACTION_NAME`;
+${draftSection}Return JSON only:
+{
+  "thought": "short reasoning",
+  "actions": ["ACTION_NAME"]
+}`;
 }
 
 const ROUTING_REASSESS_ACTIONS = new Set(
@@ -2611,7 +3125,7 @@ export function inferWebSearchQueryFromMessageText(
 	return query.length > 0 ? query : messageText.trim();
 }
 
-function hasSelectedShellCommandAction(
+function _hasSelectedShellCommandAction(
 	responseContent: Pick<Content, "actions"> | null | undefined,
 ): boolean {
 	return (
@@ -2624,7 +3138,7 @@ function hasSelectedShellCommandAction(
 	);
 }
 
-function hasSelectedSearchAction(
+function _hasSelectedSearchAction(
 	responseContent: Pick<Content, "actions"> | null | undefined,
 ): boolean {
 	return (
@@ -2641,7 +3155,7 @@ function hasSelectedSearchAction(
 	);
 }
 
-function mergeLocalShellCommandParams(
+function _mergeLocalShellCommandParams(
 	existingParams: Content["params"],
 	command: string,
 ): Content["params"] {
@@ -2666,7 +3180,7 @@ function mergeLocalShellCommandParams(
 	} as Content["params"];
 }
 
-function mergeWebSearchQueryParams(
+function _mergeWebSearchQueryParams(
 	existingParams: Content["params"],
 	query: string,
 ): Content["params"] {
@@ -2891,7 +3405,7 @@ export function shouldPromoteExplicitReplyToOwnedAction(
 	);
 }
 
-function shouldAttemptActionRescue(
+function _shouldAttemptActionRescue(
 	runtime: Pick<IAgentRuntime, "actions">,
 	message: Memory,
 	state: State,
@@ -2965,7 +3479,7 @@ function looksLikeOwnershipSensitiveRequest(message: Memory): boolean {
 	].some((pattern) => pattern.test(text));
 }
 
-function shouldAttemptOwnershipRepair(
+function _shouldAttemptOwnershipRepair(
 	runtime: Pick<IAgentRuntime, "actions">,
 	message: Memory,
 	state: State,
@@ -3010,7 +3524,7 @@ function shouldAttemptOwnershipRepair(
 	);
 }
 
-function buildOwnershipRepairPrompt(
+function _buildOwnershipRepairPrompt(
 	basePrompt: string,
 	selectedActionName: string,
 	draftReply: string,
@@ -3035,7 +3549,7 @@ Flight-conflict rebooking belongs to CALENDAR even when the exact flight time or
 If the current action is already the most specific owner, keep it.${draftSection}`;
 }
 
-function shouldAttemptProviderRescue(
+function _shouldAttemptProviderRescue(
 	responseContent: Pick<Content, "actions" | "providers"> | null | undefined,
 ): boolean {
 	if (!responseContent) {
@@ -3184,24 +3698,24 @@ ${draftReplySection}rules[${4 + draftReplyRules.length}]:
 ${draftReplyRules.join("\n")}
 
 output:
-TOON only. Return exactly one TOON document containing only provider names. No prose before or after it. No <think>.
+JSON only. Return exactly one JSON object containing only provider names. No prose before or after it. No <think>.
 
 Examples:
 - user asks: "what is the qa codeword from the uploaded file?"
   draft reply: "Which file are you referring to?"
   output:
-  providers[2]: AVAILABLE_DOCUMENTS,KNOWLEDGE
+  {"providers":["AVAILABLE_DOCUMENTS","KNOWLEDGE"]}
 - user asks: "what is the qa codeword from the uploaded file?"
   draft reply: "I don't have the file in my context. Which file contains the QA codeword?"
   output:
-  providers[2]: AVAILABLE_DOCUMENTS,KNOWLEDGE
+  {"providers":["AVAILABLE_DOCUMENTS","KNOWLEDGE"]}
 - user asks: "thanks, that's all"
   draft reply: "Glad to help."
   output:
-  providers[0]:`;
+  {"providers":[]}`;
 }
 
-async function recoverProvidersForTurn(args: {
+async function _recoverProvidersForTurn(args: {
 	runtime: IAgentRuntime;
 	message: Memory;
 	state: State;
@@ -3233,7 +3747,7 @@ async function recoverProvidersForTurn(args: {
 			],
 			options: {
 				modelType: ModelType.TEXT_LARGE,
-				preferredEncapsulation: "toon",
+				preferredEncapsulation: "json",
 				contextCheckLevel: 0,
 				maxRetries: 1,
 			},
@@ -3263,7 +3777,7 @@ async function recoverProvidersForTurn(args: {
 	}
 }
 
-function buildGroundedFallbackReplyPrompt(): string {
+function _buildGroundedFallbackReplyPrompt(): string {
 	return `task: Write the next assistant reply using grounded context.
 
 grounded context:
@@ -3281,7 +3795,7 @@ rules[5]:
 - return only the reply text
 
 output:
-Plain text only. No XML, JSON, TOON, bullets, or <think>.`;
+Plain text only. No XML, JSON, bullets, or <think>.`;
 }
 
 function buildKnowledgeProviderDecisionPrompt(): string {
@@ -3298,7 +3812,7 @@ rules[5]:
 - return only the structured output, with no prose
 
 output:
-TOON only. Return exactly one TOON document.
+JSON only. Return exactly one JSON object.
 
 Examples:
 - user asks: "what is the qa codeword from the uploaded file?" -> useKnowledgeProviders: true
@@ -3330,7 +3844,7 @@ async function shouldUseKnowledgeProviders(
 			],
 			options: {
 				modelType: ModelType.TEXT_LARGE,
-				preferredEncapsulation: "toon",
+				preferredEncapsulation: "json",
 				contextCheckLevel: 0,
 				maxRetries: 1,
 			},
@@ -3446,14 +3960,14 @@ export function getActionContinuationDecision(
 	};
 }
 
-function shouldContinueAfterActions(
+function _shouldContinueAfterActions(
 	runtime: IAgentRuntime,
 	responseContent: Content | null | undefined,
 ): boolean {
 	return getActionContinuationDecision(runtime, responseContent).shouldContinue;
 }
 
-function suppressesPostActionContinuation(
+function _suppressesPostActionContinuation(
 	runtime: IAgentRuntime,
 	responseContent: Content | null | undefined,
 ): boolean {
@@ -3673,7 +4187,7 @@ function isLikelyClarifyingQuestion(text: string): boolean {
 	);
 }
 
-function shouldWaitForUserAfterIncompleteReflection(
+function _shouldWaitForUserAfterIncompleteReflection(
 	responseContent: Content | null | undefined,
 	actionResults: ActionResult[],
 ): boolean {
@@ -3715,9 +4229,9 @@ export function withActionResultsForPrompt(
 	};
 }
 
-const withActionResults = withActionResultsForPrompt;
+const _withActionResults = withActionResultsForPrompt;
 
-function preparePromptActionResult<T extends ActionResult>(
+function _preparePromptActionResult<T extends ActionResult>(
 	runtime: IAgentRuntime,
 	message: Memory,
 	result: T,
@@ -3742,7 +4256,7 @@ function preparePromptActionResult<T extends ActionResult>(
 	return trimActionResultForPromptState(result);
 }
 
-function withTaskCompletion(
+function _withTaskCompletion(
 	state: State,
 	taskCompletion: TaskCompletionAssessment | null | undefined,
 ): State {
@@ -3812,7 +4326,7 @@ function withInferredContextRoutingFallback(
 	return inferred;
 }
 
-async function composeContinuationDecisionState(
+async function _composeContinuationDecisionState(
 	runtime: IAgentRuntime,
 	message: Memory,
 	contextRoutingStateValues?: ContextRoutingStateValues,
@@ -3832,25 +4346,12 @@ async function composeContinuationDecisionState(
 	);
 }
 
-function isBenchmarkMode(state: Pick<State, "values">): boolean {
-	const benchmarkFlag = state.values?.benchmark_has_context;
-	if (typeof benchmarkFlag === "boolean") {
-		return benchmarkFlag;
-	}
-
-	if (typeof benchmarkFlag === "string") {
-		return parseBooleanFromText(benchmarkFlag);
-	}
-
-	return false;
-}
-
 /**
  * Default implementation of the MessageService interface.
  * This service handles the complete message processing pipeline including:
  * - Message validation and memory creation
  * - Smart response decision (shouldRespond)
- * - Single-shot or multi-step processing strategies
+ * - Native planner processing
  * - Action execution and evaluation
  * - Attachment processing
  * - Message deletion and channel clearing
@@ -3986,7 +4487,7 @@ export class DefaultMessageService implements IMessageService {
 				// dual-extractor garbling bug; consumers saw overlapping deltas that
 				// produced unintelligible TTS.
 				//
-				// The fix: a single TOON field extractor in
+				// The fix: a single structured field extractor in
 				// dynamicPromptExecFromState) now provides `accumulated` — the full
 				// extracted text — via the third StreamChunkCallback argument. Voice
 				// detection wraps the caller's callback to intercept accumulated text
@@ -4125,17 +4626,6 @@ export class DefaultMessageService implements IMessageService {
 				const opts: ResolvedMessageOptions = {
 					maxRetries: options?.maxRetries ?? 3,
 					timeoutDuration: options?.timeoutDuration ?? 60 * 60 * 1000, // 1 hour
-					useMultiStep:
-						options?.useMultiStep ??
-						parseBooleanFromText(
-							String(runtime.getSetting("USE_MULTI_STEP") ?? ""),
-						),
-					maxMultiStepIterations:
-						options?.maxMultiStepIterations ??
-						parseInt(
-							String(runtime.getSetting("MAX_MULTISTEP_ITERATIONS") ?? "6"),
-							10,
-						),
 					continueAfterActions:
 						options?.continueAfterActions ??
 						parseBooleanFromText(
@@ -4237,10 +4727,41 @@ export class DefaultMessageService implements IMessageService {
 						}, opts.timeoutDuration);
 					});
 
-					// Structured TOON streaming is handled by dynamicPromptExecFromState,
-					// which receives opts.onStreamChunk directly and extracts only fields
-					// marked as streamable in the schema.
-					const streamingContext = undefined;
+					// Structured streaming is handled by dynamicPromptExecFromState for
+					// text fields. Native v5 planner/tool/evaluator events use the same
+					// callback with JSON event chunks so UIs can render tool progress.
+					const streamingContext = opts.onStreamChunk
+						? {
+								onStreamChunk: opts.onStreamChunk,
+								messageId: responseId,
+								onToolCall: async (payload: StreamingToolCallPayload) => {
+									await opts.onStreamChunk?.(
+										JSON.stringify({ type: "tool_call", ...payload }),
+										responseId,
+									);
+								},
+								onToolResult: async (payload: StreamingToolResultPayload) => {
+									await opts.onStreamChunk?.(
+										JSON.stringify({ type: "tool_result", ...payload }),
+										responseId,
+									);
+								},
+								onEvaluation: async (payload: StreamingEvaluationPayload) => {
+									await opts.onStreamChunk?.(
+										JSON.stringify({ type: "evaluation", ...payload }),
+										responseId,
+									);
+								},
+								onContextEvent: async (
+									payload: StreamingContextEventPayload,
+								) => {
+									await opts.onStreamChunk?.(
+										JSON.stringify({ type: "context_event", event: payload }),
+										responseId,
+									);
+								},
+							}
+						: undefined;
 					// Voice handling state
 					const firstSentenceSent = false;
 					const firstSentenceText = "";
@@ -4528,10 +5049,6 @@ export class DefaultMessageService implements IMessageService {
 			);
 		}
 
-		const promptAttachments = resolvePromptAttachments(
-			message.content.attachments,
-		);
-
 		// Compose initial state (after incoming hooks so providers/actions text matches this turn)
 		let state = await composeResponseState(runtime, message);
 		state = attachAvailableContexts(state, runtime);
@@ -4560,6 +5077,7 @@ export class DefaultMessageService implements IMessageService {
 		let terminalDecision: "IGNORE" | "STOP" | null = null;
 		let routedDecision: ContextRoutingDecision | null = null;
 		let v5StrategyResult: StrategyResult | null = null;
+		let _usedV5Runtime = false;
 
 		const parallelJoin: { translatedUserText?: string } = {};
 		const setTranslatedUserText = (text: string) => {
@@ -4577,48 +5095,67 @@ export class DefaultMessageService implements IMessageService {
 			setTranslatedUserText,
 		});
 
-		if (isAutonomous) {
-			runtime.logger.debug(
-				{ src: "service:message", autonomyMode },
-				"Autonomy message bypassing shouldRespond checks",
-			);
-			shouldRespondToMessage = true;
-			await runtime.applyPipelineHooks(
-				"parallel_with_should_respond",
-				parallelHookCtx,
-			);
-		} else if (hasTextGenerationHandler(runtime)) {
-			const [v5Outcome] = await Promise.all([
-				runV5MessageRuntimeStage1({
+		if (hasTextGenerationHandler(runtime)) {
+			if (isAutonomous) {
+				runtime.logger.debug(
+					{ src: "service:message", autonomyMode },
+					"Autonomy message using v5 messageHandler/planner runtime",
+				);
+			}
+			try {
+				const [v5Outcome] = await Promise.all([
+					runV5MessageRuntimeStage1({
+						runtime,
+						message,
+						state,
+						responseId,
+					}),
+					runtime.applyPipelineHooks(
+						"parallel_with_should_respond",
+						parallelHookCtx,
+					),
+				]);
+				const routedContexts = v5Outcome.messageHandler.contexts;
+				routedDecision =
+					routedContexts.length > 0
+						? {
+								primaryContext: routedContexts[0],
+								secondaryContexts: routedContexts.slice(1),
+							}
+						: {};
+				setContextRoutingMetadata(message, routedDecision);
+
+				if (v5Outcome.kind === "terminal") {
+					shouldRespondToMessage = false;
+					terminalDecision = v5Outcome.action;
+					state = v5Outcome.state;
+				} else {
+					shouldRespondToMessage = true;
+					terminalDecision = null;
+					v5StrategyResult = v5Outcome.result;
+					_usedV5Runtime = true;
+					state = v5Outcome.result.state;
+				}
+			} catch (error) {
+				runtime.logger.warn(
+					{
+						src: "service:message",
+						agentId: runtime.agentId,
+						error: error instanceof Error ? error.message : String(error),
+					},
+					"v5 message runtime failed; returning structured failure reply",
+				);
+				shouldRespondToMessage = true;
+				terminalDecision = null;
+				v5StrategyResult = await this.buildStructuredFailureReply(
 					runtime,
 					message,
 					state,
 					responseId,
-				}),
-				runtime.applyPipelineHooks(
-					"parallel_with_should_respond",
-					parallelHookCtx,
-				),
-			]);
-			const routedContexts = v5Outcome.messageHandler.contexts;
-			routedDecision =
-				routedContexts.length > 0
-					? {
-							primaryContext: routedContexts[0],
-							secondaryContexts: routedContexts.slice(1),
-						}
-					: {};
-			setContextRoutingMetadata(message, routedDecision);
-
-			if (v5Outcome.kind === "terminal") {
-				shouldRespondToMessage = false;
-				terminalDecision = v5Outcome.action;
-				state = v5Outcome.state;
-			} else {
-				shouldRespondToMessage = true;
-				terminalDecision = null;
-				v5StrategyResult = v5Outcome.result;
-				state = v5Outcome.result.state;
+					"running the native tool message runtime",
+				);
+				_usedV5Runtime = true;
+				state = v5StrategyResult.state;
 			}
 		} else if (!hasTextGenerationHandler(runtime)) {
 			await runtime.applyPipelineHooks(
@@ -4658,6 +5195,16 @@ export class DefaultMessageService implements IMessageService {
 				shouldRespondToMessage = false;
 			}
 			terminalDecision = null;
+			if (shouldRespondToMessage) {
+				v5StrategyResult = this.buildNoModelProviderReply(
+					runtime,
+					message,
+					state,
+					responseId,
+					"v5 message handling",
+				);
+				_usedV5Runtime = true;
+			}
 		}
 
 		const joinedTranslation =
@@ -4697,57 +5244,21 @@ export class DefaultMessageService implements IMessageService {
 		let pendingSimpleEmit: Content | null = null;
 		// Track memory IDs created for the simple-mode reply so we can clean
 		// them up if reflection overrides the deferred emit (Greptile P1 fix).
-		let pendingSimpleMemoryIds: string[] = [];
+		const pendingSimpleMemoryIds: string[] = [];
 
 		if (shouldRespondToMessage) {
 			let result: StrategyResult;
 			if (v5StrategyResult) {
 				result = v5StrategyResult;
 			} else {
-				const resolvedRouting = mergeContextRouting(state, message);
-				const hasResolvedRouting =
-					getActiveRoutingContexts(resolvedRouting).length > 0;
-				let executionState = state;
-				if (hasResolvedRouting) {
-					executionState = withContextRoutingValues(
-						await runtime.composeState(
-							message,
-							["ACTIONS", "PROVIDERS"],
-							false,
-							false,
-						),
-						{
-							[AVAILABLE_CONTEXTS_STATE_KEY]:
-								state.values?.[AVAILABLE_CONTEXTS_STATE_KEY],
-							[CONTEXT_ROUTING_STATE_KEY]: resolvedRouting,
-						},
-					);
-				}
-
-				result = opts.useMultiStep
-					? await this.runMultiStepCore(
-							runtime,
-							message,
-							executionState,
-							callback,
-							opts,
-							responseId,
-							promptAttachments,
-							{
-								precomposedState: executionState,
-							},
-						)
-					: await this.runSingleShotCore(
-							runtime,
-							message,
-							executionState,
-							opts,
-							responseId,
-							promptAttachments,
-							{
-								precomposedState: executionState,
-							},
-						);
+				_usedV5Runtime = true;
+				result = await this.buildStructuredFailureReply(
+					runtime,
+					message,
+					state,
+					responseId,
+					"running the native tool message runtime",
+				);
 			}
 
 			responseContent = result.responseContent;
@@ -4817,76 +5328,6 @@ export class DefaultMessageService implements IMessageService {
 					),
 					providerStateValues,
 				);
-			}
-
-			if (responseContent && shouldRunProviderFollowup(responseContent)) {
-				const providerFollowupState =
-					responseContent.providers && responseContent.providers.length > 0
-						? withContextRoutingValues(
-								await composeFocusedProviderReplyState(
-									runtime,
-									message,
-									responseContent.providers,
-								),
-								providerStateValues,
-							)
-						: state;
-				runtime.logger.info(
-					{
-						src: "service:message",
-						providers: responseContent.providers ?? [],
-						actions: responseContent.actions ?? [],
-					},
-					"Running provider follow-up pass",
-				);
-				const providerContinuation = await this.runSingleShotCore(
-					runtime,
-					message,
-					providerFollowupState,
-					opts,
-					responseId,
-					promptAttachments,
-					{
-						precomposedState: providerFollowupState,
-						failureStage: "answering from requested provider results",
-						providerFollowup: true,
-					},
-				);
-				responseContent = providerContinuation.responseContent;
-				responseMessages = providerContinuation.responseMessages;
-				state = providerContinuation.state;
-				mode = providerContinuation.mode;
-
-				if (responseContent && message.id) {
-					responseContent.inReplyTo = createUniqueUuid(runtime, message.id);
-				}
-
-				runtime.logger.info(
-					{
-						src: "service:message",
-						finalActions: responseContent?.actions ?? [],
-						finalProviders: responseContent?.providers ?? [],
-						hasText:
-							typeof responseContent?.text === "string" &&
-							responseContent.text.length > 0,
-					},
-					"Provider follow-up pass completed",
-				);
-
-				if (
-					responseContent?.providers &&
-					responseContent.providers.length > 0
-				) {
-					state = withContextRoutingValues(
-						await runtime.composeState(
-							message,
-							responseContent.providers,
-							false,
-							false,
-						),
-						providerStateValues,
-					);
-				}
 			}
 
 			// Save response memory to database.
@@ -4990,37 +5431,6 @@ export class DefaultMessageService implements IMessageService {
 						},
 						{ onStreamChunk: opts.onStreamChunk },
 					);
-
-					const latestActionResults = message.id
-						? runtime.getActionResults(message.id)
-						: [];
-					if (
-						opts.continueAfterActions &&
-						message.id &&
-						shouldContinueAfterActions(runtime, responseContent) &&
-						!suppressesPostActionContinuation(runtime, responseContent) &&
-						!actionResultsSuppressPostActionContinuation(latestActionResults)
-					) {
-						const continuation = await this.runPostActionContinuation(
-							runtime,
-							message,
-							state,
-							callback,
-							opts,
-							latestActionResults,
-						);
-						if (continuation.responseMessages.length > 0) {
-							responseMessages = [
-								...responseMessages,
-								...continuation.responseMessages,
-							];
-						}
-						if (continuation.responseContent) {
-							responseContent = continuation.responseContent;
-							mode = continuation.mode;
-						}
-						state = continuation.state;
-					}
 				}
 			}
 		} else {
@@ -5155,99 +5565,8 @@ export class DefaultMessageService implements IMessageService {
 
 		await runEvaluate();
 
-		if (opts.continueAfterActions && message.id && !isBenchmarkMode(state)) {
-			const taskCompletion = await runtime.getCache<TaskCompletionAssessment>(
-				getTaskCompletionCacheKey(message.id),
-			);
-			await runtime.deleteCache(getTaskCompletionCacheKey(message.id));
-
-			if (
-				taskCompletion?.assessed &&
-				!taskCompletion.completed &&
-				// Honor `suppressPostActionContinuation` here too. The flag's
-				// contract per Action.suppressPostActionContinuation is "stop after
-				// this action — don't run any continuation LLM turn." Without this
-				// guard, an action that already emitted a complete user-facing
-				// reply (e.g. CALENDAR) will get a second visible callback
-				// when the reflection evaluator marks the task as incomplete and
-				// triggers another LLM/processActions pass.
-				!suppressesPostActionContinuation(runtime, responseContent)
-			) {
-				const directReplyText =
-					typeof responseContent?.text === "string"
-						? responseContent.text.trim()
-						: "";
-				let latestActionResults: ActionResult[] = [];
-				const shouldWaitForUser =
-					isSimpleReplyResponse(responseContent) && directReplyText.length > 0
-						? isLikelyClarifyingQuestion(directReplyText)
-						: (() => {
-								latestActionResults = runtime.getActionResults(message.id);
-								return shouldWaitForUserAfterIncompleteReflection(
-									responseContent,
-									latestActionResults,
-								);
-							})();
-
-				if (shouldWaitForUser) {
-					runtime.logger.debug(
-						{
-							src: "service:message",
-							messageId: message.id,
-							taskCompletionReason: taskCompletion.reason,
-							replyPreview: getLatestVisibleReplyText(
-								responseContent,
-								latestActionResults,
-							).slice(0, 200),
-						},
-						"Skipping reflection continuation because the agent is waiting for user input",
-					);
-				} else {
-					const continuation = await this.runReflectionTaskContinuation(
-						runtime,
-						message,
-						state,
-						callback,
-						opts,
-						taskCompletion,
-					);
-					if (continuation.responseMessages.length > 0) {
-						responseMessages = [
-							...responseMessages,
-							...continuation.responseMessages,
-						];
-					}
-					if (continuation.responseContent) {
-						responseContent = continuation.responseContent;
-						mode = continuation.mode;
-					}
-					// Reflection produced a continuation (may or may not have
-					// responseContent — e.g. actions that set results but the
-					// helper returned early). Drop the deferred chatty REPLY
-					// either way: emitting both would show two contradictory
-					// messages, and even when responseContent is null the
-					// continuation's action callbacks already went to the user.
-					if (
-						pendingSimpleEmit &&
-						(continuation.responseContent ||
-							continuation.responseMessages.length > 0)
-					) {
-						// Clean up orphaned memories that were persisted before
-						// we knew reflection would override (Greptile P1 fix).
-						for (const memId of pendingSimpleMemoryIds) {
-							await runtime.deleteMemory(memId as UUID);
-						}
-						pendingSimpleMemoryIds = [];
-						pendingSimpleEmit = null;
-					}
-					state = continuation.state;
-				}
-			}
-		}
-
-		// Flush the deferred simple-mode reply now that reflection has had its
-		// chance to override. If reflection produced its own response, this is
-		// already null and the original chatty REPLY is dropped.
+		// Flush the deferred simple-mode reply after evaluators have had a chance
+		// to attach callbacks. Chaining is handled inside the v5 planner loop.
 		if (pendingSimpleEmit && callback) {
 			await callback(pendingSimpleEmit);
 		}
@@ -5557,21 +5876,21 @@ export class DefaultMessageService implements IMessageService {
 					});
 
 					if (typeof response === "string") {
-						const parsedToon = parseToonKeyValue(response);
+						const parsedJson = parseJSONObjectFromText(response);
 
-						if (parsedToon && (parsedToon.description || parsedToon.text)) {
+						if (parsedJson && (parsedJson.description || parsedJson.text)) {
 							processedAttachment.description =
-								(typeof parsedToon.description === "string"
-									? parsedToon.description
+								(typeof parsedJson.description === "string"
+									? parsedJson.description
 									: "") || "";
 							processedAttachment.title =
-								(typeof parsedToon.title === "string"
-									? parsedToon.title
+								(typeof parsedJson.title === "string"
+									? parsedJson.title
 									: "Image") || "Image";
 							processedAttachment.text =
-								(typeof parsedToon.text === "string" ? parsedToon.text : "") ||
-								(typeof parsedToon.description === "string"
-									? parsedToon.description
+								(typeof parsedJson.text === "string" ? parsedJson.text : "") ||
+								(typeof parsedJson.description === "string"
+									? parsedJson.description
 									: "") ||
 								"";
 
@@ -5586,7 +5905,7 @@ export class DefaultMessageService implements IMessageService {
 						} else {
 							runtime.logger.warn(
 								{ src: "service:message" },
-								"Failed to parse TOON response for image description",
+								"Failed to parse JSON response for image description",
 							);
 						}
 					} else if (
@@ -5759,1457 +6078,6 @@ export class DefaultMessageService implements IMessageService {
 		return processedAttachments;
 	}
 
-	private async runPostActionContinuation(
-		runtime: IAgentRuntime,
-		message: Memory,
-		state: State,
-		callback: HandlerCallback | undefined,
-		opts: ResolvedMessageOptions,
-		initialActionResults: ActionResult[],
-	): Promise<StrategyResult> {
-		const contextRoutingStateValues = {
-			[AVAILABLE_CONTEXTS_STATE_KEY]:
-				state.values?.[AVAILABLE_CONTEXTS_STATE_KEY],
-			[CONTEXT_ROUTING_STATE_KEY]: state.values?.[CONTEXT_ROUTING_STATE_KEY],
-		};
-		const taskCompletion = state.data?.taskCompletion as
-			| TaskCompletionAssessment
-			| undefined;
-
-		if (!message.id || initialActionResults.length === 0) {
-			return {
-				responseContent: null,
-				responseMessages: [],
-				state,
-				mode: "none",
-			};
-		}
-
-		if (actionResultsSuppressPostActionContinuation(initialActionResults)) {
-			return {
-				responseContent: null,
-				responseMessages: [],
-				state,
-				mode: "none",
-			};
-		}
-
-		const traceActionResults: ActionResult[] = [...initialActionResults];
-		const responseMessages: Memory[] = [];
-		let accumulatedState = state;
-		let responseContent: Content | null = null;
-
-		for (
-			let iterationCount = 0;
-			iterationCount < opts.maxMultiStepIterations;
-			iterationCount++
-		) {
-			accumulatedState = withTaskCompletion(
-				withActionResults(
-					await composeContinuationDecisionState(
-						runtime,
-						message,
-						contextRoutingStateValues,
-					),
-					traceActionResults,
-				),
-				taskCompletion,
-			);
-
-			const continuation = await this.runSingleShotCore(
-				runtime,
-				message,
-				accumulatedState,
-				opts,
-				asUUID(v4()),
-				resolvePromptAttachments(message.content.attachments),
-				{
-					prompt:
-						runtime.character.templates?.postActionDecisionTemplate ||
-						postActionDecisionTemplate,
-					precomposedState: accumulatedState,
-					failureStage: "preparing the follow-up reply after actions",
-				},
-			);
-
-			if (!continuation.responseContent) {
-				runtime.logger.debug(
-					{ src: "service:message", iteration: iterationCount + 1 },
-					"Post-action continuation produced no response",
-				);
-				break;
-			}
-
-			responseContent = continuation.responseContent;
-			if (message.id) {
-				responseContent.inReplyTo = createUniqueUuid(runtime, message.id);
-			}
-
-			if (responseContent.providers && responseContent.providers.length > 0) {
-				accumulatedState = withActionResults(
-					withContextRoutingValues(
-						await composeProviderGroundedResponseState(
-							runtime,
-							message,
-							responseContent.providers,
-						),
-						contextRoutingStateValues,
-					),
-					traceActionResults,
-				);
-			} else {
-				accumulatedState = withActionResults(
-					continuation.state,
-					traceActionResults,
-				);
-			}
-			accumulatedState = withTaskCompletion(accumulatedState, taskCompletion);
-
-			if (
-				continuation.responseMessages.length > 0 &&
-				continuation.mode !== "simple"
-			) {
-				for (const responseMemory of continuation.responseMessages) {
-					responseMemory.content = responseContent;
-					await runtime.createMemory(responseMemory, "messages");
-					await this.emitMessageSent(
-						runtime,
-						responseMemory,
-						message.content.source ?? "messageHandler",
-					);
-				}
-				responseMessages.push(...continuation.responseMessages);
-			}
-
-			if (continuation.mode === "simple") {
-				await runtime.applyPipelineHooks(
-					"outgoing_before_deliver",
-					outgoingPipelineHookContext(responseContent, {
-						source: "continuation_simple",
-						roomId: message.roomId,
-						message,
-						responseId:
-							responseContent.responseId ??
-							continuation.responseMessages[0]?.id,
-					}),
-				);
-				if (continuation.responseMessages.length > 0) {
-					for (const responseMemory of continuation.responseMessages) {
-						responseMemory.content = responseContent;
-						await runtime.createMemory(responseMemory, "messages");
-						await this.emitMessageSent(
-							runtime,
-							responseMemory,
-							message.content.source ?? "messageHandler",
-						);
-					}
-					responseMessages.push(...continuation.responseMessages);
-				}
-				if (callback) {
-					await callback(responseContent);
-				}
-				break;
-			}
-
-			if (continuation.mode !== "actions") {
-				break;
-			}
-
-			await invokeOnBeforeActionExecution(opts, runtime, message);
-			await runtime.processActions(
-				message,
-				continuation.responseMessages,
-				accumulatedState,
-				async (content) => {
-					runtime.logger.debug(
-						{ src: "service:message", content },
-						"Post-action callback",
-					);
-					if (responseContent) {
-						responseContent.actionCallbacks = content;
-					}
-					if (callback) {
-						return callback(content);
-					}
-					return [];
-				},
-				{ onStreamChunk: opts.onStreamChunk },
-			);
-
-			if (
-				!shouldContinueAfterActions(runtime, responseContent) ||
-				suppressesPostActionContinuation(runtime, responseContent)
-			) {
-				break;
-			}
-
-			const latestActionResults = runtime.getActionResults(message.id);
-			if (actionResultsSuppressPostActionContinuation(latestActionResults)) {
-				break;
-			}
-			if (latestActionResults.length === 0) {
-				runtime.logger.warn(
-					{ src: "service:message", iteration: iterationCount + 1 },
-					"Post-action continuation produced no new action results",
-				);
-				break;
-			}
-			traceActionResults.push(...latestActionResults);
-
-			// Break the post-action continuation loop when any of the just-run
-			// actions returned a "needs human confirmation" signal. The
-			// confirmation has to come from the next user message — there is
-			// nothing the agent can do to supply it on its own. Without this,
-			// REMOTE_DESKTOP / SEND_DRAFT confirm-then-dispatch /
-			// WEBSITE_BLOCK re-fire their plan every iteration until
-			// maxMultiStepIterations is hit.
-			const requiresConfirmation = latestActionResults.some((r) => {
-				const v =
-					r &&
-					"values" in r &&
-					typeof r.values === "object" &&
-					r.values !== null
-						? (r.values as Record<string, unknown>)
-						: null;
-				const d =
-					r && "data" in r && typeof r.data === "object" && r.data !== null
-						? (r.data as Record<string, unknown>)
-						: null;
-				return (
-					v?.requiresConfirmation === true ||
-					d?.requiresConfirmation === true ||
-					isActionConfirmationStatus(v?.error) ||
-					isActionConfirmationStatus(d?.error)
-				);
-			});
-			if (requiresConfirmation) {
-				runtime.logger.info(
-					{
-						src: "service:message",
-						agentId: runtime.agentId,
-						iteration: iterationCount + 1,
-					},
-					"Post-action continuation: action returned requiresConfirmation — terminating loop until next user message",
-				);
-				break;
-			}
-		}
-
-		accumulatedState = withTaskCompletion(
-			withActionResults(accumulatedState, traceActionResults),
-			taskCompletion,
-		);
-
-		return {
-			responseContent,
-			responseMessages,
-			state: accumulatedState,
-			mode: responseContent ? "simple" : "none",
-		};
-	}
-
-	private async runReflectionTaskContinuation(
-		runtime: IAgentRuntime,
-		message: Memory,
-		state: State,
-		callback: HandlerCallback | undefined,
-		opts: ResolvedMessageOptions,
-		taskCompletion: TaskCompletionAssessment,
-	): Promise<StrategyResult> {
-		const contextRoutingStateValues = {
-			[AVAILABLE_CONTEXTS_STATE_KEY]:
-				state.values?.[AVAILABLE_CONTEXTS_STATE_KEY],
-			[CONTEXT_ROUTING_STATE_KEY]: state.values?.[CONTEXT_ROUTING_STATE_KEY],
-		};
-		const initialActionResults = message.id
-			? runtime.getActionResults(message.id)
-			: [];
-		if (actionResultsSuppressPostActionContinuation(initialActionResults)) {
-			return {
-				responseContent: null,
-				responseMessages: [],
-				state,
-				mode: "none",
-			};
-		}
-		let accumulatedState = withTaskCompletion(
-			withActionResults(
-				await composeContinuationDecisionState(
-					runtime,
-					message,
-					contextRoutingStateValues,
-				),
-				initialActionResults,
-			),
-			taskCompletion,
-		);
-		const continuation = await this.runSingleShotCore(
-			runtime,
-			message,
-			accumulatedState,
-			opts,
-			asUUID(v4()),
-			resolvePromptAttachments(message.content.attachments),
-			{
-				prompt:
-					runtime.character.templates?.postActionDecisionTemplate ||
-					postActionDecisionTemplate,
-				precomposedState: accumulatedState,
-				failureStage: "continuing after reflection marked the task incomplete",
-			},
-		);
-
-		if (!continuation.responseContent) {
-			return {
-				responseContent: null,
-				responseMessages: [],
-				state: accumulatedState,
-				mode: "none",
-			};
-		}
-
-		const responseMessages: Memory[] = [];
-		const responseContent = continuation.responseContent;
-		if (message.id) {
-			responseContent.inReplyTo = createUniqueUuid(runtime, message.id);
-		}
-
-		if (responseContent.providers && responseContent.providers.length > 0) {
-			accumulatedState = withTaskCompletion(
-				withActionResults(
-					withContextRoutingValues(
-						await composeProviderGroundedResponseState(
-							runtime,
-							message,
-							responseContent.providers,
-						),
-						contextRoutingStateValues,
-					),
-					initialActionResults,
-				),
-				taskCompletion,
-			);
-		} else {
-			accumulatedState = withTaskCompletion(
-				withActionResults(continuation.state, initialActionResults),
-				taskCompletion,
-			);
-		}
-
-		if (
-			continuation.responseMessages.length > 0 &&
-			continuation.mode !== "simple"
-		) {
-			for (const responseMemory of continuation.responseMessages) {
-				responseMemory.content = responseContent;
-				await runtime.createMemory(responseMemory, "messages");
-				await this.emitMessageSent(
-					runtime,
-					responseMemory,
-					message.content.source ?? "messageHandler",
-				);
-			}
-			responseMessages.push(...continuation.responseMessages);
-		}
-
-		if (continuation.mode === "simple") {
-			await runtime.applyPipelineHooks(
-				"outgoing_before_deliver",
-				outgoingPipelineHookContext(responseContent, {
-					source: "continuation_simple",
-					roomId: message.roomId,
-					message,
-					responseId:
-						responseContent.responseId ?? continuation.responseMessages[0]?.id,
-				}),
-			);
-			if (continuation.responseMessages.length > 0) {
-				for (const responseMemory of continuation.responseMessages) {
-					responseMemory.content = responseContent;
-					await runtime.createMemory(responseMemory, "messages");
-					await this.emitMessageSent(
-						runtime,
-						responseMemory,
-						message.content.source ?? "messageHandler",
-					);
-				}
-				responseMessages.push(...continuation.responseMessages);
-			}
-			if (callback) {
-				await callback(responseContent);
-			}
-
-			return {
-				responseContent,
-				responseMessages,
-				state: accumulatedState,
-				mode: "simple",
-			};
-		}
-
-		if (continuation.mode !== "actions") {
-			return {
-				responseContent,
-				responseMessages,
-				state: accumulatedState,
-				mode: continuation.mode,
-			};
-		}
-
-		await invokeOnBeforeActionExecution(opts, runtime, message);
-		await runtime.processActions(
-			message,
-			continuation.responseMessages,
-			accumulatedState,
-			async (content) => {
-				runtime.logger.debug(
-					{ src: "service:message", content },
-					"Reflection continuation callback",
-				);
-				responseContent.actionCallbacks = content;
-				if (callback) {
-					return callback(content);
-				}
-				return [];
-			},
-			{ onStreamChunk: opts.onStreamChunk },
-		);
-
-		const latestActionResults = message.id
-			? runtime.getActionResults(message.id)
-			: [];
-		accumulatedState = withTaskCompletion(
-			withActionResults(
-				accumulatedState,
-				latestActionResults.length > 0
-					? latestActionResults
-					: initialActionResults,
-			),
-			taskCompletion,
-		);
-
-		if (
-			latestActionResults.length > 0 &&
-			shouldContinueAfterActions(runtime, responseContent) &&
-			!suppressesPostActionContinuation(runtime, responseContent) &&
-			!actionResultsSuppressPostActionContinuation(latestActionResults)
-		) {
-			return await this.runPostActionContinuation(
-				runtime,
-				message,
-				accumulatedState,
-				callback,
-				opts,
-				latestActionResults,
-			);
-		}
-
-		return {
-			responseContent,
-			responseMessages,
-			state: accumulatedState,
-			mode: "actions",
-		};
-	}
-
-	/**
-	 * Single-shot strategy: one LLM call to generate response
-	 * Uses dynamicPromptExecFromState for validation-aware structured output
-	 */
-	private async runSingleShotCore(
-		runtime: IAgentRuntime,
-		message: Memory,
-		state: State,
-		opts: ResolvedMessageOptions,
-		responseId: UUID,
-		promptAttachments?: GenerateTextAttachment[],
-		overrides?: {
-			prompt?: string;
-			precomposedState?: State;
-			failureStage?: string;
-			providerFollowup?: boolean;
-		},
-	): Promise<StrategyResult> {
-		state =
-			overrides?.precomposedState ??
-			(await composeStructuredResponseState(runtime, message));
-		state = ensureActionStateValues(runtime, message, state);
-
-		if (!state.values?.actionNames) {
-			runtime.logger.warn(
-				{ src: "service:message" },
-				"actionNames data missing from state",
-			);
-		}
-
-		let responseContent: Content | null = null;
-
-		// Create streaming context for retry state tracking
-		const streamingExtractor = opts.onStreamChunk
-			? new MarkableExtractor()
-			: undefined;
-		const streamingCtx =
-			streamingExtractor && opts.onStreamChunk
-				? createStreamingContext(
-						streamingExtractor,
-						opts.onStreamChunk,
-						responseId,
-					)
-				: undefined;
-
-		// Resolve the template prompt once so it's available for both the primary
-		// call and any follow-up repair prompts (e.g. parameter repair).
-		const optimizedResponseService = runtime.getService<OptimizedPromptService>(
-			OPTIMIZED_PROMPT_SERVICE,
-		);
-		const dynamicPrompt = await runtime.getCache<string>(
-			"core_prompt_messageHandlerTemplate",
-		);
-		const baselineResponseTemplate =
-			dynamicPrompt ||
-			runtime.character.templates?.messageHandlerTemplate ||
-			messageHandlerTemplate;
-		let prompt =
-			overrides?.prompt ||
-			resolveOptimizedPrompt(
-				optimizedResponseService,
-				"response",
-				baselineResponseTemplate,
-			);
-		if (overrides?.providerFollowup) {
-			prompt = buildProviderFollowupPrompt(prompt);
-		}
-
-		// Use dynamicPromptExecFromState for structured output with validation
-		setTrajectoryPurpose("response");
-		const parsedPlanner = await runtime.dynamicPromptExecFromState({
-			state,
-			params: {
-				prompt,
-				...(promptAttachments ? { attachments: promptAttachments } : {}),
-			},
-			schema: [
-				// WHY validateField: false on non-streamed fields?
-				// At validation level 1, each field gets validation codes by default.
-				// If a non-streamed field's code is corrupted, we'd retry unnecessarily.
-				// By opting out, we reduce token overhead AND avoid false failures.
-				{
-					field: "thought",
-					description:
-						"Your internal reasoning about the message and what to do",
-					validateField: false,
-					streamField: false,
-				},
-				{
-					field: "actions",
-					description:
-						"Ordered action entries. Use TOON action names, optionally with params nested under the selected action.",
-					type: "array",
-					items: { description: "One action name or action entry" },
-					required: false,
-					validateField: false,
-					streamField: false,
-				},
-				{
-					field: "providers",
-					description:
-						"Optional provider names to call before the final reply or action. Use an empty field when no provider lookup is needed.",
-					type: "array",
-					items: { description: "One provider name" },
-					required: false,
-					validateField: false,
-					streamField: false,
-				},
-				// WHY streamField: true? This is the user-facing output - stream it!
-				// WHY validateField default? At level 1, we want to validate text integrity
-				{
-					field: "text",
-					description: "The text response to send to the user",
-					streamField: true,
-				},
-				{
-					field: "simple",
-					description: "Whether this is a simple response (true/false)",
-					validateField: false,
-					streamField: false,
-				},
-			],
-			options: {
-				modelType: ModelType.ACTION_PLANNER,
-				preferredEncapsulation: "toon",
-				maxRetries: opts.maxRetries,
-				// Stream through the filtered context callback for real-time output
-				onStreamChunk: streamingCtx?.onStreamChunk,
-			},
-		});
-
-		runtime.logger.debug(
-			{ src: "service:message", parsedPlanner },
-			"Parsed Response Content",
-		);
-
-		if (parsedPlanner) {
-			// Mark streaming as complete now that we have a valid response
-			streamingExtractor?.markComplete();
-			const rawPlannerActions = extractPlannerActionNames(
-				parsedPlanner as Record<string, unknown>,
-			);
-			let finalActions = normalizePlannerActions(
-				parsedPlanner as Record<string, unknown>,
-				runtime,
-			);
-			let normalizedProviders = normalizePlannerProviders(
-				parsedPlanner as Record<string, unknown>,
-				runtime,
-			);
-
-			if (shouldAttemptCanonicalActionRepair(rawPlannerActions, finalActions)) {
-				const repairedPlannerOutput = await repairCanonicalPlannerActions({
-					runtime,
-					message,
-					rawPlannerActions,
-					rawPlannerProviders: normalizedProviders,
-					plannerReplyText: String(parsedPlanner.text || ""),
-				});
-				if (repairedPlannerOutput) {
-					const repairedActions = normalizePlannerActions(
-						repairedPlannerOutput,
-						runtime,
-					);
-					const hasRecoveredOperationalAction = repairedActions.some(
-						(actionName) =>
-							!ACTION_REPAIR_PASSIVE_ACTIONS.has(
-								normalizeActionIdentifier(actionName),
-							),
-					);
-					if (hasRecoveredOperationalAction) {
-						finalActions = repairedActions;
-						normalizedProviders = normalizePlannerProviders(
-							repairedPlannerOutput,
-							runtime,
-						);
-						if (repairedPlannerOutput.params) {
-							parsedPlanner.params = repairedPlannerOutput.params;
-						}
-					}
-				}
-			}
-
-			responseContent = {
-				...parsedPlanner,
-				thought: String(parsedPlanner.thought || ""),
-				actions: finalActions,
-				providers: normalizedProviders,
-				text: String(parsedPlanner.text || ""),
-				simple:
-					parsedPlanner.simple === true || parsedPlanner.simple === "true",
-			};
-		} else {
-			// dynamicPromptExecFromState returned null - use streamed text if available
-			const streamedText = streamingCtx?.getStreamedText?.() || "";
-			const isTextComplete = streamingCtx?.isComplete?.() ?? false;
-
-			if (isTextComplete && streamedText) {
-				runtime.logger.info(
-					{
-						src: "service:message",
-						streamedTextLength: streamedText.length,
-						streamedTextPreview: streamedText.substring(0, 100),
-					},
-					"Text extraction complete - using streamed text",
-				);
-
-				responseContent = {
-					thought: "Response generated via streaming",
-					actions: ["REPLY"],
-					providers: [],
-					text: streamedText,
-					simple: true,
-				};
-			} else if (streamedText && !isTextComplete) {
-				// Text was cut mid-stream - attempt continuation
-				runtime.logger.debug(
-					{
-						src: "service:message",
-						streamedTextLength: streamedText.length,
-						streamedTextPreview: streamedText.substring(0, 100),
-					},
-					"Text cut mid-stream - attempting continuation",
-				);
-
-				// Reset extractor for fresh streaming of continuation
-				streamingCtx?.reset?.();
-
-				// Build continuation prompt with full context (reuses `prompt` from outer scope)
-				const escapedStreamedText = escapeHandlebars(streamedText);
-				const continuationPrompt = `${prompt}
-
-[CONTINUATION REQUIRED]
-Your previous response was cut off. The user already received this text:
-"${escapedStreamedText}"
-
-Continue EXACTLY from where you left off. Do NOT repeat what was already said.
-Return TOON only with the continuation in the text field, starting immediately after the last character above.`;
-
-				const continuationParsed = await runtime.dynamicPromptExecFromState({
-					state,
-					params: {
-						prompt: continuationPrompt,
-						...(promptAttachments ? { attachments: promptAttachments } : {}),
-					},
-					schema: [
-						{
-							field: "text",
-							description: "Continuation of response",
-							required: true,
-							streamField: true,
-						},
-					],
-					options: {
-						modelType: ModelType.ACTION_PLANNER,
-						preferredEncapsulation: "toon",
-						contextCheckLevel: 0, // Fast mode for continuations - we trust the model
-						onStreamChunk: streamingCtx?.onStreamChunk,
-					},
-				});
-
-				const continuationText = String(continuationParsed?.text || "");
-				const fullText = streamedText + continuationText;
-
-				responseContent = {
-					thought: "Response completed via continuation",
-					actions: ["REPLY"],
-					providers: [],
-					text: fullText,
-					simple: true,
-				};
-			} else {
-				runtime.logger.warn(
-					{ src: "service:message" },
-					"dynamicPromptExecFromState returned null",
-				);
-				const groundedFallback = await this.tryGroundedFallbackReply(
-					runtime,
-					message,
-					state,
-					responseId,
-					promptAttachments,
-				);
-				if (groundedFallback) {
-					return groundedFallback;
-				}
-				return await this.buildStructuredFailureReply(
-					runtime,
-					message,
-					state,
-					responseId,
-					overrides?.failureStage ?? "preparing the reply",
-				);
-			}
-		}
-
-		if (!responseContent) {
-			return {
-				responseContent: null,
-				responseMessages: [],
-				state,
-				mode: "none",
-			};
-		}
-
-		if (
-			!overrides?.providerFollowup &&
-			shouldAttemptProviderRescue(responseContent)
-		) {
-			const rescuedProviders = await recoverProvidersForTurn({
-				runtime,
-				message,
-				state,
-				draftReply: String(responseContent.text || ""),
-				attachments: promptAttachments,
-			});
-			if (rescuedProviders.length > 0) {
-				runtime.logger.info(
-					{
-						src: "service:message",
-						rescuedProviders,
-						originalActions: responseContent.actions ?? [],
-					},
-					"Selected providers during reply rescue pass",
-				);
-				responseContent.providers = rescuedProviders;
-			}
-		}
-
-		if (
-			!overrides?.providerFollowup &&
-			shouldAttemptActionRescue(runtime, message, state, responseContent)
-		) {
-			const actionRescuePrompt = buildActionRescuePrompt(
-				prompt,
-				String(responseContent.text || ""),
-			);
-			const rescuedActionToon = await runtime.dynamicPromptExecFromState({
-				state,
-				params: {
-					prompt: actionRescuePrompt,
-					...(promptAttachments ? { attachments: promptAttachments } : {}),
-				},
-				schema: [
-					{
-						field: "thought",
-						description:
-							"Short reasoning about whether a grounded action should own the turn",
-						validateField: false,
-						streamField: false,
-					},
-					{
-						field: "actions",
-						description:
-							"Ordered action entries. Use TOON action names, optionally with params nested under the selected action.",
-						type: "array",
-						items: { description: "One action name or action entry" },
-						required: false,
-						validateField: false,
-						streamField: false,
-					},
-					{
-						field: "providers",
-						description:
-							"Optional provider names to call before the final reply or action. Use an empty field when no provider lookup is needed.",
-						type: "array",
-						items: { description: "One provider name" },
-						required: false,
-						validateField: false,
-						streamField: false,
-					},
-					{
-						field: "text",
-						description: "The text response to send to the user",
-						streamField: false,
-					},
-					{
-						field: "simple",
-						description: "Whether this is a simple response (true/false)",
-						validateField: false,
-						streamField: false,
-					},
-				],
-				options: {
-					modelType: ModelType.ACTION_PLANNER,
-					preferredEncapsulation: "toon",
-					maxRetries: 1,
-				},
-			});
-
-			if (rescuedActionToon) {
-				const rescuedContent: Content = {
-					...rescuedActionToon,
-					thought: String(rescuedActionToon.thought || ""),
-					actions: normalizePlannerActions(
-						rescuedActionToon as Record<string, unknown>,
-						runtime,
-					),
-					providers: normalizePlannerProviders(
-						rescuedActionToon as Record<string, unknown>,
-						runtime,
-					),
-					text:
-						typeof rescuedActionToon.text === "string" &&
-						rescuedActionToon.text.trim().length > 0
-							? String(rescuedActionToon.text)
-							: responseContent.text,
-					simple:
-						rescuedActionToon.simple === true ||
-						rescuedActionToon.simple === "true",
-				};
-
-				if (
-					hasNonPassiveAction(rescuedContent) ||
-					(rescuedContent.providers?.length ?? 0) >
-						(responseContent.providers?.length ?? 0)
-				) {
-					runtime.logger.info(
-						{
-							src: "service:message",
-							originalActions: responseContent.actions ?? [],
-							rescuedActions: rescuedContent.actions ?? [],
-							rescuedProviders: rescuedContent.providers ?? [],
-						},
-						"Recovered grounded action plan after passive reply draft",
-					);
-					responseContent = rescuedContent;
-				}
-			}
-		}
-
-		if (
-			!overrides?.providerFollowup &&
-			shouldAttemptOwnershipRepair(runtime, message, state, responseContent)
-		) {
-			const selectedActionName =
-				(typeof responseContent.actions?.[0] === "string" &&
-					responseContent.actions[0]) ||
-				"UNKNOWN_ACTION";
-			const ownershipRepairPrompt = buildOwnershipRepairPrompt(
-				prompt,
-				selectedActionName,
-				String(responseContent.text || ""),
-			);
-			const repairedOwnershipToon = await runtime.dynamicPromptExecFromState({
-				state,
-				params: {
-					prompt: ownershipRepairPrompt,
-					...(promptAttachments ? { attachments: promptAttachments } : {}),
-				},
-				schema: [
-					{
-						field: "thought",
-						description:
-							"Short reasoning about whether a more specific owning action should replace the current one",
-						validateField: false,
-						streamField: false,
-					},
-					{
-						field: "actions",
-						description:
-							"Ordered action entries. Use TOON action names, optionally with params nested under the selected action.",
-						type: "array",
-						items: { description: "One action name or action entry" },
-						required: true,
-						validateField: false,
-						streamField: false,
-					},
-					{
-						field: "providers",
-						description:
-							"Optional provider names to call before the final reply or action. Use an empty field when no provider lookup is needed.",
-						type: "array",
-						items: { description: "One provider name" },
-						required: false,
-						validateField: false,
-						streamField: false,
-					},
-					{
-						field: "text",
-						description: "The text response to send to the user",
-						streamField: false,
-					},
-					{
-						field: "simple",
-						description: "Whether this is a simple response (true/false)",
-						validateField: false,
-						streamField: false,
-					},
-				],
-				options: {
-					modelType: ModelType.ACTION_PLANNER,
-					preferredEncapsulation: "toon",
-					maxRetries: 1,
-				},
-			});
-
-			if (repairedOwnershipToon) {
-				const repairedOwnershipContent: Content = {
-					...repairedOwnershipToon,
-					thought: String(repairedOwnershipToon.thought || ""),
-					actions: normalizePlannerActions(
-						repairedOwnershipToon as Record<string, unknown>,
-						runtime,
-					),
-					providers: normalizePlannerProviders(
-						repairedOwnershipToon as Record<string, unknown>,
-						runtime,
-					),
-					text:
-						typeof repairedOwnershipToon.text === "string" &&
-						repairedOwnershipToon.text.trim().length > 0
-							? String(repairedOwnershipToon.text)
-							: responseContent.text,
-					simple:
-						repairedOwnershipToon.simple === true ||
-						repairedOwnershipToon.simple === "true",
-				};
-
-				if (
-					hasNonPassiveAction(repairedOwnershipContent) &&
-					JSON.stringify(repairedOwnershipContent.actions ?? []) !==
-						JSON.stringify(responseContent.actions ?? [])
-				) {
-					runtime.logger.info(
-						{
-							src: "service:message",
-							originalActions: responseContent.actions ?? [],
-							repairedActions: repairedOwnershipContent.actions ?? [],
-							repairedProviders: repairedOwnershipContent.providers ?? [],
-						},
-						"Replaced broad routing action with a more specific owning action",
-					);
-					responseContent = repairedOwnershipContent;
-				}
-			}
-		}
-
-		if (
-			!overrides?.providerFollowup &&
-			shouldAttemptActionRescue(runtime, message, state, responseContent)
-		) {
-			const actionOnlyRescue = await runtime.dynamicPromptExecFromState({
-				state,
-				params: {
-					prompt: buildActionOnlyRescuePrompt(
-						String(responseContent.text || ""),
-					),
-				},
-				schema: [
-					{
-						field: "thought",
-						description:
-							"Short reasoning about the single best grounded action",
-						validateField: false,
-						streamField: false,
-					},
-					{
-						field: "actions",
-						description: "Exactly one action name.",
-						type: "array",
-						items: { description: "One action name" },
-						required: true,
-						validateField: false,
-						streamField: false,
-					},
-				],
-				options: {
-					modelType: ModelType.ACTION_PLANNER,
-					preferredEncapsulation: "toon",
-					maxRetries: 1,
-				},
-			});
-
-			if (actionOnlyRescue) {
-				const rescuedActions = normalizePlannerActions(
-					actionOnlyRescue as Record<string, unknown>,
-					runtime,
-				);
-				if (
-					rescuedActions.some(
-						(actionName) =>
-							!PROVIDER_FOLLOWUP_PASSIVE_ACTIONS.has(
-								normalizeActionIdentifier(actionName),
-							),
-					)
-				) {
-					runtime.logger.info(
-						{
-							src: "service:message",
-							originalActions: responseContent.actions ?? [],
-							rescuedActions,
-						},
-						"Recovered primary action after passive reply draft",
-					);
-					responseContent.actions = rescuedActions;
-				}
-			}
-		}
-
-		const metadataSuggestion = suggestOwnedActionFromMetadata(runtime, message);
-		if (
-			metadataSuggestion &&
-			(shouldRunMetadataActionRescue(responseContent) ||
-				shouldPromoteExplicitReplyToOwnedAction(
-					responseContent,
-					metadataSuggestion,
-					getUserMessageText(message),
-				))
-		) {
-			runtime.logger.info(
-				{
-					src: "service:message",
-					originalActions: responseContent.actions ?? [],
-					suggestedAction: metadataSuggestion.actionName,
-					score: metadataSuggestion.score,
-					secondBestScore: metadataSuggestion.secondBestScore,
-					reasons: metadataSuggestion.reasons,
-				},
-				"Recovered primary action from action metadata after passive reply draft",
-			);
-			responseContent.actions = [metadataSuggestion.actionName];
-		}
-
-		// Action parameter repair (Python parity):
-		// If the model selected actions with missing or invalid params, do a
-		// second pass asking for ONLY corrected TOON params.
-		const actionByName = new Map<string, Action>();
-		for (const action of runtime.actions) {
-			const normalizedName = action.name.trim().toUpperCase();
-			if (normalizedName) {
-				actionByName.set(normalizedName, action);
-			}
-		}
-
-		if (hasSelectedShellCommandAction(responseContent)) {
-			const existingShellParams = parseActionParams(responseContent.params).get(
-				"SHELL_COMMAND",
-			);
-			if (
-				typeof existingShellParams?.command !== "string" ||
-				existingShellParams.command.trim().length === 0
-			) {
-				const inferredCommand = inferLocalShellCommandFromMessageText(
-					getUserMessageText(message),
-				);
-				if (inferredCommand) {
-					runtime.logger.info(
-						{
-							src: "service:message",
-							action: "SHELL_COMMAND",
-							command: inferredCommand,
-						},
-						"Filled SHELL_COMMAND params for explicit local shell check",
-					);
-					responseContent.params = mergeLocalShellCommandParams(
-						responseContent.params,
-						inferredCommand,
-					);
-				}
-			}
-		}
-
-		if (hasSelectedSearchAction(responseContent)) {
-			const existingSearchParams =
-				parseActionParams(responseContent.params).get("SEARCH") ??
-				parseActionParams(responseContent.params).get("WEB_SEARCH");
-			const existingCategory =
-				typeof existingSearchParams?.category === "string"
-					? existingSearchParams.category.trim().toLowerCase()
-					: "";
-			const missingWebQuery =
-				typeof existingSearchParams?.query !== "string" ||
-				existingSearchParams.query.trim().length === 0;
-			if (
-				(existingCategory === "" || existingCategory === "web") &&
-				(missingWebQuery || existingCategory === "")
-			) {
-				const inferredQuery = inferWebSearchQueryFromMessageText(
-					getUserMessageText(message),
-				);
-				if (inferredQuery) {
-					runtime.logger.info(
-						{
-							src: "service:message",
-							action: "SEARCH",
-							category: "web",
-							query: inferredQuery,
-						},
-						"Filled SEARCH params for explicit current-info request",
-					);
-					responseContent.params = mergeWebSearchQueryParams(
-						responseContent.params,
-						inferredQuery,
-					);
-				}
-			}
-		}
-
-		const metadataCorrection = findOwnedActionCorrectionFromMetadata(
-			runtime,
-			message,
-			responseContent,
-		);
-		if (metadataCorrection) {
-			runtime.logger.info(
-				{
-					src: "service:message",
-					originalActions: responseContent.actions ?? [],
-					suggestedAction: metadataCorrection.actionName,
-					score: metadataCorrection.score,
-					secondBestScore: metadataCorrection.secondBestScore,
-					reasons: metadataCorrection.reasons,
-				},
-				"Corrected routed action from action metadata",
-			);
-			responseContent.actions = [metadataCorrection.actionName];
-		}
-
-		const collectParameterValidationIssues = (
-			paramsByAction: Map<string, ActionParameters>,
-		): Array<{
-			actionName: string;
-			required: string[];
-			errors: string[];
-		}> => {
-			const issues: Array<{
-				actionName: string;
-				required: string[];
-				errors: string[];
-			}> = [];
-			for (const selectedAction of responseContent.actions ?? []) {
-				const actionName =
-					typeof selectedAction === "string"
-						? selectedAction.trim().toUpperCase()
-						: "";
-				if (!actionName) {
-					continue;
-				}
-				const actionDef = actionByName.get(actionName);
-				if (!actionDef?.parameters?.length) {
-					continue;
-				}
-				const validation = validateActionParams(
-					actionDef,
-					paramsByAction.get(actionName),
-				);
-				if (validation.valid) {
-					continue;
-				}
-				issues.push({
-					actionName,
-					required: actionDef.parameters
-						.filter((parameter) => parameter.required)
-						.map((parameter) => parameter.name),
-					errors: validation.errors,
-				});
-			}
-			return issues;
-		};
-
-		let existingParams = parseActionParams(responseContent.params);
-		let parameterValidationIssues =
-			collectParameterValidationIssues(existingParams);
-
-		if (parameterValidationIssues.length > 0) {
-			const requirementLines = parameterValidationIssues
-				.map(({ actionName, required, errors }) =>
-					[
-						`- ${actionName}`,
-						required.length > 0
-							? `  required: ${required.join(", ")}`
-							: "  required: (none)",
-						...errors.map((error) => `  error: ${error}`),
-					].join("\n"),
-				)
-				.join("\n");
-			const existingParamBlock =
-				typeof responseContent.params === "string" &&
-				responseContent.params.trim().length > 0
-					? responseContent.params.trim()
-					: "(none)";
-			const repairPrompt = [
-				prompt,
-				"",
-				"# Parameter Repair",
-				"You selected actions whose params are missing or invalid.",
-				"Return ONLY TOON with a top-level params object that fixes those actions.",
-				"Do not change the selected actions.",
-				"Example:",
-				"params:",
-				"  SEND_MESSAGE:",
-				"    target: room-or-channel-id",
-				"    text: message body",
-				"",
-				"Current params:",
-				existingParamBlock,
-				"",
-				"Issues by action:",
-				requirementLines,
-				"",
-				"Do not include thought, actions, providers, text, or any other fields.",
-			].join("\n");
-
-			const repairParsed = await runtime.dynamicPromptExecFromState({
-				state,
-				params: {
-					prompt: repairPrompt,
-				},
-				schema: [
-					{
-						field: "params",
-						description:
-							"TOON object keyed by action name containing corrected action params",
-						type: "object",
-						required: true,
-						validateField: false,
-						streamField: false,
-					},
-				],
-				options: {
-					modelType: ModelType.TEXT_LARGE,
-					preferredEncapsulation: "toon",
-					contextCheckLevel: 0,
-					maxRetries: 1,
-				},
-			});
-			if (repairParsed?.params) {
-				responseContent.params = repairParsed.params as Content["params"];
-				existingParams = parseActionParams(responseContent.params);
-				parameterValidationIssues =
-					collectParameterValidationIssues(existingParams);
-			}
-		}
-
-		if (parameterValidationIssues.length > 0) {
-			runtime.logger.warn(
-				{
-					src: "service:message",
-					issues: parameterValidationIssues,
-				},
-				"Planner response still has invalid action params after repair pass",
-			);
-		}
-
-		const benchmarkMode = isBenchmarkMode(state);
-
-		// Benchmark mode (Python parity): force action-based loop when benchmark context is present.
-		if (benchmarkMode) {
-			if (!responseContent.actions || responseContent.actions.length === 0) {
-				responseContent.actions = ["REPLY"];
-			}
-			if (
-				!responseContent.providers ||
-				responseContent.providers.length === 0
-			) {
-				responseContent.providers = ["CONTEXT_BENCH"];
-			}
-			responseContent.actions = stripReplyWhenActionOwnsTurn(
-				runtime,
-				responseContent.actions,
-			);
-			// Suppress any direct planner answer; the REPLY action should generate final output.
-			if (responseContent.actions.some((a) => isReplyActionIdentifier(a))) {
-				responseContent.text = "";
-			}
-		}
-
-		// LLM terminal-control ambiguity handling
-		if (responseContent.actions && responseContent.actions.length > 1) {
-			responseContent.actions = stripReplyWhenActionOwnsTurn(
-				runtime,
-				responseContent.actions,
-			);
-			const isIgnore = (a: unknown) =>
-				typeof a === "string" && a.toUpperCase() === "IGNORE";
-			const isStop = (a: unknown) =>
-				typeof a === "string" && a.toUpperCase() === "STOP";
-			const hasIgnore = responseContent.actions.some(isIgnore);
-			const hasStop = responseContent.actions.some(isStop);
-
-			if (hasIgnore) {
-				if (!responseContent.text || responseContent.text.trim() === "") {
-					responseContent.actions = ["IGNORE"];
-				} else {
-					const filtered = responseContent.actions.filter((a) => !isIgnore(a));
-					responseContent.actions = filtered.length ? filtered : ["REPLY"];
-				}
-			}
-
-			if (hasStop) {
-				const filtered = responseContent.actions.filter((a) => !isStop(a));
-				responseContent.actions = filtered.length ? filtered : ["STOP"];
-			}
-		}
-
-		const mode = resolveStrategyMode(responseContent);
-		responseContent.simple = mode === "simple";
-		// Include message ID for streaming coordination (so broadcast uses same ID)
-		responseContent.responseId = responseId;
-
-		const responseMessages: Memory[] = [
-			{
-				id: responseId,
-				entityId: runtime.agentId,
-				agentId: runtime.agentId,
-				content: responseContent,
-				roomId: message.roomId,
-				createdAt: Date.now(),
-			},
-		];
-
-		return {
-			responseContent,
-			responseMessages,
-			state,
-			mode,
-		};
-	}
-
-	private async tryGroundedFallbackReply(
-		runtime: IAgentRuntime,
-		message: Memory,
-		state: State,
-		responseId: UUID,
-		promptAttachments?: GenerateTextAttachment[],
-	): Promise<StrategyResult | null> {
-		let groundedState = state;
-		const selectedProviders = await recoverProvidersForTurn({
-			runtime,
-			message,
-			state,
-			attachments: promptAttachments,
-		});
-
-		if (selectedProviders.length > 0) {
-			groundedState = await composeFocusedProviderReplyState(
-				runtime,
-				message,
-				selectedProviders,
-			);
-		}
-
-		const prompt = composePromptFromState({
-			state: groundedState,
-			template: buildGroundedFallbackReplyPrompt(),
-		});
-
-		try {
-			const result = await runtime.useModel(ModelType.TEXT_SMALL, {
-				prompt,
-				...(promptAttachments ? { attachments: promptAttachments } : {}),
-			});
-			const text = typeof result === "string" ? result.trim() : "";
-			if (!text) {
-				return null;
-			}
-
-			const responseContent: Content = {
-				thought:
-					selectedProviders.length > 0
-						? "Grounded fallback reply from selected providers"
-						: "Grounded fallback reply",
-				actions: ["REPLY"],
-				providers: selectedProviders,
-				text,
-				simple: true,
-				responseId,
-			};
-			const responseMessages: Memory[] = [
-				{
-					id: responseId,
-					entityId: runtime.agentId,
-					agentId: runtime.agentId,
-					content: responseContent,
-					roomId: message.roomId,
-					createdAt: Date.now(),
-				},
-			];
-
-			return {
-				responseContent,
-				responseMessages,
-				state: groundedState,
-				mode: "simple",
-			};
-		} catch (error) {
-			runtime.logger.warn(
-				{
-					src: "service:message",
-					error: error instanceof Error ? error.message : String(error),
-				},
-				"Grounded fallback reply generation failed",
-			);
-			return null;
-		}
-	}
-
 	private async buildStructuredFailureReply(
 		runtime: IAgentRuntime,
 		message: Memory,
@@ -7247,7 +6115,7 @@ Return TOON only with the continuation in the text field, starting immediately a
 			"Hard rules:",
 			"- Stay in character. Keep your usual voice and tone.",
 			"- NEVER mention internal mechanism words such as: planner, action_planner,",
-			"  XML, TOON, JSON, schema, structured output, model, retries, sonnet,",
+			"  XML, JSON, schema, structured output, model, retries, sonnet,",
 			"  opus, claude, anthropic, prompt, parse, parser, xml plan, decision",
 			"  loop, runtime, dispatch, or hand off. The user does not know or care",
 			"  what those are.",
@@ -7285,9 +6153,9 @@ Return TOON only with the continuation in the text field, starting immediately a
 					.replace(/<think>[\s\S]*?<\/think>/g, "")
 					.trim();
 				const looksStructuredReply =
-					/^TOON\b/i.test(cleaned) || /^(thought|text)\s*:/i.test(cleaned);
+					cleaned.startsWith("{") && cleaned.includes("}");
 				const parsed = looksStructuredReply
-					? parseToonKeyValue<{ text?: string }>(cleaned)
+					? parseJSONObjectFromText(cleaned)
 					: null;
 				replyText =
 					typeof parsed?.text === "string" && parsed.text.trim().length > 0
@@ -7413,571 +6281,6 @@ Return TOON only with the continuation in the text field, starting immediately a
 			responseMessages,
 			state,
 			mode: "simple",
-		};
-	}
-
-	/**
-	 * Multi-step strategy: iterative action execution with final summary
-	 */
-	private async runMultiStepCore(
-		runtime: IAgentRuntime,
-		message: Memory,
-		state: State,
-		callback: HandlerCallback | undefined,
-		opts: ResolvedMessageOptions,
-		responseId: UUID,
-		promptAttachments?: GenerateTextAttachment[],
-		overrides?: {
-			precomposedState?: State;
-		},
-	): Promise<StrategyResult> {
-		const contextRoutingStateValues = {
-			[AVAILABLE_CONTEXTS_STATE_KEY]:
-				overrides?.precomposedState?.values?.[AVAILABLE_CONTEXTS_STATE_KEY],
-			[CONTEXT_ROUTING_STATE_KEY]:
-				overrides?.precomposedState?.values?.[CONTEXT_ROUTING_STATE_KEY],
-		};
-
-		const traceActionResult: MultiStepActionResult[] = [];
-		let accumulatedState: MultiStepState = state as MultiStepState;
-		let iterationCount = 0;
-
-		while (iterationCount < opts.maxMultiStepIterations) {
-			iterationCount++;
-			runtime.logger.debug(
-				{
-					src: "service:message",
-					iteration: iterationCount,
-					maxIterations: opts.maxMultiStepIterations,
-				},
-				"Starting multi-step iteration",
-			);
-
-			accumulatedState = withContextRoutingValues(
-				(await runtime.composeState(
-					message,
-					["RECENT_MESSAGES", "ACTION_STATE", "PROVIDERS"],
-					false,
-					false,
-				)) as MultiStepState,
-				contextRoutingStateValues,
-			) as MultiStepState;
-			accumulatedState = withActionResults(
-				accumulatedState,
-				traceActionResult,
-			) as MultiStepState;
-
-			// Use dynamicPromptExecFromState for structured decision output
-			const optimizedPlannerService =
-				runtime.getService<OptimizedPromptService>(OPTIMIZED_PROMPT_SERVICE);
-			const baselinePlannerTemplate =
-				runtime.character.templates?.multiStepDecisionTemplate ||
-				multiStepDecisionTemplate;
-			const resolvedPlannerTemplate = resolveOptimizedPrompt(
-				optimizedPlannerService,
-				"action_planner",
-				baselinePlannerTemplate,
-			);
-			const parsedStep = await runtime.dynamicPromptExecFromState({
-				state: accumulatedState,
-				params: {
-					prompt: resolvedPlannerTemplate,
-					...(promptAttachments ? { attachments: promptAttachments } : {}),
-				},
-				schema: [
-					// Multi-step decision loop - internal reasoning, no streaming needed
-					// WHY: This is orchestration logic, not user-facing output
-					{
-						field: "thought",
-						description:
-							"Your reasoning for the selected providers and/or action, and how this step contributes to resolving the user's request",
-						validateField: false,
-						streamField: false,
-					},
-					{
-						field: "providers",
-						description:
-							"Comma-separated list of providers to call to gather necessary data",
-						validateField: false,
-						streamField: false,
-					},
-					{
-						field: "action",
-						description:
-							"Name of the action to execute after providers return (can be empty if no action is needed)",
-						validateField: false,
-						streamField: false,
-					},
-					// WHY parameters: Actions need input data. Without this field in the schema,
-					// the LLM won't be instructed to output parameters, breaking action execution.
-					{
-						field: "params",
-						description:
-							"Optional TOON parameters for the selected action. Use a `params` object keyed by action name when the action needs input.",
-						validateField: false,
-						streamField: false,
-					},
-					{
-						field: "isFinish",
-						description:
-							"true if the task is fully resolved and no further steps are needed, false otherwise",
-						validateField: false,
-						streamField: false,
-					},
-				],
-				options: {
-					modelType: ModelType.ACTION_PLANNER,
-					preferredEncapsulation: "toon",
-				},
-			});
-
-			if (!parsedStep) {
-				runtime.logger.warn(
-					{ src: "service:message", iteration: iterationCount },
-					"Failed to parse multi-step result",
-				);
-				traceActionResult.push({
-					data: { actionName: "parse_error" },
-					success: false,
-					error: "Failed to parse step result",
-				});
-				return await this.buildStructuredFailureReply(
-					runtime,
-					message,
-					withActionResults(accumulatedState, traceActionResult),
-					responseId,
-					"planning the next multi-step action",
-				);
-			}
-
-			const thought =
-				typeof parsedStep.thought === "string" ? parsedStep.thought : undefined;
-			// Handle providers as comma-separated string or array
-			let providers: string[] = [];
-			if (Array.isArray(parsedStep.providers)) {
-				providers = parsedStep.providers;
-			} else if (typeof parsedStep.providers === "string") {
-				providers = parsedStep.providers
-					.split(",")
-					.map((p: string) => p.trim())
-					.filter((p: string) => p.length > 0);
-			}
-			const action =
-				typeof parsedStep.action === "string" ? parsedStep.action : undefined;
-			const isFinish = parsedStep.isFinish;
-
-			// Check for completion condition
-			if (isFinish === "true" || isFinish === true) {
-				runtime.logger.info(
-					{
-						src: "service:message",
-						agentId: runtime.agentId,
-						iteration: iterationCount,
-					},
-					"Multi-step task completed",
-				);
-				if (callback) {
-					await callback({
-						text: "",
-						thought: typeof thought === "string" ? thought : "",
-					});
-				}
-				break;
-			}
-
-			// Validate that we have something to do
-			const providersArray = Array.isArray(providers) ? providers : [];
-			if ((!providersArray || providersArray.length === 0) && !action) {
-				runtime.logger.warn(
-					{ src: "service:message", iteration: iterationCount },
-					"No providers or action specified, forcing completion",
-				);
-				break;
-			}
-
-			// Total timeout for all providers running in parallel (configurable via PROVIDERS_TOTAL_TIMEOUT_MS env var)
-			// Since providers run in parallel, this is the max wall-clock time allowed
-			const PROVIDERS_TOTAL_TIMEOUT_MS = parseInt(
-				String(runtime.getSetting("PROVIDERS_TOTAL_TIMEOUT_MS") || "1000"),
-				10,
-			);
-
-			// Track which providers have completed (for timeout diagnostics)
-			const completedProviders = new Set<string>();
-
-			const providerByName = new Map(
-				runtime.providers.map((provider) => [provider.name, provider]),
-			);
-			const providerPromises: Array<
-				Promise<{
-					providerName: string;
-					success: boolean;
-					text?: string;
-					error?: string;
-				}>
-			> = [];
-			for (const name of providersArray) {
-				if (typeof name !== "string") continue;
-				providerPromises.push(
-					(async (providerName: string) => {
-						const provider = providerByName.get(providerName);
-						if (!provider) {
-							runtime.logger.warn(
-								{ src: "service:message", providerName },
-								"Provider not found",
-							);
-							completedProviders.add(providerName);
-							return {
-								providerName,
-								success: false,
-								error: `Provider not found: ${providerName}`,
-							};
-						}
-
-						try {
-							const providerResult = await provider.get(
-								runtime,
-								message,
-								state,
-							);
-							completedProviders.add(providerName);
-
-							if (!providerResult) {
-								runtime.logger.warn(
-									{ src: "service:message", providerName },
-									"Provider returned no result",
-								);
-								return {
-									providerName,
-									success: false,
-									error: "Provider returned no result",
-								};
-							}
-
-							const success = !!providerResult.text;
-							return {
-								providerName,
-								success,
-								text: success ? providerResult.text : undefined,
-								error: success ? undefined : "Provider returned no result",
-							};
-						} catch (err) {
-							completedProviders.add(providerName);
-							const errorMsg = err instanceof Error ? err.message : String(err);
-							runtime.logger.error(
-								{ src: "service:message", providerName, error: errorMsg },
-								"Provider execution failed",
-							);
-							return { providerName, success: false, error: errorMsg };
-						}
-					})(name),
-				);
-			}
-
-			// Create timeout promise for provider execution (with cleanup)
-			let timeoutId: ReturnType<typeof setTimeout> | undefined;
-			const timeoutPromise = new Promise<"timeout">((resolve) => {
-				timeoutId = setTimeout(
-					() => resolve("timeout"),
-					PROVIDERS_TOTAL_TIMEOUT_MS,
-				);
-			});
-
-			// Race between all providers completing and timeout
-			const allProvidersPromise = Promise.allSettled(providerPromises);
-			const raceResult = await Promise.race([
-				allProvidersPromise,
-				timeoutPromise,
-			]);
-
-			// Clear timeout if providers completed first
-			if (timeoutId !== undefined) {
-				clearTimeout(timeoutId);
-			}
-
-			// Check if providers took too long - abort pipeline and notify user
-			if (raceResult === "timeout") {
-				// Identify which providers were still pending when timeout hit
-				const allProviderNames = providersArray.filter(
-					(name): name is string => typeof name === "string",
-				);
-				const pendingProviders = allProviderNames.filter(
-					(name) => !completedProviders.has(name),
-				);
-
-				runtime.logger.error(
-					{
-						src: "service:message",
-						timeoutMs: PROVIDERS_TOTAL_TIMEOUT_MS,
-						pendingProviders,
-						completedProviders: Array.from(completedProviders),
-					},
-					`Providers took too long (>${PROVIDERS_TOTAL_TIMEOUT_MS}ms) - slow providers: ${pendingProviders.join(", ")}`,
-				);
-
-				if (callback) {
-					const timeoutContent: Content = {
-						text: "Providers took too long to respond. Please optimize your providers or use caching.",
-						actions: [],
-						thought: "Provider timeout - pipeline aborted",
-					};
-					await runtime.applyPipelineHooks(
-						"outgoing_before_deliver",
-						outgoingPipelineHookContext(timeoutContent, {
-							source: "simple",
-							roomId: message.roomId,
-							message,
-						}),
-					);
-					await callback(timeoutContent);
-				}
-
-				return {
-					responseContent: null,
-					responseMessages: [],
-					state,
-					mode: "none",
-				};
-			}
-
-			// Providers completed in time
-			const providerResults = raceResult;
-
-			// Process results and notify via callback
-			for (const result of providerResults) {
-				if (result.status === "fulfilled") {
-					const { providerName, success, text, error } = result.value;
-					traceActionResult.push(
-						preparePromptActionResult(runtime, message, {
-							data: { actionName: providerName },
-							success,
-							text,
-							error,
-						}),
-					);
-
-					if (callback) {
-						await callback({
-							text: `🔎 Provider executed: ${providerName}`,
-							actions: [providerName],
-							thought: typeof thought === "string" ? thought : "",
-						});
-					}
-				} else {
-					runtime.logger.error(
-						{
-							src: "service:message",
-							error: result.reason || "Unknown provider failure",
-						},
-						"Unexpected provider promise rejection",
-					);
-				}
-			}
-
-			if (action) {
-				const actionContent: Content = {
-					text: `🔎 Executing action: ${action}`,
-					actions: [action],
-					thought: thought || "",
-				};
-				if (parsedStep && typeof parsedStep.params === "string") {
-					actionContent.params = parsedStep.params;
-				}
-
-				await invokeOnBeforeActionExecution(opts, runtime, message);
-				await runtime.processActions(
-					message,
-					[
-						{
-							id: v4() as UUID,
-							entityId: runtime.agentId,
-							roomId: message.roomId,
-							createdAt: Date.now(),
-							content: actionContent,
-						},
-					],
-					state,
-					async () => {
-						return [];
-					},
-				);
-
-				// Get cached action results from runtime
-				const cachedState = runtime.stateCache.get(
-					`${message.id}_action_results`,
-				);
-				const cachedStateValues = cachedState?.values;
-				const rawActionResults = cachedStateValues?.actionResults;
-				const actionResults: ActionResult[] = Array.isArray(rawActionResults)
-					? rawActionResults
-					: [];
-				const result: ActionResult | null =
-					actionResults.length > 0 ? actionResults[0] : null;
-				const success = result?.success ?? false;
-
-				traceActionResult.push({
-					data: { actionName: typeof action === "string" ? action : "unknown" },
-					success,
-					text:
-						result && "text" in result && typeof result.text === "string"
-							? result.text
-							: undefined,
-					values:
-						result &&
-						"values" in result &&
-						typeof result.values === "object" &&
-						result.values !== null
-							? result.values
-							: undefined,
-					error: success
-						? undefined
-						: result && "text" in result && typeof result.text === "string"
-							? result.text
-							: undefined,
-				});
-
-				// Break the multi-step loop when the action returned a terminal
-				// "needs human confirmation" signal. Without this, actions that
-				// return { requiresConfirmation: true } cause the planner to
-				// re-fire the same plan every iteration. Confirmation must come
-				// from the next user message — there is nothing the agent can
-				// do to supply it on its own.
-				const resultValuesForConfirm =
-					result &&
-					"values" in result &&
-					typeof result.values === "object" &&
-					result.values !== null
-						? (result.values as Record<string, unknown>)
-						: null;
-				const resultDataForConfirm =
-					result &&
-					"data" in result &&
-					typeof result.data === "object" &&
-					result.data !== null
-						? (result.data as Record<string, unknown>)
-						: null;
-				// Recognize any confirmation-required signal an action might use:
-				// the canonical `requiresConfirmation: true` flag (in either values
-				// or data) plus the typed `ActionConfirmationStatus` codes that
-				// handlers may set on `error`. The set is owned by
-				// `types/components.ts` so callers cannot drift.
-				const requiresConfirmation =
-					resultValuesForConfirm?.requiresConfirmation === true ||
-					resultDataForConfirm?.requiresConfirmation === true ||
-					isActionConfirmationStatus(resultValuesForConfirm?.error) ||
-					isActionConfirmationStatus(resultDataForConfirm?.error);
-				if (requiresConfirmation) {
-					runtime.logger.info(
-						{
-							src: "service:message",
-							agentId: runtime.agentId,
-							iteration: iterationCount,
-							action,
-						},
-						"Action returned requiresConfirmation — terminating multi-step loop until next user message",
-					);
-					break;
-				}
-			}
-		}
-
-		if (iterationCount >= opts.maxMultiStepIterations) {
-			runtime.logger.warn(
-				{ src: "service:message", maxIterations: opts.maxMultiStepIterations },
-				"Reached maximum iterations, forcing completion",
-			);
-		}
-
-		accumulatedState = withContextRoutingValues(
-			(await runtime.composeState(
-				message,
-				["RECENT_MESSAGES", "ACTION_STATE"],
-				false,
-				false,
-			)) as MultiStepState,
-			contextRoutingStateValues,
-		) as MultiStepState;
-		accumulatedState = withActionResults(
-			accumulatedState,
-			traceActionResult,
-		) as MultiStepState;
-
-		// Use dynamicPromptExecFromState for final summary generation
-		// Stream the final summary for better UX
-		const summary = await runtime.dynamicPromptExecFromState({
-			state: accumulatedState,
-			params: {
-				prompt:
-					runtime.character.templates?.multiStepSummaryTemplate ||
-					multiStepSummaryTemplate,
-				...(promptAttachments ? { attachments: promptAttachments } : {}),
-			},
-			schema: [
-				{
-					field: "thought",
-					description: "Your internal reasoning about the summary",
-					validateField: false,
-					streamField: false,
-				},
-				// WHY streamField: true? This is the final user-facing output
-				{
-					field: "text",
-					description: "The final summary message to send to the user",
-					required: true,
-					streamField: true,
-				},
-			],
-			options: {
-				modelSize: "large",
-				preferredEncapsulation: "toon",
-				requiredFields: ["text"],
-				// Stream the final summary to the user
-				onStreamChunk: opts.onStreamChunk,
-			},
-		});
-
-		let responseContent: Content | null = null;
-		const summaryText = summary?.text;
-		if (typeof summaryText === "string" && summaryText) {
-			responseContent = {
-				actions: ["MULTI_STEP_SUMMARY"],
-				text: summaryText,
-				thought:
-					(typeof summary?.thought === "string"
-						? summary.thought
-						: "Final user-facing message after task completion.") ||
-					"Final user-facing message after task completion.",
-				simple: true,
-				responseId,
-			};
-		} else {
-			return await this.buildStructuredFailureReply(
-				runtime,
-				message,
-				withActionResults(accumulatedState, traceActionResult),
-				responseId,
-				"writing the final summary",
-			);
-		}
-
-		const responseMessages: Memory[] = responseContent
-			? [
-					{
-						id: responseId,
-						entityId: runtime.agentId,
-						agentId: runtime.agentId,
-						content: responseContent,
-						roomId: message.roomId,
-						createdAt: Date.now(),
-					},
-				]
-			: [];
-
-		return {
-			responseContent,
-			responseMessages,
-			state: accumulatedState,
-			mode: responseContent ? "simple" : "none",
 		};
 	}
 

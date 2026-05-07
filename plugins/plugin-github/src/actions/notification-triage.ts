@@ -46,6 +46,8 @@ const SUBJECT_TYPE_SCORES: Record<string, number> = {
   Discussion: 8,
 };
 
+const NOTIFICATION_TRIAGE_LIMIT = 25;
+
 export interface TriagedNotification {
   id: string;
   reason: string;
@@ -80,11 +82,22 @@ export { scoreNotification };
 
 export const notificationTriageAction: Action = {
   name: GitHubActions.GITHUB_NOTIFICATION_TRIAGE,
+  contexts: ["code", "tasks", "connectors", "automation"],
+  contextGate: { anyOf: ["code", "tasks", "connectors", "automation"] },
+  roleGate: { minRole: "USER" },
   similes: ["TRIAGE_GITHUB_NOTIFICATIONS", "GITHUB_INBOX"],
   description:
     "Returns unread GitHub notifications sorted by a priority score derived from reason, subject type, and repo freshness.",
   descriptionCompressed:
     "return unread GitHub notification sort priority score derive reason, subject type, repo freshness",
+  parameters: [
+    {
+      name: "as",
+      description: "Identity to use when reading notifications: user or agent.",
+      required: false,
+      schema: { type: "string", enum: ["user", "agent"], default: "user" },
+    },
+  ],
 
   validate: async (
     runtime: IAgentRuntime,
@@ -100,7 +113,13 @@ export const notificationTriageAction: Action = {
     _state?: State,
     options?: Record<string, unknown>,
     callback?: HandlerCallback,
-  ): Promise<GitHubActionResult<{ notifications: TriagedNotification[] }>> => {
+  ): Promise<
+    GitHubActionResult<{
+      notifications: TriagedNotification[];
+      notificationLimit: number;
+      totalUnread: number;
+    }>
+  > => {
     const identity = resolveIdentity(options, "user");
     const resolved = buildResolvedClient(runtime, identity);
     if ("error" in resolved) {
@@ -153,10 +172,18 @@ export const notificationTriageAction: Action = {
         };
       });
       triaged.sort((a, b) => b.score - a.score);
+      const boundedTriaged = triaged.slice(0, NOTIFICATION_TRIAGE_LIMIT);
       await callback?.({
-        text: `Triaged ${triaged.length} unread notification(s)`,
+        text: `Triaged ${boundedTriaged.length} unread notification(s)`,
       });
-      return { success: true, data: { notifications: triaged } };
+      return {
+        success: true,
+        data: {
+          notifications: boundedTriaged,
+          notificationLimit: NOTIFICATION_TRIAGE_LIMIT,
+          totalUnread: triaged.length,
+        },
+      };
     } catch (err) {
       const rl = inspectRateLimit(err);
       const message = rl.isRateLimited

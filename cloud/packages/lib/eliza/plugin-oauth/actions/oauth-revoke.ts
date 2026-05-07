@@ -24,8 +24,12 @@ import {
   lookupUser,
 } from "../utils";
 
+const OAUTH_REVOKE_CONNECTION_LIMIT = 10;
+
 export const oauthRevokeAction: ActionWithParams = {
   name: "OAUTH_REVOKE",
+  contexts: ["connectors", "settings", "secrets"],
+  contextGate: { anyOf: ["connectors", "settings", "secrets"] },
   similes: [
     "DISCONNECT",
     "REMOVE_CONNECTION",
@@ -118,7 +122,9 @@ export const oauthRevokeAction: ActionWithParams = {
       userId: user.id,
       platform,
     });
-    const activeConnection = connections.find((c) => c.status === "active");
+    const activeConnection = connections
+      .slice(0, OAUTH_REVOKE_CONNECTION_LIMIT)
+      .find((c) => c.status === "active");
 
     if (!activeConnection) {
       const text = `${platformName} wasn't connected.`;

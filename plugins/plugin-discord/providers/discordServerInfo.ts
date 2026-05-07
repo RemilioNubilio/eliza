@@ -5,12 +5,12 @@ import type {
 	ProviderResult,
 	State,
 } from "@elizaos/core";
-import { encode } from "@toon-format/toon";
 import { DISCORD_SERVICE_NAME } from "../constants";
 import { requireProviderSpec } from "../generated/specs/spec-helpers";
 import type { DiscordService } from "../service";
 
 const spec = requireProviderSpec("discordServerInfo");
+const MAX_DESCRIPTION_LENGTH = 500;
 
 interface ServerInfoEntry {
 	id: string;
@@ -34,7 +34,10 @@ export const discordServerInfoProvider: Provider = {
 	description: spec.description,
 	descriptionCompressed: spec.descriptionCompressed,
 	dynamic: true,
-	contexts: ["social", "connectors"],
+	contexts: ["messaging", "connectors"],
+	contextGate: { anyOf: ["messaging", "connectors"] },
+	cacheScope: "conversation",
+	roleGate: { minRole: "ADMIN" },
 	get: async (
 		runtime: IAgentRuntime,
 		message: Memory,
@@ -86,7 +89,7 @@ export const discordServerInfoProvider: Provider = {
 			textChannels,
 			voiceChannels,
 			categories,
-			description: guild.description,
+			description: guild.description?.slice(0, MAX_DESCRIPTION_LENGTH) ?? null,
 			vanityUrlCode: guild.vanityURLCode,
 		};
 
@@ -98,7 +101,7 @@ export const discordServerInfoProvider: Provider = {
 				memberCount: entry.memberCount,
 				channelCount: entry.channelCount,
 			},
-			text: encode({ discord_server: entry }),
+			text: JSON.stringify({ discord_server: entry }),
 		};
 	},
 };

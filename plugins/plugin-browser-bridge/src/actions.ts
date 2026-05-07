@@ -39,9 +39,115 @@ const INSTALL_NAME = "BROWSER_BRIDGE_INSTALL";
 const REVEAL_FOLDER_NAME = "BROWSER_BRIDGE_REVEAL_FOLDER";
 const OPEN_MANAGER_NAME = "BROWSER_BRIDGE_OPEN_MANAGER";
 const REFRESH_NAME = "BROWSER_BRIDGE_REFRESH";
+const MAX_BROWSER_BRIDGE_TEXT_LENGTH = 3000;
+const BROWSER_BRIDGE_TIMEOUT_MS = 30_000;
+const BROWSER_BRIDGE_KEYWORDS = [
+  "browser bridge",
+  "agent browser bridge",
+  "extension",
+  "chrome extension",
+  "companion",
+  "install",
+  "reveal",
+  "folder",
+  "manager",
+  "refresh",
+  "extensión",
+  "navegador",
+  "instalar",
+  "carpeta",
+  "extension",
+  "navigateur",
+  "installer",
+  "dossier",
+  "erweiterung",
+  "installieren",
+  "ordner",
+  "estensione",
+  "installare",
+  "cartella",
+  "拡張機能",
+  "ブラウザ",
+  "インストール",
+  "フォルダ",
+  "扩展",
+  "浏览器",
+  "安装",
+  "文件夹",
+  "확장",
+  "브라우저",
+  "설치",
+] as const;
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function withBrowserBridgeTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out`)), BROWSER_BRIDGE_TIMEOUT_MS),
+    ),
+  ]);
+}
+
+function hasSelectedContext(
+  state: State | undefined,
+  contexts: readonly string[],
+): boolean {
+  const selected = new Set<string>();
+  const collect = (value: unknown) => {
+    if (!Array.isArray(value)) return;
+    for (const item of value) {
+      if (typeof item === "string") selected.add(item);
+    }
+  };
+  collect(
+    (state?.values as Record<string, unknown> | undefined)?.selectedContexts,
+  );
+  collect(
+    (state?.data as Record<string, unknown> | undefined)?.selectedContexts,
+  );
+  const contextObject = (state?.data as Record<string, unknown> | undefined)
+    ?.contextObject as
+    | {
+        trajectoryPrefix?: { selectedContexts?: unknown };
+        metadata?: { selectedContexts?: unknown };
+      }
+    | undefined;
+  collect(contextObject?.trajectoryPrefix?.selectedContexts);
+  collect(contextObject?.metadata?.selectedContexts);
+  return contexts.some((context) => selected.has(context));
+}
+
+function hasBrowserBridgeIntent(
+  message: Memory,
+  state: State | undefined,
+): boolean {
+  const text = [
+    typeof message.content?.text === "string" ? message.content.text : "",
+    typeof state?.values?.recentMessages === "string"
+      ? state.values.recentMessages
+      : "",
+  ]
+    .join("\n")
+    .toLowerCase();
+  return BROWSER_BRIDGE_KEYWORDS.some((keyword) =>
+    text.includes(keyword.toLowerCase()),
+  );
+}
+
+function validateBrowserBridgeAction(
+  contexts: readonly string[],
+): (
+  _runtime: IAgentRuntime,
+  message: Memory,
+  state?: State,
+) => Promise<boolean> {
+  return async (_runtime, message, state) =>
+    hasSelectedContext(state, contexts) ||
+    hasBrowserBridgeIntent(message, state);
 }
 
 /**
@@ -54,6 +160,9 @@ function describeError(err: unknown): string {
  */
 export const browserBridgeInstallAction: Action = {
   name: INSTALL_NAME,
+  contexts: ["browser", "connectors", "settings"],
+  contextGate: { anyOf: ["browser", "connectors", "settings"] },
+  roleGate: { minRole: "USER" },
   similes: ["INSTALL_BROWSER_BRIDGE", "SETUP_BROWSER_BRIDGE"],
   description: JSON.stringify({
     browser_bridge_install: {
@@ -68,11 +177,7 @@ export const browserBridgeInstallAction: Action = {
     },
   }),
   descriptionCompressed: "Install browser companion extension.",
-  validate: async (
-    _runtime: IAgentRuntime,
-    _message: Memory,
-    _state?: State,
-  ): Promise<boolean> => true,
+  validate: validateBrowserBridgeAction(["browser", "connectors", "settings"]),
   handler: async (
     _runtime: IAgentRuntime,
     _message: Memory,
@@ -83,17 +188,23 @@ export const browserBridgeInstallAction: Action = {
       let status: BrowserBridgeCompanionPackageStatus =
         getBrowserBridgeCompanionPackageStatus();
       if (!status.chromeBuildPath) {
-        status = await buildBrowserBridgeCompanionPackage("chrome");
+        status = await withBrowserBridgeTimeout(
+          buildBrowserBridgeCompanionPackage("chrome"),
+          "browser bridge package build",
+        );
       }
 
-      const reveal = await openBrowserBridgeCompanionPackagePath(
-        "chrome_build",
-        { revealOnly: true },
+      const reveal = await withBrowserBridgeTimeout(
+        openBrowserBridgeCompanionPackagePath("chrome_build", { revealOnly: true }),
+        "browser bridge reveal",
       );
 
       let openedManager = true;
       try {
-        await openBrowserBridgeCompanionManager("chrome");
+        await withBrowserBridgeTimeout(
+          openBrowserBridgeCompanionManager("chrome"),
+          "browser bridge manager open",
+        );
       } catch (err) {
         openedManager = false;
         logger.warn(
@@ -101,9 +212,9 @@ export const browserBridgeInstallAction: Action = {
         );
       }
 
-      const text = openedManager
+      const text = (openedManager
         ? `Chrome is ready. Click Load unpacked and choose ${reveal.path}.`
-        : `The Agent Browser Bridge folder is ready at ${reveal.path}. Open chrome://extensions, click Load unpacked, and choose that folder.`;
+        : `The Agent Browser Bridge folder is ready at ${reveal.path}. Open chrome://extensions, click Load unpacked, and choose that folder.`).slice(0, MAX_BROWSER_BRIDGE_TEXT_LENGTH);
 
       return {
         text,
@@ -137,6 +248,9 @@ export const browserBridgeInstallAction: Action = {
  */
 export const browserBridgeRevealFolderAction: Action = {
   name: REVEAL_FOLDER_NAME,
+  contexts: ["browser", "files", "connectors", "settings"],
+  contextGate: { anyOf: ["browser", "files", "connectors", "settings"] },
+  roleGate: { minRole: "USER" },
   similes: ["REVEAL_BROWSER_BRIDGE_FOLDER", "OPEN_BROWSER_BRIDGE_FOLDER"],
   description: JSON.stringify({
     browser_bridge_reveal_folder: {
@@ -146,11 +260,12 @@ export const browserBridgeRevealFolderAction: Action = {
     },
   }),
   descriptionCompressed: "Reveal companion folder in Finder.",
-  validate: async (
-    _runtime: IAgentRuntime,
-    _message: Memory,
-    _state?: State,
-  ): Promise<boolean> => true,
+  validate: validateBrowserBridgeAction([
+    "browser",
+    "files",
+    "connectors",
+    "settings",
+  ]),
   handler: async (
     _runtime: IAgentRuntime,
     _message: Memory,
@@ -158,11 +273,14 @@ export const browserBridgeRevealFolderAction: Action = {
     _options,
   ): Promise<ActionResult> => {
     try {
-      const reveal = await openBrowserBridgeCompanionPackagePath(
-        "chrome_build",
-        { revealOnly: true },
+      const reveal = await withBrowserBridgeTimeout(
+        openBrowserBridgeCompanionPackagePath("chrome_build", { revealOnly: true }),
+        "browser bridge reveal",
       );
-      const text = `Revealed the Agent Browser Bridge folder at ${reveal.path}.`;
+      const text = `Revealed the Agent Browser Bridge folder at ${reveal.path}.`.slice(
+        0,
+        MAX_BROWSER_BRIDGE_TEXT_LENGTH,
+      );
       return {
         text,
         success: true,
@@ -196,6 +314,9 @@ export const browserBridgeRevealFolderAction: Action = {
  */
 export const browserBridgeOpenManagerAction: Action = {
   name: OPEN_MANAGER_NAME,
+  contexts: ["browser", "connectors", "settings"],
+  contextGate: { anyOf: ["browser", "connectors", "settings"] },
+  roleGate: { minRole: "USER" },
   similes: ["OPEN_CHROME_EXTENSIONS", "OPEN_BROWSER_BRIDGE_MANAGER"],
   description: JSON.stringify({
     browser_bridge_open_manager: {
@@ -205,11 +326,7 @@ export const browserBridgeOpenManagerAction: Action = {
     },
   }),
   descriptionCompressed: "Open browser companion manager UI.",
-  validate: async (
-    _runtime: IAgentRuntime,
-    _message: Memory,
-    _state?: State,
-  ): Promise<boolean> => true,
+  validate: validateBrowserBridgeAction(["browser", "connectors", "settings"]),
   handler: async (
     _runtime: IAgentRuntime,
     _message: Memory,
@@ -217,9 +334,15 @@ export const browserBridgeOpenManagerAction: Action = {
     _options,
   ): Promise<ActionResult> => {
     try {
-      await openBrowserBridgeCompanionManager("chrome");
+      await withBrowserBridgeTimeout(
+        openBrowserBridgeCompanionManager("chrome"),
+        "browser bridge manager open",
+      );
       const text =
-        "Opened Chrome extensions. Click Load unpacked and choose the Agent Browser Bridge folder.";
+        "Opened Chrome extensions. Click Load unpacked and choose the Agent Browser Bridge folder.".slice(
+          0,
+          MAX_BROWSER_BRIDGE_TEXT_LENGTH,
+        );
       return {
         text,
         success: true,
@@ -254,6 +377,9 @@ export const browserBridgeOpenManagerAction: Action = {
  */
 export const browserBridgeRefreshAction: Action = {
   name: REFRESH_NAME,
+  contexts: ["browser", "connectors", "settings"],
+  contextGate: { anyOf: ["browser", "connectors", "settings"] },
+  roleGate: { minRole: "USER" },
   similes: [
     "REFRESH_BROWSER_BRIDGE",
     "REFRESH_BROWSER_BRIDGE_CONNECTION",
@@ -269,11 +395,7 @@ export const browserBridgeRefreshAction: Action = {
     },
   }),
   descriptionCompressed: "Refresh companion connection state.",
-  validate: async (
-    _runtime: IAgentRuntime,
-    _message: Memory,
-    _state?: State,
-  ): Promise<boolean> => true,
+  validate: validateBrowserBridgeAction(["browser", "connectors", "settings"]),
   handler: async (
     runtime: IAgentRuntime,
     _message: Memory,
@@ -303,7 +425,7 @@ export const browserBridgeRefreshAction: Action = {
         };
       }
 
-      companions = await service.listBrowserCompanions();
+      companions = (await service.listBrowserCompanions()).slice(0, 25);
       const connected = companions.length > 0;
       const text = connected
         ? `Refreshed Agent Browser Bridge connection status: ${companions.length} paired companion(s).`

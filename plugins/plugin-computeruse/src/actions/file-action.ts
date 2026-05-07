@@ -26,6 +26,9 @@ function formatFileResultText(result: FileActionResult): string {
 
 export const fileAction: Action = {
   name: "FILE_ACTION",
+  contexts: ["files", "automation"],
+  contextGate: { anyOf: ["files", "automation"] },
+  roleGate: { minRole: "USER" },
   similes: [
     "READ_FILE",
     "WRITE_FILE",
@@ -161,7 +164,8 @@ export const fileAction: Action = {
     }
 
     const result = await service.executeFileAction(params);
-    const text = formatFileResultText(result);
+    const maxActionResultBytes = 4000;
+    const text = formatFileResultText(result).slice(0, maxActionResultBytes);
 
     if (callback) {
       await callback({ text });

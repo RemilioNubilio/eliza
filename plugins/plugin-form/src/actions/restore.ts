@@ -60,6 +60,15 @@ import {
 import { quickIntentDetect } from "../intent";
 import type { FormService } from "../service";
 
+const RESTORE_FIELD_LIMIT = 12;
+const RESTORE_RESPONSE_MAX_CHARS = 4_000;
+
+function truncateRestoreResponse(text: string): string {
+  return text.length <= RESTORE_RESPONSE_MAX_CHARS
+    ? text
+    : `${text.slice(0, RESTORE_RESPONSE_MAX_CHARS)}\n\n[truncated restored form summary]`;
+}
+
 /**
  * Form Restore Action
  *
@@ -73,9 +82,20 @@ import type { FormService } from "../service";
  */
 export const formRestoreAction: Action = {
   name: "FORM_RESTORE",
+  contexts: ["tasks", "automation", "memory"],
+  contextGate: { anyOf: ["tasks", "automation", "memory"] },
+  roleGate: { minRole: "USER" },
   similes: ["RESUME_FORM", "CONTINUE_FORM"],
   description: "Restore a previously stashed form session",
   descriptionCompressed: "Restore stashed form session.",
+  parameters: [
+    {
+      name: "sessionId",
+      description: "Optional stashed form session id to restore.",
+      required: false,
+      schema: { type: "string" },
+    },
+  ],
 
   /**
    * Validate: Only trigger for restore intent with stashed sessions.
@@ -191,7 +211,7 @@ export const formRestoreAction: Action = {
 
       if (context.filledFields.length > 0) {
         responseText += `\n\nHere's what I have so far:\n`;
-        for (const field of context.filledFields) {
+        for (const field of context.filledFields.slice(0, RESTORE_FIELD_LIMIT)) {
           responseText += `• ${field.label}: ${field.displayValue}\n`;
         }
       }
@@ -206,7 +226,7 @@ export const formRestoreAction: Action = {
       }
 
       await callback?.({
-        text: responseText,
+        text: truncateRestoreResponse(responseText),
       });
 
       return {

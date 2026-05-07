@@ -16,7 +16,6 @@ import { createUniqueUuid } from "../../entities.ts";
 import { logger } from "../../logger.ts";
 import {
 	imageDescriptionTemplate,
-	messageHandlerTemplate,
 	postCreationTemplate,
 } from "../../prompts.ts";
 import { EmbeddingGenerationService } from "../../services/embedding.ts";
@@ -122,24 +121,16 @@ export {
 } from "../plugin-manager/index.ts";
 
 // ============================================================================
-// Structured TOON response interfaces.
+// Structured JSON response interfaces.
 // ============================================================================
 
-interface ImageDescriptionToon {
+interface ImageDescriptionJson {
 	description?: string;
 	title?: string;
 	text?: string;
 }
 
-interface MessageHandlerToon {
-	thought?: string;
-	actions?: string | string[];
-	providers?: string | string[];
-	text?: string;
-	simple?: boolean;
-}
-
-interface PostCreationToon {
+interface PostCreationJson {
 	post?: string;
 	thought?: string;
 }
@@ -299,7 +290,7 @@ export async function processAttachments(
 			if (typeof response === "string") {
 				const parsedJson = parseJSONObjectFromText(
 					response,
-				) as ImageDescriptionToon | null;
+				) as ImageDescriptionJson | null;
 
 				if (parsedJson && (parsedJson.description || parsedJson.text)) {
 					processedAttachment.description = parsedJson.description ?? "";
@@ -319,7 +310,7 @@ export async function processAttachments(
 				} else {
 					runtime.logger.warn(
 						{ src: "basic-capabilities", agentId: runtime.agentId },
-						"Failed to parse TOON response for image description",
+						"Failed to parse JSON response for image description",
 					);
 				}
 			} else if (
@@ -586,10 +577,8 @@ const postGeneratedHandler = async ({
 		} as MessageMetadata & { entityName: string },
 	};
 
-	// generate thought of which providers to use using messageHandlerTemplate
-
 	// Compose state with relevant context for post generation
-	let state = await runtime.composeState(message, [
+	const state = await runtime.composeState(message, [
 		"PROVIDERS",
 		"CHARACTER",
 		"RECENT_MESSAGES",
@@ -611,86 +600,6 @@ const postGeneratedHandler = async ({
 			metadataX?.userName || metadata?.userName || undefined;
 	}
 
-	const optimizedResponseService = runtime.getService<OptimizedPromptService>(
-		OPTIMIZED_PROMPT_SERVICE,
-	);
-	const dynamicPrompt = await runtime.getCache<string>(
-		"core_prompt_messageHandlerTemplate",
-	);
-	const baselineResponseTemplate =
-		dynamicPrompt ||
-		runtime.character.templates?.messageHandlerTemplate ||
-		messageHandlerTemplate;
-	const prompt = composePromptFromState({
-		state,
-		template: resolveOptimizedPrompt(
-			optimizedResponseService,
-			"response",
-			baselineResponseTemplate,
-		),
-	});
-
-	let responseContent: Content | null = null;
-
-	let retries = 0;
-	const maxRetries = 3;
-	while (
-		retries < maxRetries &&
-		(!responseContent?.thought || !responseContent?.actions)
-	) {
-		const response = await runtime.useModel(ModelType.TEXT_SMALL, {
-			prompt,
-		});
-
-		const parsedJson = parseJSONObjectFromText(
-			response,
-		) as MessageHandlerToon | null;
-		if (parsedJson) {
-			const actionsRaw = parsedJson.actions;
-			const providersRaw = parsedJson.providers;
-			const resolvedActions = Array.isArray(actionsRaw)
-				? actionsRaw
-				: actionsRaw
-					? actionsRaw
-							.split(",")
-							.map((action) => action.trim())
-							.filter(Boolean)
-					: ["IGNORE"];
-			responseContent = {
-				thought: parsedJson.thought ?? "",
-				actions: resolvedActions.length > 0 ? resolvedActions : ["IGNORE"],
-				providers: Array.isArray(providersRaw)
-					? providersRaw
-					: providersRaw
-						? [providersRaw]
-						: [],
-				text: parsedJson.text ?? "",
-				simple: parsedJson.simple ?? false,
-			};
-		} else {
-			responseContent = null;
-		}
-
-		retries++;
-		const responseContentThoughtAfter = responseContent?.thought;
-		const responseContentActionsAfter = responseContent?.actions;
-		if (!responseContentThoughtAfter || !responseContentActionsAfter) {
-			runtime.logger.warn(
-				{
-					src: "basic-capabilities",
-					agentId: runtime.agentId,
-					response,
-					parsedJson,
-					responseContent,
-				},
-				"Missing required fields, retrying",
-			);
-		}
-	}
-
-	const responseContentProviders = responseContent?.providers;
-	state = await runtime.composeState(message, responseContentProviders);
-
 	const postPrompt = composePromptFromState({
 		state,
 		template:
@@ -701,11 +610,11 @@ const postGeneratedHandler = async ({
 		prompt: postPrompt,
 	});
 
-	const parsedToonResponse = parseJSONObjectFromText(
+	const parsedJsonResponse = parseJSONObjectFromText(
 		structuredResponseText,
-	) as PostCreationToon | null;
+	) as PostCreationJson | null;
 
-	if (!parsedToonResponse) {
+	if (!parsedJsonResponse) {
 		runtime.logger.error(
 			{
 				src: "basic-capabilities",
@@ -724,7 +633,7 @@ const postGeneratedHandler = async ({
 		return cleanedText;
 	}
 
-	const cleanedText = cleanupPostText(parsedToonResponse.post ?? "");
+	const cleanedText = cleanupPostText(parsedJsonResponse.post ?? "");
 	const stateData = state.data;
 	const stateDataProviders = stateData?.providers;
 	const RM =
@@ -796,7 +705,7 @@ const postGeneratedHandler = async ({
 				text: cleanedText,
 				source,
 				channelType: ChannelType.FEED,
-				thought: parsedToonResponse.thought ?? "",
+				thought: parsedJsonResponse.thought ?? "",
 				type: "post",
 			},
 			roomId: message.roomId,

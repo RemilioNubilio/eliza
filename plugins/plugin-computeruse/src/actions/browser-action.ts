@@ -82,6 +82,9 @@ async function executeBrowserActionWithAutoOpen(
 
 export const browserAction: Action = {
   name: "BROWSER_ACTION",
+  contexts: ["browser", "automation"],
+  contextGate: { anyOf: ["browser", "automation"] },
+  roleGate: { minRole: "USER" },
   similes: [
     "CONTROL_BROWSER",
     "WEB_BROWSER",
@@ -217,7 +220,8 @@ export const browserAction: Action = {
     }
 
     const result = await executeBrowserActionWithAutoOpen(service, params);
-    const text = formatBrowserResultText(result);
+    const maxActionResultBytes = 4000;
+    const text = formatBrowserResultText(result).slice(0, maxActionResultBytes);
 
     if (callback) {
       if (result.screenshot) {

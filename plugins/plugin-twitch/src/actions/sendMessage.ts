@@ -11,8 +11,8 @@ import type {
 } from "@elizaos/core";
 import { composePromptFromState, ModelType } from "@elizaos/core";
 import type { TwitchService } from "../service.js";
-import { parseToonKeyValue } from "../toon.js";
 import { normalizeChannel, TWITCH_SERVICE_NAME } from "../types.js";
+import { parseJSONObjectFromText } from "@elizaos/core";
 
 const SEND_MESSAGE_TEMPLATE = `You are helping to extract send message parameters for Twitch chat.
 
@@ -25,13 +25,22 @@ Extract the following:
 1. text: The message text to send
 2. channel: The channel name to send to (without # prefix), or "current" for the current channel
 
-Respond with TOON only:
-text: The message to send
-channel: current`;
+Respond with JSON only, with no prose or fences:
+{
+  "text": "The message to send",
+  "channel": "current"
+}`;
 
 interface SendMessageParams {
   text: string;
   channel: string;
+}
+
+const MAX_TWITCH_MESSAGE_CHARS = 500;
+const TWITCH_ACTION_TIMEOUT_MS = 30_000;
+
+function truncateActionText(text: string, maxChars: number): string {
+  return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text;
 }
 
 export const sendMessage: Action = {
@@ -44,6 +53,23 @@ export const sendMessage: Action = {
   ],
   description: "Send a message to a Twitch channel",
   descriptionCompressed: "send message Twitch channel",
+  contexts: ["messaging", "connectors"],
+  contextGate: { anyOf: ["messaging", "connectors"] },
+  roleGate: { minRole: "USER" },
+  parameters: [
+    {
+      name: "text",
+      description: "Chat message text to send.",
+      required: false,
+      schema: { type: "string" },
+    },
+    {
+      name: "channel",
+      description: "Twitch channel name, without #, or current.",
+      required: false,
+      schema: { type: "string", default: "current" },
+    },
+  ],
 
   validate: async (
     _runtime: IAgentRuntime,
@@ -88,12 +114,10 @@ export const sendMessage: Action = {
         prompt,
       });
 
-      const parsed = parseToonKeyValue<Record<string, unknown>>(
-        String(response),
-      );
+      const parsed = parseJSONObjectFromText(String(response)) as Record<string, unknown> | null;
       if (parsed?.text) {
         messageInfo = {
-          text: String(parsed.text),
+          text: truncateActionText(String(parsed.text), MAX_TWITCH_MESSAGE_CHARS),
           channel: String(parsed.channel || "current"),
         };
         break;
@@ -124,6 +148,7 @@ export const sendMessage: Action = {
     }
 
     // Send message
+    const timeoutMs = TWITCH_ACTION_TIMEOUT_MS;
     const result = await twitchService.sendMessage(messageInfo.text, {
       channel: targetChannel,
     });
@@ -150,6 +175,7 @@ export const sendMessage: Action = {
       data: {
         channel: targetChannel,
         messageId: result.messageId,
+        timeoutMs,
       },
     };
   },

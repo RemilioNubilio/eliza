@@ -7,6 +7,7 @@ import {
 	type Memory,
 	type State,
 } from "../../../../types/index.ts";
+import { hasActionContextOrKeyword } from "../../../../utils/action-validation.ts";
 import { createClipboardService } from "../services/clipboardService.ts";
 import { requireActionSpec } from "../specs.ts";
 
@@ -44,57 +45,34 @@ function extractDeleteInfo(
 }
 
 const spec = requireActionSpec("CLIPBOARD_DELETE");
+const MAX_CONTEXT_ENTRIES = 20;
+const MAX_TITLE_CHARS = 120;
+
+function truncateText(text: string, max: number): string {
+	return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
 
 export const clipboardDeleteAction: Action = {
 	name: spec.name,
+	contexts: ["files", "knowledge", "agent_internal"],
+	roleGate: { minRole: "ADMIN" },
 	similes: spec.similes ? [...spec.similes] : [],
 	description: spec.description,
 
 	validate: async (
-		runtime: IAgentRuntime,
+		_runtime: IAgentRuntime,
 		message: Memory,
 		state?: State,
 		options?: HandlerOptions,
 	): Promise<boolean> => {
-		const __avTextRaw =
-			typeof message?.content?.text === "string" ? message.content.text : "";
-		const __avText = __avTextRaw.toLowerCase();
-		const __avKeywords = ["clipboard", "delete"];
-		const __avKeywordOk = __avKeywords.some(
-			(kw) => kw.length > 0 && __avText.includes(kw),
-		);
-		const __avRegex = /\b(?:clipboard|delete)\b/i;
-		const __avRegexOk = __avRegex.test(__avText);
-		const __avSource = String(message?.content?.source ?? "");
-		const __avExpectedSource = "";
-		const __avSourceOk = __avExpectedSource
-			? __avSource === __avExpectedSource
-			: Boolean(__avSource || state || runtime?.agentId || runtime?.getService);
-		const __avOptions = options && typeof options === "object" ? options : {};
 		const __avParams = readParams(options);
 		if (isValidDeleteInput(__avParams)) {
 			return true;
 		}
-		const __avInputOk =
-			__avText.trim().length > 0 ||
-			Object.keys(__avOptions as Record<string, unknown>).length > 0 ||
-			Boolean(message?.content && typeof message.content === "object");
-
-		if (!(__avKeywordOk && __avRegexOk && __avSourceOk && __avInputOk)) {
-			return false;
-		}
-
-		const __avLegacyValidate = async (
-			_runtime: IAgentRuntime,
-			_message: Memory,
-		): Promise<boolean> => {
-			return true;
-		};
-		try {
-			return Boolean(await __avLegacyValidate(runtime, message));
-		} catch {
-			return false;
-		}
+		return hasActionContextOrKeyword(message, state, {
+			contexts: ["files", "knowledge", "agent_internal"],
+			keywords: ["clipboard", "delete", "remove note", "delete note"],
+		});
 	},
 
 	handler: async (
@@ -110,8 +88,13 @@ export const clipboardDeleteAction: Action = {
 		// Get list of available entries for context
 		const entries = await service.list();
 		const entriesContext = entries
-			.map((e) => `- ${e.id}: "${e.title}"`)
+			.slice(0, MAX_CONTEXT_ENTRIES)
+			.map((e) => `- ${e.id}: "${truncateText(e.title, MAX_TITLE_CHARS)}"`)
 			.join("\n");
+		const omittedContext =
+			entries.length > MAX_CONTEXT_ENTRIES
+				? `\n…${entries.length - MAX_CONTEXT_ENTRIES} more entries omitted.`
+				: "";
 
 		if (entries.length === 0) {
 			if (callback) {
@@ -129,7 +112,7 @@ export const clipboardDeleteAction: Action = {
 		if (!deleteInfo) {
 			if (callback) {
 				await callback({
-					text: `I couldn't determine which note to delete. Available entries:\n${entriesContext}`,
+					text: `I couldn't determine which note to delete. Available entries:\n${entriesContext}${omittedContext}`,
 					actions: ["CLIPBOARD_DELETE_FAILED"],
 					source: message.content.source,
 				});
