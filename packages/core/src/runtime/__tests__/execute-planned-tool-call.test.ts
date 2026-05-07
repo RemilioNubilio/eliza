@@ -83,6 +83,27 @@ describe("executePlannedToolCall", () => {
 		expect(handler).not.toHaveBeenCalled();
 	});
 
+	it("rejects unavailable actions before invoking the handler", async () => {
+		const handler = vi.fn(async () => ({ success: true }));
+		const action = makeAction({
+			name: "SEARCH",
+			validate: async () => false,
+			handler,
+		});
+
+		const result = await executePlannedToolCall(
+			makeRuntime([action]),
+			{ message: makeMessage() },
+			{ name: "SEARCH", params: {} },
+		);
+
+		expect(result.success).toBe(false);
+		expect(result.error).toBe(
+			"Action SEARCH is not available for this message",
+		);
+		expect(handler).not.toHaveBeenCalled();
+	});
+
 	it("passes validated parameters and HandlerCallback through to the action handler", async () => {
 		const callback: HandlerCallback = vi.fn(async () => []);
 		const handler = vi.fn(async () => ({ success: true, text: "ok" }));

@@ -278,6 +278,10 @@ async function buildParentContext(
     sessionId,
     character: {
       name: character.name ?? null,
+      system:
+        typeof character.system === "string" && character.system.trim()
+          ? character.system
+          : null,
       bio: Array.isArray(character.bio)
         ? character.bio
         : typeof character.bio === "string"

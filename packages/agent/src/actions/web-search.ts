@@ -83,7 +83,9 @@ type KnowledgeSearchService = {
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 const SEARCH_INTENT_PATTERN =
-  /\b(search|find|look\s*up|query|discover|google|web\s*search)\b/i;
+  /\b(search|find|look\s*up|query|discover|google|web\s*search)\b|(?:\b(?:current|currently|latest|live|real[- ]?time|right now|today|now|up[- ]?to[- ]?date)\b.*\b(?:price|prices|quote|btc|bitcoin|eth|ethereum|stock|stocks?|ticker|market|markets?|exchange rate|news|headline|headlines|weather)\b)/i;
+const WEB_SEARCH_INTENT_PATTERN =
+  /\b(?:google|web\s*search|search\s+online|search\s+(?:the\s+)?(?:web|internet)|browse\s+(?:the\s+)?web|look\s*up|lookup)\b|(?:\b(?:current|currently|latest|live|real[- ]?time|right now|today|now|up[- ]?to[- ]?date)\b.*\b(?:price|prices|quote|btc|bitcoin|eth|ethereum|stock|stocks?|ticker|market|markets?|exchange rate|news|headline|headlines|weather)\b)/i;
 
 const CATEGORY_ALIASES: Record<string, string> = {
   chat: "conversations",
@@ -176,6 +178,18 @@ function hasCategory(runtime: IAgentRuntime, category: string): boolean {
   try {
     runtime.getSearchCategory(category, { includeDisabled: true });
     return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasWebSearchService(runtime: IAgentRuntime): boolean {
+  try {
+    const service = runtime.getService(ServiceType.WEB_SEARCH) as
+      | Partial<SearchService>
+      | null
+      | undefined;
+    return typeof service?.search === "function";
   } catch {
     return false;
   }
@@ -684,6 +698,9 @@ export const searchAction: Action = {
     ensureBuiltInSearchCategories(runtime);
     updateSearchDescription(runtime);
     const text = message.content?.text ?? "";
+    if (WEB_SEARCH_INTENT_PATTERN.test(text)) {
+      return hasCategory(runtime, "web") && hasWebSearchService(runtime);
+    }
     return (
       runtime.getSearchCategories().length > 0 &&
       (SEARCH_INTENT_PATTERN.test(text) || text.trim().length === 0)

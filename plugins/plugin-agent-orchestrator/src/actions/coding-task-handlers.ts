@@ -8,6 +8,7 @@
  */
 
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
   type ActionResult,
@@ -24,6 +25,7 @@ import type { AgentCredentials, ApprovalPreset } from "coding-agent-adapters";
 import { buildOpencodeSpawnConfig } from "../services/agent-credentials.js";
 import type { AgentSelectionStrategy } from "../services/agent-selection.js";
 import { readConfigEnvKey } from "../services/config-env.js";
+import { getOriginExternalMessageId } from "../services/message-origin.js";
 import type { PTYService } from "../services/pty-service.js";
 import { getCoordinator } from "../services/pty-service.js";
 import {
@@ -730,6 +732,7 @@ export interface CodingTaskContext {
   message: Memory;
   state: State | undefined;
   repo: string | undefined;
+  workdir: string | undefined;
   defaultAgentType: CodingAgentType;
   rawAgentType: string;
   agentTypeExplicit: boolean;
@@ -780,6 +783,7 @@ export async function handleMultiAgent(
     message,
     state,
     repo,
+    workdir: requestedWorkdir,
     defaultAgentType,
     rawAgentType,
     agentTypeExplicit,
@@ -814,6 +818,14 @@ export async function handleMultiAgent(
       });
     }
     return { success: false, error: "WORKSPACE_SERVICE_UNAVAILABLE" };
+  }
+  if (requestedWorkdir && agentSpecs.length > 1) {
+    if (callback) {
+      await callback({
+        text: "A single explicit workdir cannot be shared across multiple parallel task agents. Use one task or provide separate workspaces.",
+      });
+    }
+    return { success: false, error: "WORKDIR_REQUIRES_SINGLE_AGENT" };
   }
 
   // Skip the spawn callback — the LLM REPLY already says "on it" (character
@@ -998,7 +1010,13 @@ export async function handleMultiAgent(
       let workspaceId: string | undefined;
       let branch: string | undefined;
 
-      if (repo && wsService) {
+      if (requestedWorkdir) {
+        workdir = await resolveExistingTaskWorkdir(
+          runtime,
+          requestedWorkdir,
+          callback,
+        );
+      } else if (repo && wsService) {
         const workspace = await wsService.provisionWorkspace({ repo });
         workdir = workspace.path;
         workspaceId = workspace.id;
@@ -1109,6 +1127,55 @@ export async function handleMultiAgent(
       }
       const finalSkillEnv =
         Object.keys(skillEnv).length > 0 ? skillEnv : undefined;
+      const replyToExternalMessageId = getOriginExternalMessageId(message);
+      const spawnMetadata = {
+        threadId: taskThread?.id,
+        taskNodeId,
+        requestedType: specRequestedType,
+        messageId: message.id,
+        ...(replyToExternalMessageId ? { replyToExternalMessageId } : {}),
+        userId: (message as unknown as Record<string, unknown>).userId,
+        workspaceId,
+        label: specLabel,
+        multiAgentIndex: i,
+        // Carry the originating message routing context so deployments can
+        // post async session updates back to the originating channel.
+        roomId: message.roomId,
+        worldId: message.worldId,
+        source: (message.content as { source?: string } | undefined)?.source,
+      };
+      const verificationMeta: Record<string, unknown> = {};
+      if (ctx.validator) verificationMeta.validator = ctx.validator;
+      if (typeof ctx.maxRetries === "number") {
+        verificationMeta.maxRetries = ctx.maxRetries;
+      }
+      if (ctx.onVerificationFail) {
+        verificationMeta.onVerificationFail = ctx.onVerificationFail;
+      }
+      if (ctx.originRoomId) {
+        verificationMeta.originRoomId = ctx.originRoomId;
+      }
+      const coordinatorMetadata =
+        Object.keys(verificationMeta).length > 0
+          ? { ...spawnMetadata, ...verificationMeta }
+          : spawnMetadata;
+      let coordinatorTaskRegistered = false;
+      const registerCoordinatorTask = async (session: {
+        id: string;
+      }): Promise<void> => {
+        if (!coordinator || !specTask || coordinatorTaskRegistered) return;
+        await coordinator.registerTask(session.id, {
+          threadId: taskThread?.id ?? session.id,
+          taskNodeId,
+          agentType: specAgentType,
+          label: specLabel,
+          originalTask: specTask,
+          workdir,
+          repo,
+          metadata: coordinatorMetadata,
+        });
+        coordinatorTaskRegistered = true;
+      };
       const session: SessionInfo = await ptyService.spawnSession({
         name: `coding-${Date.now()}-${i}`,
         agentType: specAgentType,
@@ -1122,21 +1189,8 @@ export async function handleMultiAgent(
         customCredentials,
         ...(finalSkillEnv ? { env: finalSkillEnv } : {}),
         ...(coordinatorManagedSession ? { skipAdapterAutoResponse: true } : {}),
-        metadata: {
-          threadId: taskThread?.id,
-          taskNodeId,
-          requestedType: specRequestedType,
-          messageId: message.id,
-          userId: (message as unknown as Record<string, unknown>).userId,
-          workspaceId,
-          label: specLabel,
-          multiAgentIndex: i,
-          // Carry the originating message routing context so deployments can
-          // post async session updates back to the originating channel.
-          roomId: message.roomId,
-          worldId: message.worldId,
-          source: (message.content as { source?: string } | undefined)?.source,
-        },
+        metadata: spawnMetadata,
+        beforeInitialTask: registerCoordinatorTask,
       });
 
       // Register this session's recommended-skills allow-list so the skill
@@ -1168,46 +1222,9 @@ export async function handleMultiAgent(
         coordinatorManagedSession && !useDirectCallbackResponses,
         sessionSkillAllowList,
       );
-      if (coordinator && specTask) {
+      if (coordinator && specTask && !coordinatorTaskRegistered) {
         failureStage = "register";
-        const baseMetadata =
-          session.metadata &&
-          typeof session.metadata === "object" &&
-          !Array.isArray(session.metadata)
-            ? (session.metadata as Record<string, unknown>)
-            : {};
-        // Merge caller-supplied verification policy onto the task's session
-        // metadata so the swarm decision loop can read it after the child
-        // claims `done`. Backward-compatible: when none are set we pass the
-        // original metadata object through unchanged (or `undefined`) and
-        // the existing LLM `validateTaskCompletion` flow runs as before.
-        const verificationMeta: Record<string, unknown> = {};
-        if (ctx.validator) verificationMeta.validator = ctx.validator;
-        if (typeof ctx.maxRetries === "number") {
-          verificationMeta.maxRetries = ctx.maxRetries;
-        }
-        if (ctx.onVerificationFail) {
-          verificationMeta.onVerificationFail = ctx.onVerificationFail;
-        }
-        if (ctx.originRoomId) {
-          verificationMeta.originRoomId = ctx.originRoomId;
-        }
-        const mergedMetadata =
-          Object.keys(verificationMeta).length > 0
-            ? { ...baseMetadata, ...verificationMeta }
-            : Object.keys(baseMetadata).length > 0
-              ? baseMetadata
-              : undefined;
-        await coordinator.registerTask(session.id, {
-          threadId: taskThread?.id ?? session.id,
-          taskNodeId,
-          agentType: specAgentType,
-          label: specLabel,
-          originalTask: specTask,
-          workdir,
-          repo,
-          metadata: mergedMetadata,
-        });
+        await registerCoordinatorTask(session);
       }
 
       results.push({
@@ -1279,6 +1296,83 @@ export async function handleMultiAgent(
   return {
     success: true,
     text: "",
+    continueChain: false,
     data: { agents: results, suppressActionResultClipboard: true },
   };
+}
+
+async function resolveExistingTaskWorkdir(
+  runtime: IAgentRuntime,
+  requestedWorkdir: string,
+  callback: HandlerCallback | undefined,
+): Promise<string> {
+  const resolvedWorkdir = path.resolve(requestedWorkdir);
+  const stat = await fs.stat(resolvedWorkdir).catch(() => null);
+  if (!stat?.isDirectory()) {
+    if (callback) {
+      await callback({
+        text: `workdir does not exist: \`${resolvedWorkdir}\``,
+      });
+    }
+    throw new Error(`workdir does not exist: ${resolvedWorkdir}`);
+  }
+
+  const sandboxSetting = (
+    (runtime.getSetting("CODING_AGENT_SANDBOX") as string | undefined) ??
+    readConfigEnvKey("CODING_AGENT_SANDBOX") ??
+    process.env.CODING_AGENT_SANDBOX ??
+    ""
+  )
+    .trim()
+    .toLowerCase();
+  if (
+    sandboxSetting === "off" ||
+    sandboxSetting === "false" ||
+    sandboxSetting === "0"
+  ) {
+    return resolvedWorkdir;
+  }
+
+  const workspaceBaseDir = path.join(os.homedir(), ".eliza", "workspaces");
+  const parallaxCodingDir =
+    (runtime.getSetting("PARALLAX_CODING_DIRECTORY") as string | undefined) ??
+    readConfigEnvKey("PARALLAX_CODING_DIRECTORY") ??
+    process.env.PARALLAX_CODING_DIRECTORY;
+  const extraAllowed =
+    (runtime.getSetting("CODING_AGENT_ALLOWED_WORKDIRS") as
+      | string
+      | undefined) ??
+    process.env.CODING_AGENT_ALLOWED_WORKDIRS ??
+    "";
+  const expandHome = (p: string) =>
+    p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p;
+  const allowedPrefixes = [
+    path.resolve(workspaceBaseDir),
+    path.resolve(process.cwd()),
+    ...(parallaxCodingDir?.trim()
+      ? [path.resolve(expandHome(parallaxCodingDir.trim()))]
+      : []),
+    ...extraAllowed
+      .split(",")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0)
+      .map((p) => path.resolve(expandHome(p))),
+  ];
+  const isAllowed = allowedPrefixes.some(
+    (prefix) =>
+      resolvedWorkdir === prefix ||
+      resolvedWorkdir.startsWith(prefix + path.sep),
+  );
+  if (!isAllowed) {
+    if (callback) {
+      await callback({
+        text:
+          `can't write to \`${resolvedWorkdir}\`: not in my sandbox. ` +
+          "tell the operator to add it to CODING_AGENT_ALLOWED_WORKDIRS or set CODING_AGENT_SANDBOX=off.",
+      });
+    }
+    throw new Error(`workdir outside allowed roots: ${resolvedWorkdir}`);
+  }
+
+  return resolvedWorkdir;
 }

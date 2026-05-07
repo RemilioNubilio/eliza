@@ -401,21 +401,14 @@ export function applyPluginAutoEnable(
     }
   }
 
-  // Subscription provider — when a subscription is configured, force-enable
-  // the corresponding provider plugin so the user doesn't need to manually
-  // toggle entries.  This takes priority over explicit `enabled: false` for
-  // the subscription's own plugin because the user deliberately connected
-  // the subscription.
-  //
-  // Exception: Anthropic subscriptions are restricted to the Claude Code
-  // CLI by TOS.  Their tokens cannot be used by the runtime, so we must
-  // NOT force-enable @elizaos/plugin-anthropic based on subscription alone.
-  // A direct ANTHROPIC_API_KEY (set below via env-var detection) will still
-  // enable the plugin if available.
+  // Subscription providers are CLI-backed. Their tokens should not force-enable
+  // direct API-key runtime plugins; a direct API key (set below via env-var
+  // detection) will still enable the corresponding plugin when available.
   const subscriptionProvider = getSubscriptionProvider(updatedConfig);
   const subscriptionIsRuntimeApplicable =
     typeof subscriptionProvider === "string" &&
-    subscriptionProvider !== "anthropic-subscription";
+    subscriptionProvider !== "anthropic-subscription" &&
+    subscriptionProvider !== "openai-codex";
   const subscriptionPluginId = subscriptionIsRuntimeApplicable
     ? SUBSCRIPTION_PROVIDER_MAP[
         subscriptionProvider as keyof typeof SUBSCRIPTION_PROVIDER_MAP

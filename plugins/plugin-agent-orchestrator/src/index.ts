@@ -10,7 +10,7 @@
  * @module @elizaos/plugin-agent-orchestrator
  */
 
-import { ModelType, type IAgentRuntime, type Plugin } from "@elizaos/core";
+import { type IAgentRuntime, ModelType, type Plugin } from "@elizaos/core";
 // Side-effect: register coding-agent HTTP routes with the runtime route registry.
 import "./register-routes.js";
 import { finalizeWorkspaceAction } from "./actions/finalize-workspace.js";
@@ -30,15 +30,16 @@ import { taskShareAction } from "./actions/task-share.js";
 // Providers
 import { codingAgentExamplesProvider } from "./providers/action-examples.js";
 import { activeWorkspaceContextProvider } from "./providers/active-workspace-context.js";
-// Services
-import { PTYService } from "./services/pty-service.js";
-import { CodingWorkspaceService } from "./services/workspace-service.js";
 import {
   codexCliImageDescriptionModel,
+  codexCliObjectModel,
   codexCliTextModel,
   isCodexModelProviderEnabled,
   readCodexModelProviderPriority,
 } from "./services/codex-model-provider.js";
+// Services
+import { PTYService } from "./services/pty-service.js";
+import { CodingWorkspaceService } from "./services/workspace-service.js";
 
 export const taskAgentPlugin: Plugin = {
   name: "@elizaos/plugin-agent-orchestrator",
@@ -61,6 +62,8 @@ export const taskAgentPlugin: Plugin = {
       ModelType.TEXT_MEDIUM,
       ModelType.TEXT_LARGE,
       ModelType.TEXT_MEGA,
+      ModelType.TEXT_REASONING_SMALL,
+      ModelType.TEXT_REASONING_LARGE,
       ModelType.RESPONSE_HANDLER,
       ModelType.ACTION_PLANNER,
       ModelType.TEXT_COMPLETION,
@@ -68,6 +71,17 @@ export const taskAgentPlugin: Plugin = {
       runtime.registerModel(
         modelType,
         textHandler,
+        taskAgentPlugin.name,
+        priority,
+      );
+    }
+    const objectHandler = codexCliObjectModel as unknown as Parameters<
+      IAgentRuntime["registerModel"]
+    >[1];
+    for (const modelType of [ModelType.OBJECT_SMALL, ModelType.OBJECT_LARGE]) {
+      runtime.registerModel(
+        modelType,
+        objectHandler,
         taskAgentPlugin.name,
         priority,
       );

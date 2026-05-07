@@ -223,6 +223,15 @@ export async function runPlannerLoop(
 			failures,
 		});
 
+		const latestStep = trajectory.steps[trajectory.steps.length - 1];
+		if (latestStep?.result?.continueChain === false) {
+			return {
+				status: "finished",
+				trajectory,
+				finalMessage: latestStep.result.text,
+			};
+		}
+
 		const evaluator = await evaluateTrajectory(params, trajectory, iteration);
 		trajectory.evaluatorOutputs.push(evaluator);
 
@@ -691,12 +700,32 @@ function normalizeToolCall(entry: unknown): PlannerToolCall | null {
 	}
 
 	const record = entry as ToolCall & Record<string, unknown>;
-	const name = String(record.name ?? record.tool ?? record.action ?? "").trim();
+	const functionRecord =
+		record.function && typeof record.function === "object"
+			? (record.function as Record<string, unknown>)
+			: undefined;
+	const name = String(
+		record.name ??
+			record.tool ??
+			record.action ??
+			record.toolName ??
+			record.recipient_name ??
+			record.recipientName ??
+			record.functionName ??
+			functionRecord?.name ??
+			"",
+	).trim();
 	if (!name) {
 		return null;
 	}
 
-	const args = normalizeArgs(record.args ?? record.arguments ?? record.params);
+	const args = normalizeArgs(
+		record.args ??
+			record.arguments ??
+			record.params ??
+			record.parameters ??
+			functionRecord?.arguments,
+	);
 	return {
 		id: typeof record.id === "string" ? record.id : undefined,
 		name,

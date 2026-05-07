@@ -28,12 +28,15 @@ import type {
 import { logger } from "@elizaos/core";
 
 type RoleGate = "user" | "admin" | "owner";
+type RoleName = "OWNER" | "ADMIN" | "USER" | "GUEST";
 
 const ROLE_GATE_RANK: Record<RoleGate, number> = {
   user: 1,
   admin: 2,
   owner: 3,
 };
+
+const ACTION_ROLE_POLICY_SETTING = "ACTION_ROLE_POLICY";
 
 // ---------------------------------------------------------------------------
 // Plugin-level defaults — every action in the plugin gets at least this role.
@@ -234,6 +237,105 @@ function roleCheckPasses(
   }
 }
 
+function normalizePolicyKey(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function normalizeRoleName(value: unknown): RoleName | null {
+  const upper = typeof value === "string" ? value.trim().toUpperCase() : "";
+  switch (upper) {
+    case "OWNER":
+    case "ADMIN":
+    case "USER":
+    case "GUEST":
+      return upper;
+    default:
+      return null;
+  }
+}
+
+function roleNameToGate(role: RoleName): RoleGate | null {
+  switch (role) {
+    case "OWNER":
+      return "owner";
+    case "ADMIN":
+      return "admin";
+    case "USER":
+      return "user";
+    case "GUEST":
+      return null;
+  }
+}
+
+function readRuntimeSetting(
+  runtime: IAgentRuntime,
+  key: string,
+): string | undefined {
+  try {
+    const value = runtime.getSetting?.(key) ?? process.env[key];
+    return typeof value === "string" && value.trim().length > 0
+      ? value.trim()
+      : undefined;
+  } catch {
+    return process.env[key];
+  }
+}
+
+function parseActionRolePolicy(
+  runtime: IAgentRuntime,
+): Record<string, RoleName> {
+  const raw = readRuntimeSetting(runtime, ACTION_ROLE_POLICY_SETTING);
+  if (!raw) {
+    return {};
+  }
+
+  let parsed: unknown = raw;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {};
+  }
+
+  const policy: Record<string, RoleName> = {};
+  for (const [name, roleValue] of Object.entries(
+    parsed as Record<string, unknown>,
+  )) {
+    const role = normalizeRoleName(roleValue);
+    const key = normalizePolicyKey(name);
+    if (role && key) {
+      policy[key] = role;
+    }
+  }
+  return policy;
+}
+
+function resolveConfiguredActionGate(
+  runtime: IAgentRuntime,
+  action: Action,
+): RoleGate | null | undefined {
+  const policy = parseActionRolePolicy(runtime);
+  const candidates = [
+    action.name,
+    ...(Array.isArray(action.similes) ? action.similes : []),
+  ];
+
+  for (const candidate of candidates) {
+    const role = policy[normalizePolicyKey(candidate)];
+    if (role) {
+      return roleNameToGate(role);
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Wrap an action's validate function so it rejects callers below the gate.
  */
@@ -249,21 +351,29 @@ function gateAction(action: Action, gate: RoleGate): void {
     message: Memory,
     state?: State,
   ): Promise<boolean> => {
+    const configuredGate = resolveConfiguredActionGate(runtime, action);
+    const effectiveGate = configuredGate === undefined ? gate : configuredGate;
+    if (!effectiveGate) {
+      return originalValidate
+        ? originalValidate(runtime, message, state)
+        : true;
+    }
+
     const { checkSenderRole } = await import("./roles.js");
 
     const check = await checkSenderRole(runtime, message);
     if (!check) {
       logger.debug(
         `[role-gating] ${action.name} blocked for entity ${message.entityId} ` +
-          `(role: unknown, requires: ${gate})`,
+          `(role: unknown, requires: ${effectiveGate})`,
       );
       return false;
     }
 
-    if (!roleCheckPasses(check, gate)) {
+    if (!roleCheckPasses(check, effectiveGate)) {
       logger.debug(
         `[role-gating] ${action.name} blocked for entity ${message.entityId} ` +
-          `(role: ${check.role}, requires: ${gate})`,
+          `(role: ${check.role}, requires: ${effectiveGate})`,
       );
       return false;
     }

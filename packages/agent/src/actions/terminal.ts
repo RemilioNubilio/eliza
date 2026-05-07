@@ -21,13 +21,22 @@ import type {
   Memory,
 } from "@elizaos/core";
 import { ContentType, logger, stringToUuid } from "@elizaos/core";
-import { hasOwnerAccess } from "../security/access.js";
+import { hasActionRoleAccess } from "../security/access.js";
 
 /** API port for posting terminal requests. */
-const API_PORT = process.env.API_PORT || process.env.SERVER_PORT || "2138";
+function getApiPort(): string {
+  return (
+    process.env.API_PORT ||
+    process.env.SERVER_PORT ||
+    process.env.ELIZA_API_PORT ||
+    process.env.MILADY_API_PORT ||
+    "2138"
+  );
+}
 const TERMINAL_ACTION_NAME = "SHELL_COMMAND";
 
 const FAIL = { success: false, text: "" } as const;
+const TERMINAL_RUN_TOKEN_SETTING = "ELIZA_TERMINAL_RUN_TOKEN";
 
 type TerminalActionParameters = {
   arguments?: JsonValue;
@@ -110,6 +119,22 @@ function resolveTerminalInput(options?: HandlerOptions): TerminalActionInput {
   return {
     command: getCommand(options),
   };
+}
+
+function readTerminalRunToken(runtime: IAgentRuntime): string | undefined {
+  const envToken = normalizeTerminalRunToken(
+    process.env[TERMINAL_RUN_TOKEN_SETTING],
+  );
+  const runtimeToken = normalizeTerminalRunToken(
+    runtime.getSetting?.(TERMINAL_RUN_TOKEN_SETTING),
+  );
+  return envToken ?? runtimeToken;
+}
+
+function normalizeTerminalRunToken(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }
 
 function normalizeCapturedRun(
@@ -279,11 +304,18 @@ export const terminalAction: Action = {
     // current request is the planner's job — not a regex / keyword scan in
     // validate. The action's description + similes + examples are the
     // contract the planner uses.
-    return hasOwnerAccess(runtime, message);
+    return hasActionRoleAccess(runtime, message, TERMINAL_ACTION_NAME, "OWNER");
   },
 
   handler: async (runtime, message, _state, options) => {
-    if (!(await hasOwnerAccess(runtime, message))) {
+    if (
+      !(await hasActionRoleAccess(
+        runtime,
+        message,
+        TERMINAL_ACTION_NAME,
+        "OWNER",
+      ))
+    ) {
       return {
         success: false,
         text: "Permission denied: only the owner may run terminal commands.",
@@ -303,11 +335,17 @@ export const terminalAction: Action = {
     }
 
     try {
+      const terminalRunToken = readTerminalRunToken(runtime);
       const response = await fetch(
-        `http://localhost:${API_PORT}/api/terminal/run`,
+        `http://localhost:${getApiPort()}/api/terminal/run`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(terminalRunToken
+              ? { "X-Eliza-Terminal-Token": terminalRunToken }
+              : {}),
+          },
           body: JSON.stringify({
             command,
             clientId: "runtime-terminal-action",
@@ -317,7 +355,16 @@ export const terminalAction: Action = {
       );
 
       if (!response.ok) {
-        return FAIL;
+        const errorText = await response.text().catch(() => "");
+        return {
+          success: false,
+          text: `Terminal request failed: HTTP ${response.status}${errorText ? ` ${errorText}` : ""}`,
+          error: `Terminal request failed: HTTP ${response.status}`,
+          data: {
+            actionName: TERMINAL_ACTION_NAME,
+            suppressPostActionContinuation: true,
+          },
+        };
       }
 
       const responseBody = (await response.json()) as JsonValue;

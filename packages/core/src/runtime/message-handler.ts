@@ -76,7 +76,7 @@ export function routeMessageHandlerOutput(
 	return {
 		type: "planning_needed",
 		output,
-		contexts,
+		contexts: ["general"],
 	};
 }
 

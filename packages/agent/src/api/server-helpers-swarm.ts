@@ -233,6 +233,7 @@ export async function handleSwarmSynthesis(
       completionSummary: string;
       roomId?: string | null;
       workdir?: string;
+      replyToExternalMessageId?: string | null;
     }>;
     total: number;
     completed: number;
@@ -265,19 +266,32 @@ export async function handleSwarmSynthesis(
   // stale rooms when the coordinator carries tasks across rooms.
   const terminalStatuses = new Set(["completed", "stopped", "errored"]);
   let fallbackRoomId: string | null = null;
+  let fallbackReplyToExternalMessageId: string | null = null;
   for (let i = payload.tasks.length - 1; i >= 0; i--) {
     const candidate = payload.tasks[i];
+    const candidateReplyId =
+      typeof candidate.replyToExternalMessageId === "string" &&
+      candidate.replyToExternalMessageId.trim().length > 0
+        ? candidate.replyToExternalMessageId.trim()
+        : null;
     if (typeof candidate.roomId !== "string" || !candidate.roomId) continue;
     if (terminalStatuses.has(candidate.status)) {
       fallbackRoomId = candidate.roomId;
+      fallbackReplyToExternalMessageId = candidateReplyId;
       break;
     }
     // Track last-seen room as a fallback if no terminal task carries one.
     if (!fallbackRoomId) {
       fallbackRoomId = candidate.roomId;
+      fallbackReplyToExternalMessageId = candidateReplyId;
     }
   }
-  await routeSynthesisToConnector(runtime, resultText, fallbackRoomId);
+  await routeSynthesisToConnector(
+    runtime,
+    resultText,
+    fallbackRoomId,
+    fallbackReplyToExternalMessageId,
+  );
 }
 
 async function buildSynthesisResultText(payload: {
@@ -285,6 +299,7 @@ async function buildSynthesisResultText(payload: {
     originalTask: string;
     completionSummary: string;
     status: string;
+    agentType: string;
     workdir?: string;
   }>;
   total: number;
@@ -298,14 +313,13 @@ async function buildSynthesisResultText(payload: {
 async function buildTaskResultLine(task: {
   originalTask: string;
   completionSummary: string;
+  agentType: string;
   workdir?: string;
 }): Promise<string> {
-  // Prefer the agent's actual final assistant message: that's the real
-  // deliverable (news brief, code summary, URL, etc.). The coordinator's
-  // completionSummary is a meta-judgment about whether the task finished,
-  // not the content the agent produced. Only fall through if the jsonl
-  // can't be read.
-  if (task.workdir) {
+  // Claude Code persists final assistant messages in per-workdir jsonl. That
+  // path is Claude-specific; for Codex and other agents the coordinator's
+  // completionSummary is already the captured user-facing output.
+  if (task.agentType === "claude" && task.workdir) {
     const finalText = await readAgentFinalAssistantMessage(task.workdir);
     if (finalText) return finalText;
   }
@@ -399,6 +413,7 @@ async function routeSynthesisToConnector(
   runtime: AgentRuntime,
   resultText: string,
   fallbackRoomId: string | null = null,
+  replyToExternalMessageId: string | null = null,
 ): Promise<void> {
   const coordinator = getCoordinatorFromRuntime(runtime);
   const sourceRoomId = coordinator?.sourceRoomId ?? fallbackRoomId;
@@ -413,7 +428,13 @@ async function routeSynthesisToConnector(
         channelId: room.channelId ?? room.id,
         serverId: room.serverId,
       } as Parameters<typeof runtime.sendMessageToTarget>[0],
-      { text: resultText, source: "swarm_synthesis" },
+      {
+        text: resultText,
+        source: "swarm_synthesis",
+        ...(replyToExternalMessageId
+          ? { inReplyTo: replyToExternalMessageId }
+          : {}),
+      },
     );
     logger.info(
       `[swarm-synthesis] Routed result to ${room.source} room ${room.id}`,

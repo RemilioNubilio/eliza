@@ -858,12 +858,24 @@ export class DiscordService extends Service implements IDiscordService {
 					);
 
 					const textContent = normalizeDiscordMessageText(content.text);
+					const replyToMessageId =
+						typeof content.inReplyTo === "string" &&
+						DISCORD_SNOWFLAKE_PATTERN.test(content.inReplyTo.trim())
+							? content.inReplyTo.trim()
+							: undefined;
 					if (textContent || files.length > 0) {
 						if (textContent) {
 							const chunks = splitMessage(textContent, MAX_MESSAGE_LENGTH);
 							if (chunks.length > 1) {
 								for (let i = 0; i < chunks.length - 1; i++) {
-									const sent = await targetChannel.send(chunks[i]);
+									const sent = await targetChannel.send(
+										i === 0 && replyToMessageId
+											? {
+													content: chunks[i],
+													reply: { messageReference: replyToMessageId },
+												}
+											: chunks[i],
+									);
 									sentMessages.push(sent);
 								}
 								const sent = await targetChannel.send({
@@ -875,12 +887,18 @@ export class DiscordService extends Service implements IDiscordService {
 								const sent = await targetChannel.send({
 									content: chunks[0],
 									files: files.length > 0 ? files : undefined,
+									...(replyToMessageId
+										? { reply: { messageReference: replyToMessageId } }
+										: {}),
 								});
 								sentMessages.push(sent);
 							}
 						} else {
 							const sent = await targetChannel.send({
 								files,
+								...(replyToMessageId
+									? { reply: { messageReference: replyToMessageId } }
+									: {}),
 							});
 							sentMessages.push(sent);
 						}
@@ -929,6 +947,9 @@ export class DiscordService extends Service implements IDiscordService {
 									text: sentMsg.content || textContent || " ",
 									url: sentMsg.url,
 									channelType,
+									...(content.inReplyTo
+										? { inReplyTo: content.inReplyTo }
+										: {}),
 									...(hasAttachments && content.attachments
 										? { attachments: content.attachments }
 										: {}),

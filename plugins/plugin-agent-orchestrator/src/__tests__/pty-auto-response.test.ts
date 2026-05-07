@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { splitAgentSpecsParam } from "../actions/coding-task-handlers.js";
-import { shouldSuppressCodexExecPtyManagerEvent } from "../services/pty-service.js";
+import {
+  needsIsolatedCodexHome,
+  shouldSuppressCodexExecPtyManagerEvent,
+} from "../services/pty-service.js";
 import {
   type SessionIOContext,
   stopSession as stopSessionIO,
@@ -90,6 +93,8 @@ describe("Codex exec adapter", () => {
       "--ephemeral",
       "-c",
       "model_reasoning_effort=xhigh",
+      "-c",
+      "tools.web_search=true",
       "--model",
       "gpt-codex-test",
       "--yolo",
@@ -102,6 +107,20 @@ describe("Codex exec adapter", () => {
       "/tmp/codex-last-message.txt",
       "build the app",
     ]);
+  });
+});
+
+describe("Codex auth home selection", () => {
+  it("uses the normal Codex home for subscription auth and isolates API-key/cloud config", () => {
+    expect(needsIsolatedCodexHome()).toBe(false);
+    expect(needsIsolatedCodexHome({})).toBe(false);
+    expect(needsIsolatedCodexHome({ openaiKey: "sk-test" })).toBe(true);
+    expect(
+      needsIsolatedCodexHome({ openaiBaseUrl: "https://example.test/v1" }),
+    ).toBe(true);
+    expect(
+      needsIsolatedCodexHome({ extraConfigToml: 'model_provider = "x"' }),
+    ).toBe(true);
   });
 });
 

@@ -78,6 +78,21 @@ const TOOL_MARKER_LINE =
 /** Git status/diff noise that's not meaningful for coordination. */
 const GIT_NOISE_LINE =
   /^\s*(?:On branch\s+\w|Your branch is|modified:|new file:|deleted:|renamed:|Untracked files:|Changes (?:not staged|to be committed)|\d+\s+files?\s+changed.*(?:insertion|deletion))/i;
+const PATCH_MARKER_LINE =
+  /^(?:diff --git\b|index\s+[a-f0-9]{7,}\.\.[a-f0-9]{7,}|@@\s|---\s+[ab]\/|\+\+\+\s+[ab]\/)/;
+const PATCH_ADDED_REMOVED_LINE = /^[+-]\s/;
+const SOURCE_PUNCTUATION_LINE =
+  /[{}();=]|\b(?:const|let|var|function|return|class|import|export)\b/;
+const PUBLIC_URL_RE =
+  /https?:\/\/(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"')\]]*)?/gi;
+const ASSISTANT_FINAL_MARKER_LINE =
+  /^(?:codex|claude|claude code|gemini|opencode|openai)$/i;
+const FINAL_BLOCK_STOP_LINE =
+  /^(?:diff --git\b|exec\b|tokens used\b|thinking\b|error:\s|warning:\s|index\s+[a-f0-9]{7,}\.\.[a-f0-9]{7,}|@@\s|---\s+[ab]\/|\+\+\+\s+[ab]\/)/i;
+const COMPLETION_BLOCK_ANCHOR_LINE =
+  /^(?:built|created|implemented|updated|added|done\b|completed\b|url:\s*https?:\/\/|https?:\/\/|appId:\s*|verified:?|tests? run:?)/i;
+const COMPLETION_BLOCK_SIGNAL_LINE =
+  /^(?:url:\s*https?:\/\/|appId:\s*|monetization:\s*|auth:\s*|verified:?|tests? run:?|pr:\s*https?:\/\/github\.com)/i;
 
 /** Codex/Claude launcher banners and trust screens that pollute failover prompts. */
 const SESSION_BOOTSTRAP_NOISE_PATTERNS = [
@@ -102,6 +117,134 @@ const SESSION_BOOTSTRAP_NOISE_PATTERNS = [
 
 function isSessionBootstrapNoiseLine(line: string): boolean {
   return SESSION_BOOTSTRAP_NOISE_PATTERNS.some((pattern) => pattern.test(line));
+}
+
+function isLikelyRawPatchOrSourceDump(text: string): boolean {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 8) return false;
+
+  if (lines.some((line) => PATCH_MARKER_LINE.test(line))) {
+    return true;
+  }
+
+  const patchLines = lines.filter((line) =>
+    PATCH_ADDED_REMOVED_LINE.test(line),
+  );
+  const sourceLikePatchLines = patchLines.filter((line) =>
+    SOURCE_PUNCTUATION_LINE.test(line),
+  );
+  return (
+    patchLines.length >= 5 &&
+    patchLines.length / lines.length >= 0.45 &&
+    sourceLikePatchLines.length >= 3
+  );
+}
+
+function extractAssistantFinalBlock(lines: string[]): string {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!ASSISTANT_FINAL_MARKER_LINE.test(lines[i])) continue;
+    const block: string[] = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const line = lines[j].trim();
+      if (!line) {
+        if (block.length > 0) block.push("");
+        continue;
+      }
+      if (FINAL_BLOCK_STOP_LINE.test(line)) break;
+      block.push(line);
+    }
+    const text = block.join("\n").trim();
+    if (
+      text &&
+      !isLikelyRawPatchOrSourceDump(text) &&
+      /(?:\bURL:\s*https?:\/\/|https?:\/\/|verified:?|tests? run:?|PR:\s*https?:\/\/github\.com)/i.test(
+        text,
+      )
+    ) {
+      return text;
+    }
+  }
+  return "";
+}
+
+function lineContainsPublicUrl(line: string): boolean {
+  PUBLIC_URL_RE.lastIndex = 0;
+  return PUBLIC_URL_RE.test(line);
+}
+
+function normalizeUrlForDedupe(url: string): string {
+  return url.trim().replace(/[.,;:!?]+$/u, "");
+}
+
+function dedupeCompletionBlockLines(lines: string[]): string[] {
+  const seenUrls = new Set<string>();
+  const result: string[] = [];
+
+  for (const line of lines) {
+    const matches = line.match(PUBLIC_URL_RE) ?? [];
+    const normalizedMatches = matches.map(normalizeUrlForDedupe);
+    const isBareRepeatedUrl =
+      normalizedMatches.length === 1 &&
+      line.trim() === normalizedMatches[0] &&
+      seenUrls.has(normalizedMatches[0]);
+    if (isBareRepeatedUrl) continue;
+
+    result.push(line);
+    for (const normalized of normalizedMatches) {
+      seenUrls.add(normalized);
+    }
+  }
+
+  return result;
+}
+
+function extractStructuredCompletionBlock(lines: string[]): string {
+  const normalized = lines.map((line) => line.trim());
+  for (let i = normalized.length - 1; i >= 0; i--) {
+    const line = normalized[i];
+    if (!COMPLETION_BLOCK_SIGNAL_LINE.test(line)) continue;
+
+    let start = i;
+    while (start > 0) {
+      const previous = normalized[start - 1];
+      if (!previous) {
+        start -= 1;
+        continue;
+      }
+      if (FINAL_BLOCK_STOP_LINE.test(previous)) break;
+      if (!COMPLETION_BLOCK_ANCHOR_LINE.test(previous) && start < i - 2) {
+        break;
+      }
+      start -= 1;
+    }
+
+    const block: string[] = [];
+    for (let j = start; j < normalized.length; j++) {
+      const current = normalized[j];
+      if (!current) {
+        if (block.length > 0) block.push("");
+        continue;
+      }
+      if (block.length > 0 && FINAL_BLOCK_STOP_LINE.test(current)) break;
+      block.push(current);
+    }
+
+    const text = dedupeCompletionBlockLines(block).join("\n").trim();
+    if (
+      text &&
+      lineContainsPublicUrl(text) &&
+      !isLikelyRawPatchOrSourceDump(text) &&
+      /(?:\bverified:?|tests? run:?|built|created|implemented|updated|added|appId:|monetization:|auth:|PR:\s*https?:\/\/github\.com)/i.test(
+        text,
+      )
+    ) {
+      return text;
+    }
+  }
+  return "";
 }
 
 /**
@@ -198,6 +341,15 @@ export function cleanForFailoverContext(raw: string, workdir?: string): string {
 export function extractCompletionSummary(raw: string): string {
   const stripped = applyAnsiStrip(raw);
   const strippedLines = stripped.split("\n").map((line) => line.trim());
+  const assistantFinalBlock = extractAssistantFinalBlock(strippedLines);
+  if (assistantFinalBlock) {
+    return assistantFinalBlock;
+  }
+  const structuredCompletionBlock =
+    extractStructuredCompletionBlock(strippedLines);
+  if (structuredCompletionBlock) {
+    return structuredCompletionBlock;
+  }
   const lines: string[] = [];
 
   // PR / issue URLs
@@ -248,7 +400,44 @@ export function extractCompletionSummary(raw: string): string {
     for (const line of new Set(domainStatusLines)) lines.push(line);
   }
 
+  const publicUrls = stripped.match(PUBLIC_URL_RE);
+  if (publicUrls) {
+    for (const url of new Set(publicUrls)) {
+      const normalizedUrl = normalizeUrlForDedupe(url);
+      const alreadyIncluded = lines.some((line) =>
+        line.includes(normalizedUrl),
+      );
+      if (!url.includes("github.com/") && !alreadyIncluded) {
+        lines.push(url);
+      }
+    }
+  }
+
   return lines.join("\n");
+}
+
+export function summarizeUserFacingTurnOutput(raw: string): string {
+  const artifactSummary = extractCompletionSummary(raw).trim();
+  if (artifactSummary) {
+    return artifactSummary;
+  }
+
+  const cleaned = cleanForChat(raw)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join("\n")
+    .trim();
+
+  if (!cleaned) {
+    return "";
+  }
+
+  if (isLikelyRawPatchOrSourceDump(cleaned)) {
+    return "Task agent completed but did not produce a user-facing final summary.";
+  }
+
+  return cleaned;
 }
 
 /**

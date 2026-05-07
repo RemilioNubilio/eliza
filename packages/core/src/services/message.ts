@@ -1003,6 +1003,8 @@ function createV5MessageContextObject(args: {
 	state: State;
 	selectedContexts?: readonly AgentContext[];
 	includeTools?: boolean;
+	toolActions?: readonly Action[];
+	userRoles?: readonly RoleGateRole[];
 }): ContextObject {
 	const events: ContextEvent[] = [];
 	const addInstruction = (
@@ -1074,10 +1076,13 @@ function createV5MessageContextObject(args: {
 	});
 
 	if (args.includeTools && args.selectedContexts?.length) {
-		const actions = filterByContextGate(
-			args.runtime.actions,
-			args.selectedContexts,
-		);
+		const actions =
+			args.toolActions ??
+			filterByContextGate(
+				args.runtime.actions,
+				args.selectedContexts,
+				args.userRoles,
+			);
 		for (const action of actions) {
 			try {
 				const tool = actionToTool(action);
@@ -1111,6 +1116,38 @@ function createV5MessageContextObject(args: {
 		},
 		events,
 	});
+}
+
+async function collectValidatedPlannerActions(args: {
+	runtime: IAgentRuntime;
+	message: Memory;
+	state: State;
+	selectedContexts: readonly AgentContext[];
+	userRoles?: readonly RoleGateRole[];
+}): Promise<Action[]> {
+	const contextAllowed = filterByContextGate(
+		args.runtime.actions,
+		args.selectedContexts,
+		args.userRoles,
+	);
+	const available: Action[] = [];
+	for (const action of contextAllowed) {
+		if (!action.validate) {
+			available.push(action);
+			continue;
+		}
+		try {
+			if (await action.validate(args.runtime, args.message, args.state)) {
+				available.push(action);
+			}
+		} catch (error) {
+			args.runtime.logger?.warn?.(
+				{ src: "service:message", action: action.name, error },
+				"Skipping action whose validate() failed before v5 tool exposure",
+			);
+		}
+	}
+	return available;
 }
 
 /**
@@ -1408,10 +1445,20 @@ export async function runV5MessageRuntimeStage1(args: {
 
 		const selectedContexts =
 			route.type === "planning_needed" ? route.contexts : [];
+		const userRoles = [senderRole];
+		const plannerActions = await collectValidatedPlannerActions({
+			runtime: args.runtime,
+			message: args.message,
+			state: args.state,
+			selectedContexts,
+			userRoles,
+		});
 		const plannerContext = createV5MessageContextObject({
 			...args,
 			selectedContexts,
 			includeTools: true,
+			toolActions: plannerActions,
+			userRoles,
 		});
 		const plannerRuntime: PlannerRuntime = {
 			useModel: (modelType, modelParams, provider) =>
@@ -1439,8 +1486,10 @@ export async function runV5MessageRuntimeStage1(args: {
 						message: args.message,
 						state: args.state,
 						activeContexts: selectedContexts,
+						userRoles,
 						previousResults: collectPreviousActionResults(ctx.trajectory),
 					},
+					executorOptions: { actions: plannerActions },
 					plannerRuntime,
 					evaluatorEffects,
 					recorder,
@@ -2830,7 +2879,10 @@ export function shouldPromoteExplicitReplyToOwnedAction(
 	if (!suggestion || !hasExplicitReplyIntent(responseContent)) {
 		return false;
 	}
-	if (looksLikeActionExplanationRequest(messageText)) {
+	if (
+		suggestion.reasons.includes("direct:local-shell-check") &&
+		looksLikeActionExplanationRequest(messageText)
+	) {
 		return false;
 	}
 	return (

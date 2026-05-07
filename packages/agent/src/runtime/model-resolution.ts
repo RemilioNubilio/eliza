@@ -45,6 +45,10 @@ export function resolvePrimaryModel(config: ElizaConfig): string | undefined {
 export function resolvePreferredProviderId(
   config: ElizaConfig,
 ): string | undefined {
+  if (config.agents?.defaults?.subscriptionProvider === "openai-codex") {
+    return "openai-codex";
+  }
+
   const llmText = resolveServiceRoutingInConfig(
     config as Record<string, unknown>,
   )?.llmText;

@@ -117,7 +117,9 @@ export function buildAgentCredentials(
     : rawAnthropicKey;
   const directCredentials = compactCredentials({
     anthropicKey: subscriptionMode ? undefined : anthropicKey,
-    openaiKey: runtime.getSetting("OPENAI_API_KEY") as string | undefined,
+    openaiKey: subscriptionMode
+      ? undefined
+      : (runtime.getSetting("OPENAI_API_KEY") as string | undefined),
     googleKey: runtime.getSetting("GOOGLE_GENERATIVE_AI_API_KEY") as
       | string
       | undefined,
@@ -127,7 +129,9 @@ export function buildAgentCredentials(
       : anthropicKey
         ? (runtime.getSetting("ANTHROPIC_BASE_URL") as string | undefined)
         : undefined,
-    openaiBaseUrl: runtime.getSetting("OPENAI_BASE_URL") as string | undefined,
+    openaiBaseUrl: subscriptionMode
+      ? undefined
+      : (runtime.getSetting("OPENAI_BASE_URL") as string | undefined),
   });
   return directCredentials;
 }

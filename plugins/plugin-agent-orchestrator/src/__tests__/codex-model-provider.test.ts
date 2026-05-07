@@ -1,19 +1,24 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ModelType, type IAgentRuntime } from "@elizaos/core";
+import { type IAgentRuntime, ModelType } from "@elizaos/core";
 import { describe, expect, it, vi } from "vitest";
 import { taskAgentPlugin } from "../index.js";
 import {
   buildCodexExecArgs,
+  buildCodexExecEnv,
   buildCodexImageDescriptionPrompt,
   buildCodexModelPrompt,
+  buildCodexObjectPrompt,
   codexCliImageDescriptionModel,
+  codexCliObjectModel,
   codexCliTextModel,
   isCodexModelProviderEnabled,
   parseCodexImageDescriptionResult,
+  parseCodexObjectResult,
   promptFromGenerateTextParams,
   readCodexModelProviderPriority,
+  resolveCodexExecOptions,
   runCodexExec,
 } from "../services/codex-model-provider.js";
 
@@ -34,6 +39,7 @@ describe("codex model provider", () => {
       model: "gpt-5.5",
       reasoningEffort: "low",
       timeoutMs: 1000,
+      inheritOpenAIEnv: false,
     });
 
     expect(args).toEqual([
@@ -66,6 +72,24 @@ describe("codex model provider", () => {
     expect(readCodexModelProviderPriority(runtime)).toBe(77);
   });
 
+  it("enables the Codex provider when runtime model selection is openai-codex", () => {
+    const runtime = runtimeWithSettings({
+      MODEL_PROVIDER: "openai-codex",
+    });
+
+    expect(isCodexModelProviderEnabled(runtime)).toBe(true);
+  });
+
+  it("allows an explicit zero timeout for long-running Codex subscription calls", () => {
+    const options = resolveCodexExecOptions(
+      runtimeWithSettings({
+        PARALLAX_CODEX_MODEL_TIMEOUT_MS: "0",
+      }),
+    );
+
+    expect(options.timeoutMs).toBe(0);
+  });
+
   it("registers Codex models during plugin init", () => {
     const runtime = runtimeWithSettings({
       PARALLAX_CODEX_MODEL_PROVIDER: "true",
@@ -83,6 +107,12 @@ describe("codex model provider", () => {
     expect(runtime.registerModel).toHaveBeenCalledWith(
       ModelType.TEXT_LARGE,
       codexCliTextModel,
+      taskAgentPlugin.name,
+      77,
+    );
+    expect(runtime.registerModel).toHaveBeenCalledWith(
+      ModelType.OBJECT_SMALL,
+      codexCliObjectModel,
       taskAgentPlugin.name,
       77,
     );
@@ -110,6 +140,7 @@ describe("codex model provider", () => {
         model: "gpt-5.4-mini",
         reasoningEffort: "low",
         timeoutMs: 1000,
+        inheritOpenAIEnv: false,
       },
       true,
       { imagePaths: ["/tmp/a.png", "/tmp/b.webp"] },
@@ -136,6 +167,39 @@ describe("codex model provider", () => {
     expect(prompt).toContain("return <response><text>ok</text></response>");
   });
 
+  it("keeps direct OpenAI runtime credentials out of Codex CLI subprocesses by default", () => {
+    const env = buildCodexExecEnv(
+      {
+        OPENAI_API_KEY: "sk-runtime-key",
+        OPENAI_BASE_URL: "https://api.example.test/v1",
+        OPENAI_ORG_ID: "org_test",
+        OPENAI_PROJECT: "proj_test",
+        CODEX_HOME: "/tmp/codex-home",
+      },
+      { inheritOpenAIEnv: false },
+    );
+
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(env.OPENAI_BASE_URL).toBeUndefined();
+    expect(env.OPENAI_ORG_ID).toBeUndefined();
+    expect(env.OPENAI_PROJECT).toBeUndefined();
+    expect(env.CODEX_HOME).toBe("/tmp/codex-home");
+    expect(env.NO_COLOR).toBe("1");
+  });
+
+  it("can opt into inheriting OpenAI env for API-key Codex CLI setups", () => {
+    const env = buildCodexExecEnv(
+      {
+        OPENAI_API_KEY: "sk-runtime-key",
+        OPENAI_BASE_URL: "https://api.example.test/v1",
+      },
+      { inheritOpenAIEnv: true },
+    );
+
+    expect(env.OPENAI_API_KEY).toBe("sk-runtime-key");
+    expect(env.OPENAI_BASE_URL).toBe("https://api.example.test/v1");
+  });
+
   it("builds bounded image-description prompts and parses JSON results", () => {
     const prompt = buildCodexImageDescriptionPrompt({
       imageUrl: "https://example.test/image.png",
@@ -153,6 +217,32 @@ describe("codex model provider", () => {
     ).toEqual({
       title: "Red square",
       description: "A red square with the word RED.",
+    });
+  });
+
+  it("builds object prompts and parses fenced JSON objects", () => {
+    const prompt = buildCodexObjectPrompt(
+      {
+        prompt: "pick an action",
+        schema: {
+          type: "object",
+          properties: {
+            action: { type: "string" },
+          },
+          required: ["action"],
+        },
+      },
+      "OBJECT_SMALL",
+    );
+
+    expect(prompt).toContain("object-generation model provider");
+    expect(prompt).toContain("Model type: OBJECT_SMALL");
+    expect(prompt).toContain('"action"');
+    expect(parseCodexObjectResult('```json\n{"action":"REPLY"}\n```')).toEqual({
+      action: "REPLY",
+    });
+    expect(parseCodexObjectResult('result: {"ok":true}')).toEqual({
+      ok: true,
     });
   });
 
@@ -230,6 +320,7 @@ process.exit(23);
           workdir: tempDir,
           reasoningEffort: "low",
           timeoutMs: 5000,
+          inheritOpenAIEnv: false,
         }),
       ).rejects.toThrow(/code 23|empty model response/i);
     } finally {

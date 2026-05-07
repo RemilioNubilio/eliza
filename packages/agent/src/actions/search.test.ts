@@ -198,6 +198,41 @@ describe("SEARCH action", () => {
     });
   });
 
+  it("requires a runnable web backend for implicit live external lookup intents", async () => {
+    const runtime = createRuntime();
+    await webSearchPlugin.init?.({}, runtime);
+
+    const liveExternalLookups = [
+      "what is the current BTC price in USD?",
+      "what is the latest weather in New York today?",
+      "what are the latest headlines about elizaOS?",
+      "what is the current ETH exchange rate?",
+    ];
+
+    for (const prompt of liveExternalLookups) {
+      await expect(
+        searchAction.validate?.(runtime, createMessage(prompt)),
+      ).resolves.toBe(false);
+    }
+
+    runtime.__services.set(ServiceType.WEB_SEARCH, {
+      search: vi.fn(async () => ({ results: [] })),
+    });
+
+    for (const prompt of liveExternalLookups) {
+      await expect(
+        searchAction.validate?.(runtime, createMessage(prompt)),
+      ).resolves.toBe(true);
+    }
+
+    await expect(
+      searchAction.validate?.(
+        runtime,
+        createMessage("what is the current status of the build?"),
+      ),
+    ).resolves.toBe(false);
+  });
+
   it("validates category filters before dispatch", async () => {
     const runtime = createRuntime();
     const fetchMock = vi.fn();

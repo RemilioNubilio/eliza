@@ -29,13 +29,17 @@ import {
   isAnthropicOAuthToken,
   sanitizeCustomCredentials,
 } from "../services/agent-credentials.js";
+import { resolveRequestedApprovalPreset } from "../services/approval-preset.js";
 import type { CustomValidatorSpec } from "../services/custom-validator-runner.js";
 import type { PTYService } from "../services/pty-service.js";
 import { getCoordinator } from "../services/pty-service.js";
 import { normalizeAgentType } from "../services/pty-types.js";
 import { normalizeRepositoryInput } from "../services/repo-input.js";
-import { looksLikeTaskAgentRequest } from "../services/task-agent-frameworks.js";
 import { requireTaskAgentAccess } from "../services/task-policy.js";
+import {
+  formatTaskWorkdirRouteInstructions,
+  resolveTaskWorkdirSelection,
+} from "../services/task-workdir-routes.js";
 import type { CodingWorkspaceService } from "../services/workspace-service.js";
 import {
   type CodingTaskContext,
@@ -188,10 +192,10 @@ function looksLikeProseTask(text: string | undefined | null): boolean {
  *
  * Returns `extractedTask` unchanged when:
  *   - userText is empty (programmatic spawn, no user message)
- *   - userText is shorter or equal to extractedTask (the planner just
- *     cleaned up casing/grammar — no information is lost)
- *   - extractedTask is a substring of userText (the "extraction" was a
- *     noop and userText alone carries everything)
+ *   - extractedTask already contains userText (the planner kept the full
+ *     prompt and added detail)
+ *   - extractedTask is a substring of userText (the "extraction" was a noop
+ *     and userText alone carries everything)
  *
  * Otherwise returns a two-section brief: the planner-extracted task as the
  * imperative header, and the full user message preserved for context the
@@ -204,9 +208,32 @@ export function preserveUserPromptInTask(
   const task = (extractedTask ?? "").trim();
   const raw = (userText ?? "").trim();
   if (!raw) return task;
-  if (raw.length <= task.length) return task;
+  if (hasConflictingRequestToken(task, raw)) return raw;
+  if (task.toLowerCase().includes(raw.toLowerCase())) return task;
   if (raw.toLowerCase().includes(task.toLowerCase())) return raw;
   return `${task}\n\n# Full user message (preserved — may contain context the action-selector trimmed)\n\n${raw}`;
+}
+
+function hasConflictingRequestToken(task: string, raw: string): boolean {
+  const taskTokens = extractRequestTokens(task);
+  const rawTokens = extractRequestTokens(raw);
+  if (taskTokens.size === 0 || rawTokens.size === 0) {
+    return false;
+  }
+  for (const token of taskTokens) {
+    if (rawTokens.has(token)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function extractRequestTokens(text: string): Set<string> {
+  return new Set(
+    text
+      .match(/\b[a-z][a-z0-9]*(?:-[a-z0-9]+)*-\d{8,}\b/giu)
+      ?.map((token) => token.toLowerCase()) ?? [],
+  );
 }
 
 /**
@@ -300,10 +327,11 @@ export const startCodingTaskAction: BackgroundAction = {
     "Use this whenever the work is more involved than a simple direct reply. " +
     "IMPORTANT: If the user references a repository from conversation history (e.g. 'in the same repo', " +
     "'on that project', 'add a feature to it'), you MUST include the repo URL in the `repo` parameter. " +
+    "If the task should modify an existing local workspace named in character or memory context, pass that absolute path as `workdir` instead of provisioning scratch. " +
     "If the task involves code changes to a real project but you don't know the repo URL, ASK the user for it " +
     "before calling this action. Do not default to a scratch directory for real project work.",
   descriptionCompressed:
-    "Spawn async task agents for multi-step jobs: code, debug, research, write, analyze. Auto-provisions workspace from repo URL.",
+    "Spawn async task agents for multi-step jobs; use repo/workdir when targeting real code.",
 
   suppressPostActionContinuation: true,
 
@@ -400,7 +428,7 @@ export const startCodingTaskAction: BackgroundAction = {
       return false;
     }
 
-    return looksLikeTaskAgentRequest(text);
+    return true;
   },
 
   handler: async (
@@ -439,6 +467,7 @@ export const startCodingTaskAction: BackgroundAction = {
     // Extract parameters
     const params = options?.parameters;
     const content = message.content as Record<string, unknown>;
+    const userText = (content.text as string)?.trim() || "";
 
     // Shell/pi/bash agents pipe initialTask straight to /bin/bash. When the
     // LLM picks them for a prose prompt the subagent dies on turn 1 with
@@ -452,10 +481,15 @@ export const startCodingTaskAction: BackgroundAction = {
         (content.text as string),
       "[START_CODING_TASK]",
     );
-    const memoryContent =
+    const requestedMemoryContent =
       (params?.memoryContent as string) ?? (content.memoryContent as string);
-    const approvalPreset =
-      (params?.approvalPreset as string) ?? (content.approvalPreset as string);
+    const plannerWorkdir = params?.workdir as string | undefined;
+    const contentWorkdir = content.workdir as string | undefined;
+    const approvalPreset = resolveRequestedApprovalPreset({
+      contentPreset: content.approvalPreset,
+      parameterPreset: params?.approvalPreset,
+      userText: content.text as string | undefined,
+    });
 
     // Repo is optional -- extract from params, content, or text
     let repo = (params?.repo as string) ?? (content.repo as string);
@@ -502,6 +536,32 @@ export const startCodingTaskAction: BackgroundAction = {
     if (repo) {
       repo = normalizeRepositoryInput(repo);
     }
+
+    const routeText = [
+      params?.task as string | undefined,
+      params?.agents as string | undefined,
+      content.task as string | undefined,
+      content.agents as string | undefined,
+      userText,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const workdirSelection = resolveTaskWorkdirSelection(runtime, {
+      routeText,
+      repo,
+      contentWorkdir,
+      plannerWorkdir,
+    });
+    const configuredWorkdirRoute = workdirSelection.route;
+    const workdir = workdirSelection.workdir;
+    const memoryContent = [
+      requestedMemoryContent,
+      configuredWorkdirRoute
+        ? formatTaskWorkdirRouteInstructions(configuredWorkdirRoute)
+        : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
     const selectionTask =
       (params?.task as string) ??
@@ -607,6 +667,7 @@ export const startCodingTaskAction: BackgroundAction = {
       message,
       state,
       repo,
+      workdir,
       defaultAgentType,
       rawAgentType,
       agentTypeExplicit: Boolean(explicitRawType),
@@ -630,7 +691,6 @@ export const startCodingTaskAction: BackgroundAction = {
     // user text is the source of truth for how many distinct items there
     // are.
     const task = (params?.task as string) ?? (content.task as string);
-    const userText = (content.text as string)?.trim() || "";
     const agentsParam =
       (params?.agents as string) ?? (content.agents as string);
 
@@ -644,6 +704,12 @@ export const startCodingTaskAction: BackgroundAction = {
       return handleMultiAgent(ctx, userSegments.join(" | "));
     }
     if (agentsParam) {
+      if (llmSegments.length === 1) {
+        return handleMultiAgent(
+          ctx,
+          preserveUserPromptInTask(llmSegments[0], userText) || llmSegments[0],
+        );
+      }
       return handleMultiAgent(ctx, agentsParam);
     }
     return handleMultiAgent(
@@ -660,6 +726,15 @@ export const startCodingTaskAction: BackgroundAction = {
         "ALWAYS provide this when the user is working on a real project or references a repo from context. " +
         "Only omit for pure research/scratch tasks with no target repository. " +
         "If unsure which repo, ask the user before spawning.",
+      required: false,
+      schema: { type: "string" as const },
+    },
+    {
+      name: "workdir",
+      description:
+        "Existing local workspace path to use instead of cloning/provisioning scratch. " +
+        "Use this when character or memory context explicitly names a local project path for the task, such as a legacy site/app folder. " +
+        "Do not invent paths; only pass an absolute path grounded in context.",
       required: false,
       schema: { type: "string" as const },
     },

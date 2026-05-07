@@ -78,7 +78,10 @@ export function satisfiesContextGate(
 		return false;
 	}
 
-	const active = new Set(normalizeContextList(activeContexts));
+	const normalizedActive = normalizeContextList(activeContexts);
+	const active = new Set(
+		normalizedActive.length > 0 ? normalizedActive : ["general"],
+	);
 
 	const denied = normalizeContextList(gate.noneOf);
 	if (denied.some((context) => active.has(context))) {

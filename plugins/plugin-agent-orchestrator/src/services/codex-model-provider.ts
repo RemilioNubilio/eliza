@@ -1,9 +1,9 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import {
   fetchRemoteMedia,
   type GenerateTextParams,
@@ -12,6 +12,7 @@ import {
   type ImageDescriptionResult,
   type LookupFn,
   logger,
+  type ObjectGenerationParams,
 } from "@elizaos/core";
 import { readConfigEnvKey } from "./config-env.js";
 
@@ -35,6 +36,7 @@ export type CodexExecOptions = {
   model?: string;
   reasoningEffort: string;
   timeoutMs: number;
+  inheritOpenAIEnv: boolean;
 };
 
 function readSetting(
@@ -57,10 +59,16 @@ function readSetting(
 
 export function isCodexModelProviderEnabled(runtime?: IAgentRuntime): boolean {
   const raw = readSetting(runtime, "PARALLAX_CODEX_MODEL_PROVIDER");
-  if (!raw) return false;
-  if (TRUE_VALUE.test(raw)) return true;
-  if (FALSE_VALUE.test(raw)) return false;
-  return false;
+  if (raw && TRUE_VALUE.test(raw)) return true;
+  if (raw && FALSE_VALUE.test(raw)) return false;
+  const selectedProvider = readSetting(runtime, "MODEL_PROVIDER")
+    ?.trim()
+    .toLowerCase();
+  return (
+    selectedProvider === "openai-codex" ||
+    selectedProvider === "openai-subscription" ||
+    selectedProvider === "codex"
+  );
 }
 
 export function readCodexModelProviderPriority(
@@ -76,6 +84,10 @@ export function resolveCodexExecOptions(
 ): CodexExecOptions {
   const timeoutRaw = readSetting(runtime, "PARALLAX_CODEX_MODEL_TIMEOUT_MS");
   const timeoutMs = timeoutRaw ? Number(timeoutRaw) : DEFAULT_TIMEOUT_MS;
+  const inheritOpenAIEnvRaw = readSetting(
+    runtime,
+    "PARALLAX_CODEX_INHERIT_OPENAI_ENV",
+  );
   return {
     binary: readSetting(runtime, "PARALLAX_CODEX_BIN") ?? "codex",
     workdir:
@@ -86,9 +98,12 @@ export function resolveCodexExecOptions(
     reasoningEffort:
       readSetting(runtime, "PARALLAX_CODEX_MODEL_REASONING_EFFORT") ?? "low",
     timeoutMs:
-      Number.isFinite(timeoutMs) && timeoutMs > 0
+      Number.isFinite(timeoutMs) && timeoutMs >= 0
         ? Math.floor(timeoutMs)
         : DEFAULT_TIMEOUT_MS,
+    inheritOpenAIEnv: inheritOpenAIEnvRaw
+      ? TRUE_VALUE.test(inheritOpenAIEnvRaw)
+      : false,
   };
 }
 
@@ -193,14 +208,102 @@ export function buildCodexImageDescriptionPrompt(
   ].join("\n");
 }
 
-export function parseCodexImageDescriptionResult(
-  text: string,
-): ImageDescriptionResult {
-  const cleaned = text
+export function buildCodexObjectPrompt(
+  params: ObjectGenerationParams,
+  modelType?: string,
+): string {
+  const schema = params.schema
+    ? JSON.stringify(params.schema, null, 2)
+    : "No JSON schema was provided. Return the most appropriate JSON object for the prompt.";
+  const enumValues =
+    Array.isArray(params.enumValues) && params.enumValues.length > 0
+      ? `Allowed enum values: ${params.enumValues.join(", ")}.`
+      : "";
+  return [
+    "You are running as a non-interactive elizaOS object-generation model provider.",
+    "Return JSON only. Do not include markdown fences, labels, commentary, or surrounding text.",
+    "The top-level response must be a JSON object.",
+    modelType ? `Model type: ${modelType}.` : "",
+    enumValues,
+    "",
+    "<json_schema>",
+    schema,
+    "</json_schema>",
+    "",
+    "<eliza_prompt>",
+    params.prompt,
+    "</eliza_prompt>",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function stripMarkdownJsonFence(text: string): string {
+  return text
     .trim()
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
+}
+
+function extractJsonObjectText(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+  return null;
+}
+
+export function parseCodexObjectResult(text: string): Record<string, unknown> {
+  const cleaned = stripMarkdownJsonFence(text);
+  const candidates = [cleaned, extractJsonObjectText(cleaned)].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  throw new Error("Codex object model returned non-JSON output");
+}
+
+export function parseCodexImageDescriptionResult(
+  text: string,
+): ImageDescriptionResult {
+  const cleaned = stripMarkdownJsonFence(text);
   try {
     const parsed = JSON.parse(cleaned) as Record<string, unknown>;
     const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
@@ -237,13 +340,31 @@ function errorCode(error: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
+export function buildCodexExecEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  options: Pick<CodexExecOptions, "inheritOpenAIEnv">,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...baseEnv,
+    NO_COLOR: "1",
+  };
+  if (!options.inheritOpenAIEnv) {
+    delete env.OPENAI_API_KEY;
+    delete env.OPENAI_BASE_URL;
+    delete env.OPENAI_ORG_ID;
+    delete env.OPENAI_ORGANIZATION;
+    delete env.OPENAI_PROJECT;
+  }
+  return env;
+}
+
 function codexSupportsOutputLastMessage(binary: string): Promise<boolean> {
   const cached = outputLastMessageSupportCache.get(binary);
   if (cached) return cached;
 
   const probe = new Promise<boolean>((resolve) => {
     const child = spawn(binary, ["exec", "--help"], {
-      env: { ...process.env, NO_COLOR: "1" },
+      env: buildCodexExecEnv(process.env, { inheritOpenAIEnv: false }),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -296,17 +417,18 @@ export async function runCodexExec(
     await new Promise<void>((resolve, reject) => {
       const child = spawn(options.binary, args, {
         cwd: options.workdir,
-        env: {
-          ...process.env,
-          NO_COLOR: "1",
-        },
+        env: buildCodexExecEnv(process.env, options),
         stdio: ["pipe", "pipe", "pipe"],
       });
 
       let settled = false;
       let escalationTimer: ReturnType<typeof setTimeout> | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const cleanupTimers = () => {
-        clearTimeout(timer);
+        if (timer) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
         if (escalationTimer) {
           clearTimeout(escalationTimer);
           escalationTimer = undefined;
@@ -319,20 +441,22 @@ export async function runCodexExec(
         fn();
       };
 
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        child.kill("SIGTERM");
-        escalationTimer = setTimeout(() => {
-          child.kill("SIGKILL");
-        }, KILL_GRACE_MS);
-        reject(
-          new Error(
-            `codex exec timed out after ${options.timeoutMs}ms for model provider call`,
-          ),
-        );
-      }, options.timeoutMs);
+      if (options.timeoutMs > 0) {
+        timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          cleanupTimers();
+          child.kill("SIGTERM");
+          escalationTimer = setTimeout(() => {
+            child.kill("SIGKILL");
+          }, KILL_GRACE_MS);
+          reject(
+            new Error(
+              `codex exec timed out after ${options.timeoutMs}ms for model provider call`,
+            ),
+          );
+        }, options.timeoutMs);
+      }
 
       child.stdout.on("data", (chunk: Buffer) => {
         stdout = appendCapture(stdout, chunk);
@@ -611,4 +735,19 @@ export async function codexCliTextModel(
     `[codex-model-provider] running codex exec for ${modelType ?? "text"} in ${options.workdir}`,
   );
   return runCodexExec(prompt, options);
+}
+
+export async function codexCliObjectModel(
+  runtime: IAgentRuntime,
+  params: ObjectGenerationParams,
+): Promise<Record<string, unknown>> {
+  const rawModelType = (params as unknown as { modelType?: unknown }).modelType;
+  const modelType = typeof rawModelType === "string" ? rawModelType : undefined;
+  const options = resolveCodexExecOptions(runtime);
+  const prompt = buildCodexObjectPrompt(params, modelType);
+  logger.info(
+    `[codex-model-provider] running codex exec for ${modelType ?? "object"} in ${options.workdir}`,
+  );
+  const text = await runCodexExec(prompt, options);
+  return parseCodexObjectResult(text);
 }

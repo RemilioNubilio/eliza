@@ -114,6 +114,10 @@ async function handleParentContext(
     agent_type: task.agentType,
     character: {
       name: character?.name ?? null,
+      system:
+        typeof character?.system === "string" && character.system.trim()
+          ? character.system
+          : null,
       bio: Array.isArray(character?.bio)
         ? character.bio
         : typeof character?.bio === "string"

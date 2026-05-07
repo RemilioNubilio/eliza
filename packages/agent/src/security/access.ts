@@ -15,6 +15,87 @@ const ROLE_RANK: Record<RequiredRole, number> = {
   OWNER: 3,
 };
 
+const ACTION_ROLE_POLICY_SETTING = "ACTION_ROLE_POLICY";
+
+function normalizeRole(value: unknown): RequiredRole | null {
+  const role = typeof value === "string" ? value.trim().toUpperCase() : "";
+  switch (role) {
+    case "OWNER":
+    case "ADMIN":
+    case "USER":
+    case "GUEST":
+      return role;
+    default:
+      return null;
+  }
+}
+
+function normalizeActionName(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function readRuntimeSetting(
+  runtime: IAgentRuntime | undefined,
+  key: string,
+): string | undefined {
+  try {
+    const value = runtime?.getSetting?.(key) ?? process.env[key];
+    return typeof value === "string" && value.trim().length > 0
+      ? value.trim()
+      : undefined;
+  } catch {
+    return process.env[key];
+  }
+}
+
+function parseActionRolePolicy(
+  runtime: IAgentRuntime | undefined,
+): Record<string, RequiredRole> {
+  const raw = readRuntimeSetting(runtime, ACTION_ROLE_POLICY_SETTING);
+  if (!raw) {
+    return {};
+  }
+
+  let parsed: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {};
+  }
+
+  const policy: Record<string, RequiredRole> = {};
+  for (const [name, roleValue] of Object.entries(
+    parsed as Record<string, unknown>,
+  )) {
+    const role = normalizeRole(roleValue);
+    const normalizedName = normalizeActionName(name);
+    if (role && normalizedName) {
+      policy[normalizedName] = role;
+    }
+  }
+
+  return policy;
+}
+
+export function getRequiredRoleForAction(
+  runtime: IAgentRuntime | undefined,
+  actionName: string,
+  fallback: RequiredRole,
+): RequiredRole {
+  const configuredRole =
+    parseActionRolePolicy(runtime)[normalizeActionName(actionName)];
+  return configuredRole ?? fallback;
+}
+
 type AccessContext = {
   runtime: IAgentRuntime & { agentId: string };
   message: Memory & { entityId: string };
@@ -184,4 +265,17 @@ export async function hasRoleAccess(
   } catch {
     return false;
   }
+}
+
+export async function hasActionRoleAccess(
+  runtime: IAgentRuntime | undefined,
+  message: Memory | undefined,
+  actionName: string,
+  fallback: RequiredRole,
+): Promise<boolean> {
+  return hasRoleAccess(
+    runtime,
+    message,
+    getRequiredRoleForAction(runtime, actionName, fallback),
+  );
 }

@@ -10,7 +10,11 @@
 
 import * as path from "node:path";
 import { ModelType } from "@elizaos/core";
-import { cleanForChat, extractCompletionSummary } from "./ansi-utils.js";
+import {
+  cleanForChat,
+  extractCompletionSummary,
+  summarizeUserFacingTurnOutput,
+} from "./ansi-utils.js";
 import {
   type CustomValidatorResult,
   type CustomValidatorSpec,
@@ -207,12 +211,14 @@ const STATUS_PATTERNS = [
   /^installing/i,
   /^resolving/i,
 ];
+// biome-ignore lint/suspicious/noControlCharactersInRegex: this intentionally strips ANSI escape sequences.
+const ANSI_ESCAPE_PATTERN = /\u001B\[[0-9;]*[a-zA-Z]/g;
 
 function isStatusAnimation(text: string): boolean {
   // Strip ANSI escapes, whitespace, ellipsis, and spinner glyphs so
   // "⠋ Orchestrating…" normalizes to "Orchestrating".
   const stripped = text
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
+    .replace(ANSI_ESCAPE_PATTERN, "")
     .replace(/[\s\u2026\u00b7\u2022\u25cf\u25cb⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|/\-\\]/g, "")
     .trim();
   if (stripped.length === 0) return true;
@@ -234,7 +240,7 @@ const ASK_USER_PATTERNS = [
   /\bwhich (?:would you|do you|of these)\b/i,
   /\bpick one of\b/i,
   /\bchoose one of\b/i,
-  /\boption\s*[\(\[]?[123abc][\)\]]?\b/i,
+  /\boption\s*[([]?[123abc][)\]]?\b/i,
   /^\s*[123abc]\.\s/m,
 ];
 
@@ -443,6 +449,99 @@ function truncateForUser(text: string, max = 140): string {
     return trimmed;
   }
   return `${trimmed.slice(0, max)}...`;
+}
+
+export function completionReasoningFromTurnOutput(turnOutput: string): string {
+  const cleaned = summarizeUserFacingTurnOutput(turnOutput);
+
+  return cleaned
+    ? truncateForUser(cleaned, 2000)
+    : "Subagent completed and produced output.";
+}
+
+export function taskAgentFailureReasonFromTurnOutput(
+  turnOutput: string,
+): string | null {
+  const cleaned = cleanForChat(turnOutput);
+  if (!cleaned.trim()) return null;
+
+  if (
+    /\b(?:401\s+Unauthorized|authentication required|Invalid API key|API key is invalid|OPENAI_API_KEY|Set OPENAI_API_KEY)\b/i.test(
+      cleaned,
+    )
+  ) {
+    return "Task agent failed to authenticate with Codex/OpenAI before completing.";
+  }
+
+  return null;
+}
+
+export function completeDecisionWithTurnOutput(
+  decision: CoordinationLLMResponse,
+  turnOutput: string,
+): CoordinationLLMResponse {
+  if (decision.action !== "complete") {
+    return decision;
+  }
+
+  if (!cleanForChat(turnOutput).trim()) {
+    return decision;
+  }
+
+  const finalOutput = completionReasoningFromTurnOutput(turnOutput);
+  return {
+    ...decision,
+    reasoning: finalOutput,
+    keyDecision: finalOutput,
+  };
+}
+
+export function isCompletingWithCapturedOutput(task: {
+  status: string;
+  completionSummary?: string;
+}): boolean {
+  return (
+    task.status === "tool_running" &&
+    typeof task.completionSummary === "string" &&
+    task.completionSummary.trim().length > 0
+  );
+}
+
+export function uniqueSummaryParts(parts: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const key = trimmed.replace(/\s+/g, " ");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function stringMetadataValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function readReplyToExternalMessageId(task: {
+  originMetadata?: Record<string, unknown>;
+}): string | undefined {
+  const metadata = task.originMetadata;
+  if (!metadata) return undefined;
+  const discord =
+    metadata.discord && typeof metadata.discord === "object"
+      ? (metadata.discord as Record<string, unknown>)
+      : null;
+  return (
+    stringMetadataValue(metadata.replyToExternalMessageId) ??
+    stringMetadataValue(metadata.discordMessageId) ??
+    stringMetadataValue(metadata.messageIdFull) ??
+    stringMetadataValue(discord?.messageId)
+  );
 }
 
 function extractLoginInstructions(eventData: {
@@ -851,7 +950,7 @@ async function checkAllTasksCompleteAsync(
         agentType: t.agentType,
         originalTask: t.originalTask,
         status: t.status,
-        completionSummary: summaryParts.join("\n") || "",
+        completionSummary: uniqueSummaryParts(summaryParts).join("\n") || "",
         // Forward the task's workdir so buildTaskLine in synthesis can
         // read the agent's end_turn jsonl directly. Without this, the
         // session is already killed by the time synthesis runs and
@@ -859,6 +958,7 @@ async function checkAllTasksCompleteAsync(
         // placeholder even though the jsonl has the real answer.
         workdir: t.workdir,
         roomId: threadRoomIds.get(t.threadId),
+        replyToExternalMessageId: readReplyToExternalMessageId(t),
       };
     });
     // Wrap in Promise.resolve().then() to catch sync throws, and race against
@@ -1175,7 +1275,7 @@ export async function executeDecision(
       // dumping raw terminal output which is full of TUI noise.
       let summary = "";
       try {
-        const rawOutput = await ctx.ptyService.getSessionOutput(sessionId, 50);
+        const rawOutput = await ctx.ptyService.getSessionOutput(sessionId, 240);
         summary = extractCompletionSummary(rawOutput);
       } catch {
         /* ignore */
@@ -2098,14 +2198,24 @@ export async function handleTurnComplete(
       // transient assessor-LLM misfire shouldn't shadow output the agent
       // actually produced. Escalate only when we genuinely have nothing.
       if (turnOutput.trim().length > 0) {
-        ctx.log(
-          `Turn-complete for "${taskCtx.label}": assessor LLM failed but turn output is non-empty, treating as complete`,
-        );
-        decision = {
-          action: "complete",
-          reasoning:
-            "Assessor LLM returned an invalid response, but the subagent emitted task_complete with captured output. Trusting the subagent.",
-        };
+        const failureReason = taskAgentFailureReasonFromTurnOutput(turnOutput);
+        if (failureReason) {
+          ctx.log(
+            `Turn-complete for "${taskCtx.label}": assessor LLM failed and output is a task-agent failure, escalating`,
+          );
+          decision = {
+            action: "escalate",
+            reasoning: failureReason,
+          };
+        } else {
+          ctx.log(
+            `Turn-complete for "${taskCtx.label}": assessor LLM failed but turn output is non-empty, treating as complete`,
+          );
+          decision = {
+            action: "complete",
+            reasoning: completionReasoningFromTurnOutput(turnOutput),
+          };
+        }
       } else {
         ctx.log(
           `Turn-complete for "${taskCtx.label}": all decision paths failed, escalating`,
@@ -2135,6 +2245,8 @@ export async function handleTurnComplete(
         reasoning: agentQuestion,
       };
     }
+
+    decision = completeDecisionWithTurnOutput(decision, turnOutput);
 
     // Log the decision
     ctx.log(

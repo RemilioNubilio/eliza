@@ -4,6 +4,7 @@ export interface TaskAgentChatRouting {
   sessionId?: string;
   threadId?: string;
   roomId?: string | null;
+  replyToExternalMessageId?: string | null;
 }
 
 interface TaskAgentRoutingTaskContext {
@@ -107,7 +108,13 @@ export async function routeTaskAgentTextToConnector(
       channelId: room.channelId ?? room.id,
       serverId: room.serverId ?? undefined,
     } as Parameters<RoutingRuntime["sendMessageToTarget"]>[0],
-    { text, source },
+    {
+      text,
+      source,
+      ...(resolvedRouting.replyToExternalMessageId
+        ? { inReplyTo: resolvedRouting.replyToExternalMessageId }
+        : {}),
+    },
   );
   return true;
 }

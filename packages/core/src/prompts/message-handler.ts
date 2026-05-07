@@ -15,7 +15,10 @@ rules:
 - contexts is a list of context ids drawn from available_contexts, such as calendar or email
 - never invent context ids that are not in available_contexts
 - only choose contexts when tools or context providers may be needed
-- simple=true only means the reply can be sent directly when contexts is empty
+- simple=true means the reply can be sent directly from the current prompt, conversation, and character only
+- use simple=false when the request needs tools, actions, subagents, providers, filesystem/runtime inspection, network/browser/API lookup, live/current/external data, side effects, or long-running work
+- use simple=false for requests to search/browse/look up current facts, run shell or terminal commands, inspect files/logs/repos/services/disk, build or deploy apps, create PRs, spawn coding/task agents, send messages, schedule tasks, persist settings/memory, or verify live state
+- when simple=false, include the relevant available contexts; if only general is available and a tool/action is still needed, use contexts=["general"]
 - if contexts is non-empty, planning will run and simple will be ignored
 - include reply only for a direct user-visible response
 - thought is internal routing rationale and is not shown to the user

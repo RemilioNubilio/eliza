@@ -123,6 +123,7 @@ import {
   type TaskAgentFrameworkState,
   type TaskAgentTaskProfileInput,
 } from "./task-agent-frameworks.js";
+import { readConfiguredTaskAgentMemory } from "./task-agent-memory.js";
 
 /**
  * Grace period after `task_complete` before auto-stopping a PTY session.
@@ -160,14 +161,36 @@ export function shouldSuppressCodexExecPtyManagerEvent(options: {
  */
 const COMMON_LOCK_PREFIX = `# Operating mode
 
-You are an autonomous Eliza sub-agent — there is no interactive human in this session. If you cannot do something, surface a \`DECISION: cannot continue because <reason>\` line on stdout (the orchestrator tails for those) and stop; do not ask a user to run a command for you.`;
+You are an autonomous Eliza sub-agent. There is no interactive human in this session. If you cannot do something, surface a \`DECISION: cannot continue because <reason>\` line on stdout (the orchestrator tails for those) and stop; do not ask a user to run a command for you.
+
+# What Eliza is
+
+Eliza is the parent autonomous-agent runtime. A user asked the parent agent for work in chat, and the orchestrator spawned you in a sealed workspace to do that work. The parent watches your output, validates completion, and posts a synthesized response back to the originating channel.
+
+Host-specific identity, app-build rules, room context, memories, and credentials are provided through the task brief, this workspace memory file, and the parent-runtime bridge. Use those sources; do not invent deployment-specific facts.
+
+# DECISION protocol
+
+Eliza watches stdout for \`DECISION:\` lines. Use them for architectural choices, irreversible tradeoffs, missing credentials, external side effects, or hard blockers.
+
+# End cleanly
+
+End with the concrete result: files changed, validation run, URLs/app ids when relevant, and any remaining blocker. Avoid internal monologue in the final answer.`;
 
 const TOOL_DISCOVERY_HINTS: Record<CodingAgentType, string> = {
   claude: CLAUDE_SKILL_ESSENTIALS,
   gemini:
     "Your tool list is defined in `.gemini/settings.json`. Use `run_shell_command` for shell, `read_file`/`write_file` for I/O. Read settings before assuming a tool is missing.",
-  codex:
-    "Your tool list is the OpenAI Codex runtime's built-in set (`exec_command`, `apply_patch`, `read_file`, etc.). Session approval settings are injected by the Eliza runtime before startup.",
+  codex: `# Codex operating mode
+
+You are running as an autonomous OpenAI Codex sub-agent inside Eliza through non-interactive \`codex exec\`.
+
+- There is no human typing follow-up prompts into this Codex session.
+- Your stdout and final answer are captured by Eliza, then synthesized back to the originating chat.
+- Treat this AGENTS.md/workspace memory as authoritative operating context for the task. It may include deployment-specific repo maps, app-build rules, and verification requirements from the parent.
+- Use the tools Codex exposes in this run, such as \`exec_command\`, \`apply_patch\`, and file-read helpers. For code changes, prefer \`apply_patch\`; for inspection and tests, use shell/read commands from the workspace.
+- Do not ask the user to run commands for you. If you are blocked, emit \`DECISION: cannot continue because <reason>\` and stop.
+- Do not push to git remotes unless the task brief or parent memory explicitly assigns a PR/push workflow. Do not print secrets. Do not write outside the assigned workspace. The assigned workspace includes the default workdir plus any explicit external repo/path named by the task brief or parent memory.`,
   aider:
     "Your tools are aider's slash commands (`/run`, `/edit`, `/add`, etc.); see `.aider.conf.yml` if present for any overrides.",
   hermes: "",
@@ -185,14 +208,29 @@ function buildWorkspaceLockMemory(
   return `${workspace}\n\n${COMMON_LOCK_PREFIX}${hint ? ` ${hint}` : ""}`;
 }
 
+function prependMemoryContextToTask(task: string, memory: string): string {
+  const trimmedTask = task.trim();
+  const trimmedMemory = memory.trim();
+  if (!trimmedMemory) return task;
+  return [
+    "# Task-agent operating context",
+    "",
+    trimmedMemory,
+    "",
+    "# Assigned task",
+    "",
+    trimmedTask,
+  ].join("\n");
+}
+
 function buildWorkspaceTaskPrefix(workdir: string): string {
   return `# Workspace
 
-Your working directory is \`${workdir}\`. Stay inside it: do not \`cd\` to \`/tmp\`, \`/\`, \`$HOME\`, or any other path outside the workspace. Create all files, run all builds, and start all servers from this directory. If you need scratch space, make a subdirectory here.`;
+Your default working directory is \`${workdir}\`. Stay inside it unless the task brief or parent memory explicitly names another repo/path as part of this task. If an external path is named, that path is also assigned workspace for this task. Do not \`cd\` to \`/tmp\`, \`/\`, \`$HOME\`, or unrelated paths. Create files, run builds, and start servers only from the default workdir or the explicitly assigned external path. If you need scratch space, make a subdirectory in one of those assigned locations.`;
 }
 
 function buildInlineWorkspaceTaskPrefix(workdir: string): string {
-  return `Work only in \`${workdir}\`; do not leave that workspace.`;
+  return `Work only in \`${workdir}\` unless the task brief or parent memory explicitly names another repo/path as assigned workspace for this task.`;
 }
 
 function buildParentRuntimeBridgeMemory(
@@ -204,7 +242,7 @@ function buildParentRuntimeBridgeMemory(
 
 You can read parent-runtime state via these loopback endpoints:
 
-- \`curl ${base}/parent-context\` returns the parent's character, current room, model preferences, and your workdir.
+- \`curl ${base}/parent-context\` returns the parent's character/system context, current room, model preferences, and your workdir.
 - \`curl "${base}/memory?q=<query>"\` searches parent memory for matching entities, facts, messages, and knowledge.
 - \`curl ${base}/active-workspaces\` lists the parent's known workspaces and task-agent sessions.
 
@@ -266,6 +304,16 @@ function buildCodexApprovalConfigToml(
   ].filter((section): section is string => Boolean(section?.trim()));
 
   return `${sections.join("\n\n")}\n`;
+}
+
+export function needsIsolatedCodexHome(
+  credentials?: AgentCredentials,
+): boolean {
+  return Boolean(
+    credentials?.openaiKey?.trim() ||
+      credentials?.openaiBaseUrl?.trim() ||
+      credentials?.extraConfigToml?.trim(),
+  );
 }
 
 async function readFileIfPresent(filePath: string): Promise<string | null> {
@@ -877,6 +925,30 @@ export class PTYService {
     );
     const shouldWriteMemoryFile = resolvedAgentType !== "shell";
     const hasCallerMemoryContent = Boolean(options.memoryContent?.trim());
+    const configuredTaskAgentMemory = shouldWriteMemoryFile
+      ? await readConfiguredTaskAgentMemory(this.runtime).catch((err) => {
+          this.log(`Failed to read configured task-agent memory: ${err}`);
+          return undefined;
+        })
+      : undefined;
+    const fullMemory = shouldWriteMemoryFile
+      ? [
+          workspaceLock,
+          parentRuntimeBridge,
+          configuredTaskAgentMemory,
+          options.memoryContent,
+        ]
+          .filter((section) => section?.trim())
+          .join("\n\n---\n\n")
+      : "";
+    const memoryFilePath = shouldWriteMemoryFile
+      ? join(workdir, this.getMemoryFilePath(resolvedAgentType as AdapterType))
+      : null;
+    const memoryFileAlreadyExists = memoryFilePath
+      ? await readFile(memoryFilePath, "utf-8")
+          .then(() => true)
+          .catch(() => false)
+      : false;
     // The workspace lock is markdown prose meant to be read as CLAUDE.md
     // (or equivalent) by a reasoning subagent. Shell sessions receive
     // `initialTask` as literal stdin for /bin/bash, so any prose we prepend
@@ -885,10 +957,15 @@ export class PTYService {
     // the lock: shell tasks are expected to be bare commands, and staying
     // inside the workdir is enforced by the `cwd` we spawn the PTY with
     // (not by an advisory markdown note).
+    const initialTaskText = options.initialTask ?? "";
     const effectiveInitialTask =
-      hasCallerMemoryContent || resolvedAgentType === "shell"
-        ? options.initialTask
-        : prependWorkspaceLockToTask(options.initialTask, workspaceTaskPrefix);
+      resolvedAgentType === "shell"
+        ? initialTaskText
+        : memoryFileAlreadyExists
+          ? prependMemoryContextToTask(initialTaskText, fullMemory)
+          : hasCallerMemoryContent
+            ? initialTaskText
+            : prependWorkspaceLockToTask(initialTaskText, workspaceTaskPrefix);
     const resolvedInitialTask = piRequested
       ? toPiCommand(effectiveInitialTask)
       : opencodeRequested
@@ -915,24 +992,25 @@ export class PTYService {
     // Always include the workspace lock and parent bridge so spawned agents
     // stay in-bounds and can read narrowly-scoped parent context.
     if (shouldWriteMemoryFile) {
-      const fullMemory = [
-        workspaceLock,
-        parentRuntimeBridge,
-        options.memoryContent,
-      ]
-        .filter((section) => section?.trim())
-        .join("\n\n---\n\n");
-      try {
-        const writtenPath = await this.writeMemoryFile(
-          resolvedAgentType as AdapterType,
-          workdir,
-          fullMemory,
-        );
-        this.log(`Wrote memory file for ${resolvedAgentType}: ${writtenPath}`);
-      } catch (err) {
+      if (memoryFileAlreadyExists) {
         this.log(
-          `Failed to write memory file for ${resolvedAgentType}: ${err}`,
+          `Skipped writing memory file for ${resolvedAgentType}: ${memoryFilePath} already exists; inlined task-agent context into the initial task`,
         );
+      } else {
+        try {
+          const writtenPath = await this.writeMemoryFile(
+            resolvedAgentType as AdapterType,
+            workdir,
+            fullMemory,
+          );
+          this.log(
+            `Wrote memory file for ${resolvedAgentType}: ${writtenPath}`,
+          );
+        } catch (err) {
+          this.log(
+            `Failed to write memory file for ${resolvedAgentType}: ${err}`,
+          );
+        }
       }
     }
 
@@ -941,15 +1019,21 @@ export class PTYService {
     // Write approval config files before spawn.
     if (effectiveApprovalPreset && resolvedAgentType !== "shell") {
       if (resolvedAgentType === "codex") {
-        const codexHome = await prepareCodexHome(
-          sessionId,
-          effectiveApprovalPreset,
-          options.credentials,
-        );
-        codexApprovalEnv = { CODEX_HOME: codexHome };
-        this.log(
-          `Wrote Codex approval config (${effectiveApprovalPreset}) to ${join(codexHome, "config.toml")}`,
-        );
+        if (needsIsolatedCodexHome(options.credentials)) {
+          const codexHome = await prepareCodexHome(
+            sessionId,
+            effectiveApprovalPreset,
+            options.credentials,
+          );
+          codexApprovalEnv = { CODEX_HOME: codexHome };
+          this.log(
+            `Wrote Codex approval config (${effectiveApprovalPreset}) to ${join(codexHome, "config.toml")}`,
+          );
+        } else {
+          this.log(
+            `Using default Codex home for subscription auth (${effectiveApprovalPreset}); CLI flags provide per-spawn sandboxing`,
+          );
+        }
       } else {
         try {
           const written = await this.getAdapter(
@@ -1192,6 +1276,28 @@ export class PTYService {
     }
 
     this.wireTranscriptCapture(session.id);
+
+    if (options.beforeInitialTask) {
+      try {
+        await options.beforeInitialTask(this.toSessionInfo(session, workdir));
+      } catch (error) {
+        this.log(
+          `beforeInitialTask hook failed for ${session.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        try {
+          await this.stopSession(session.id);
+        } catch (stopError) {
+          this.log(
+            `Failed to stop session ${session.id} after beforeInitialTask failure: ${
+              stopError instanceof Error ? stopError.message : String(stopError)
+            }`,
+          );
+        }
+        throw error;
+      }
+    }
 
     // Defer initial task until session is ready.
     // IMPORTANT: Set up the listener BEFORE pushDefaultRules (which has a 1500ms sleep),
@@ -2158,6 +2264,9 @@ export class PTYService {
     const entries = [
       "",
       PTYService.GITIGNORE_MARKER,
+      "AGENTS.md",
+      "codex.md",
+      ".codex/",
       "CLAUDE.md",
       ".claude/",
       "GEMINI.md",

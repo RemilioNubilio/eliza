@@ -33,6 +33,22 @@ describe("v5 message handler routing", () => {
 		expect(routeMessageHandlerOutput(output).type).toBe("planning_needed");
 	});
 
+	it("routes non-simple empty-context responses through general planning", () => {
+		const output = {
+			action: "RESPOND" as const,
+			reply: "I need to check that.",
+			simple: false,
+			contexts: [],
+			thought: "A tool may be needed.",
+		};
+
+		expect(routeMessageHandlerOutput(output)).toEqual({
+			type: "planning_needed",
+			output,
+			contexts: ["general"],
+		});
+	});
+
 	it("parses JSON message handler output", () => {
 		expect(
 			parseMessageHandlerOutput(`{

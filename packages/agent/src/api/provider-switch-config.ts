@@ -24,10 +24,7 @@ import {
   type OnboardingLocalProviderId,
   requiresAdditionalRuntimeProvider,
 } from "@elizaos/shared";
-import {
-  applySubscriptionCredentials,
-  deleteCredentials,
-} from "../auth/credentials.js";
+import { deleteCredentials } from "../auth/credentials.js";
 import { SUBSCRIPTION_PROVIDER_MAP } from "../auth/types.js";
 import type { ElizaConfig } from "../config/types.eliza.js";
 
@@ -227,6 +224,47 @@ function setPrimaryModel(
   defaults.model = { ...defaults.model, primary: primaryModel };
 }
 
+const CODEX_MODEL_PROVIDER_ENV_DEFAULTS: Record<string, string> = {
+  PARALLAX_CODEX_MODEL_PROVIDER: "true",
+  PARALLAX_CODEX_MODEL_PRIORITY: "50",
+  PARALLAX_CODEX_MODEL_REASONING_EFFORT: "low",
+  PARALLAX_CODEX_MODEL_TIMEOUT_MS: "0",
+  PARALLAX_CODEX_MODEL: "gpt-5.4-mini",
+  PARALLAX_CODEX_MODEL_FAST: "gpt-5.4-mini",
+  PARALLAX_CODEX_MODEL_POWERFUL: "gpt-5.5",
+};
+
+const CODEX_PARENT_MODEL_ENV_KEYS = [
+  "PARALLAX_CODEX_MODEL_PROVIDER",
+  "PARALLAX_CODEX_MODEL_PRIORITY",
+  "PARALLAX_CODEX_MODEL_REASONING_EFFORT",
+  "PARALLAX_CODEX_MODEL_TIMEOUT_MS",
+  "PARALLAX_CODEX_MODEL",
+] as const;
+
+function applyCodexModelProviderDefaults(config: MutableElizaConfig): void {
+  for (const [key, value] of Object.entries(
+    CODEX_MODEL_PROVIDER_ENV_DEFAULTS,
+  )) {
+    const env = asRecord(config.env);
+    const vars = asRecord(env?.vars);
+    const configuredValue =
+      typeof env?.[key] === "string"
+        ? env[key]
+        : typeof vars?.[key] === "string"
+          ? vars[key]
+          : undefined;
+    const nextValue = configuredValue || process.env[key] || value;
+    setEnvValue(config, key, nextValue);
+  }
+}
+
+function clearCodexParentModelProviderConfig(config: MutableElizaConfig): void {
+  for (const key of CODEX_PARENT_MODEL_ENV_KEYS) {
+    setEnvValue(config, key, undefined);
+  }
+}
+
 function clearPersistedEnvValue(config: MutableElizaConfig, key: string): void {
   const env = asRecord(config.env);
   const vars = asRecord(env?.vars);
@@ -340,13 +378,10 @@ function applyLocalProviderCapabilities(
   ) {
     applySubscriptionProviderConfig(config, storedProviderId);
 
-    // Anthropic subscription tokens (OAuth / setup tokens) must NOT be
-    // injected into the runtime environment as ANTHROPIC_API_KEY.
-    // Anthropic's TOS only permits these tokens through the Claude Code
-    // CLI.  The task-agent orchestrator spawns actual `claude` CLI
-    // subprocesses and that path is fine.  For OpenAI/Codex tokens,
-    // direct API use is permitted so we do apply them.
     if (storedProviderId === "anthropic-subscription") {
+      // Anthropic subscription tokens (OAuth / setup tokens) must NOT be
+      // injected into the runtime environment as ANTHROPIC_API_KEY.
+      // Anthropic's TOS only permits these tokens through Claude Code CLI.
       // Store the setup token in config for task-agent discovery but do
       // NOT set it in process.env.
       const setupToken = trimToUndefined(selection.apiKey);
@@ -359,7 +394,8 @@ function applyLocalProviderCapabilities(
       return Promise.resolve();
     }
 
-    return applySubscriptionCredentials(config);
+    applyCodexModelProviderDefaults(config);
+    return Promise.resolve();
   }
 
   const providerOption = getOnboardingProviderOption(normalizedProvider);
@@ -565,12 +601,18 @@ export function applySubscriptionProviderConfig(
   if (modelProvider) {
     defaults.subscriptionProvider = subscriptionKey;
 
-    // Only set model.primary for providers whose tokens work with the
-    // runtime.  Anthropic subscription tokens are restricted to Claude
-    // Code CLI (TOS) so the runtime cannot use them for LLM inference.
-    const runtimeApplicable = subscriptionKey !== "anthropic-subscription";
+    // Subscription providers are CLI-backed. They should not select a direct
+    // runtime provider plugin like @elizaos/plugin-openai unless the user also
+    // configured a real API key.
+    const runtimeApplicable =
+      subscriptionKey !== "anthropic-subscription" &&
+      subscriptionKey !== "openai-codex";
     if (runtimeApplicable) {
       defaults.model = { ...defaults.model, primary: modelProvider };
+    }
+
+    if (subscriptionKey === "openai-codex") {
+      applyCodexModelProviderDefaults(config as MutableElizaConfig);
     }
   }
 }
@@ -589,6 +631,7 @@ export function clearSubscriptionProviderConfig(
   config.agents ??= {};
   config.agents.defaults ??= {};
   delete config.agents.defaults.subscriptionProvider;
+  clearCodexParentModelProviderConfig(config as MutableElizaConfig);
 }
 
 /**

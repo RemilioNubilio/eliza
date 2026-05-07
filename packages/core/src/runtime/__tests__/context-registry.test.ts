@@ -73,6 +73,11 @@ describe("context registry", () => {
 				anyOf: ["lifeops"],
 			}),
 		).toBe(true);
+		expect(satisfiesContextGate([], { contexts: ["general"] })).toBe(true);
+		expect(satisfiesContextGate(undefined, { contexts: ["general"] })).toBe(
+			true,
+		);
+		expect(satisfiesContextGate([], { contexts: ["wallet"] })).toBe(false);
 		expect(satisfiesRoleGate(["OWNER"], { minRole: "ADMIN" })).toBe(true);
 		expect(satisfiesRoleGate(["MEMBER"], { minRole: "ADMIN" })).toBe(false);
 	});

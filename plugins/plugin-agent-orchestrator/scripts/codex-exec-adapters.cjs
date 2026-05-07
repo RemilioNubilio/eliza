@@ -8,6 +8,12 @@ const CODEX_APPROVAL_FLAGS = {
   permissive: ["-s", "workspace-write"],
   autonomous: ["--yolo"],
 };
+const CODEX_WEB_SEARCH_BY_PRESET = {
+  readonly: false,
+  standard: true,
+  permissive: true,
+  autonomous: true,
+};
 
 const CODEX_TASK_AGENT_REASONING_EFFORT = "xhigh";
 
@@ -36,6 +42,10 @@ function patchCodexAdapter(adapter) {
     args.push(
       "-c",
       `model_reasoning_effort=${CODEX_TASK_AGENT_REASONING_EFFORT}`,
+      "-c",
+      `tools.web_search=${
+        CODEX_WEB_SEARCH_BY_PRESET[approvalPreset] === false ? "false" : "true"
+      }`,
     );
 
     const model =

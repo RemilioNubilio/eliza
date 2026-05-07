@@ -122,6 +122,12 @@ export interface SpawnSessionOptions {
   workdir?: string;
   /** Initial command/task to send */
   initialTask?: string;
+  /**
+   * Called after the PTY session exists but before the initial task is
+   * delivered. Use this to register task metadata for fast non-interactive
+   * sessions that can complete immediately after stdin is sent.
+   */
+  beforeInitialTask?: (session: SessionInfo) => void | Promise<void>;
   /** Environment variables */
   env?: Record<string, string>;
   /** Session metadata for tracking */

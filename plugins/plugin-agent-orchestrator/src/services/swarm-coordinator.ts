@@ -19,31 +19,10 @@
  * @module services/swarm-coordinator
  */
 
-import { promises as fs } from "node:fs";
 import type { ServerResponse } from "node:http";
 import type { IAgentRuntime } from "@elizaos/core";
 import { logger } from "@elizaos/core";
 
-/**
- * True when the workspace contains files the subagent produced. Filters
- * out our injected bookkeeping (CLAUDE.md memory file) and Claude Code's
- * own dot-prefixed scaffolding (`.claude/`, `.gitignore`, `.git/`). Query
- * tasks — "what's the price of btc", "explain X" — leave the workspace
- * with only those bookkeeping entries, so `false` lets callers skip the
- * noisy "task finished, code is at …" prompt for ephemeral lookups.
- */
-async function hasSubagentArtifacts(workspacePath: string): Promise<boolean> {
-  try {
-    const entries = await fs.readdir(workspacePath);
-    return entries.some(
-      (name) => name !== "CLAUDE.md" && !name.startsWith("."),
-    );
-  } catch {
-    // Workspace already cleaned up or never existed — treat as no artifacts
-    // so the caller defaults to the quiet path.
-    return false;
-  }
-}
 import { buildAgentCredentials } from "./agent-credentials.js";
 import { cleanForFailoverContext, extractDevServerUrl } from "./ansi-utils.js";
 import {
@@ -65,6 +44,7 @@ import {
   executeDecision as execDecision,
   handleBlocked,
   handleTurnComplete,
+  isCompletingWithCapturedOutput,
 } from "./swarm-decision-loop.js";
 import { SwarmHistory } from "./swarm-history.js";
 import { scanIdleSessions } from "./swarm-idle-watchdog.js";
@@ -138,6 +118,9 @@ export interface TaskCompletionSummary {
    *  message). Used by synthesis to route the final answer back to the
    *  same chat channel. */
   roomId?: string;
+  /** External connector message id to reply to, when the source connector
+   *  supports native threaded replies (for example Discord snowflakes). */
+  replyToExternalMessageId?: string;
 }
 
 /** Callback fired when all tasks in a swarm reach terminal state. */
@@ -2937,6 +2920,17 @@ export class SwarmCoordinator implements SwarmCoordinatorContext {
       case "stopped": {
         // Don't downgrade "completed" or "error" to "stopped": the async
         // stopSession fires after executeDecision already marked the task.
+        // Also don't downgrade a task that already has captured completion
+        // output and is in validation; fast non-interactive agents can emit
+        // the PTY stopped event while the completion decision is still
+        // finishing its registry writes. executeDecision will mark it
+        // completed and fire synthesis once validation finishes.
+        if (isCompletingWithCapturedOutput(taskCtx)) {
+          this.log(
+            `Ignoring stopped event for ${taskCtx.label}; completion is already being finalized`,
+          );
+          break;
+        }
         if (taskCtx.status !== "completed" && taskCtx.status !== "error") {
           taskCtx.status = "stopped";
           taskCtx.stoppedAt = Date.now();

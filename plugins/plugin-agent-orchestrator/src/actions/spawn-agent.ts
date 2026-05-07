@@ -22,16 +22,19 @@ import {
 import type { AgentCredentials, ApprovalPreset } from "coding-agent-adapters";
 import {
   buildAgentCredentials,
+  buildOpencodeSpawnConfig,
   isAnthropicOAuthToken,
   sanitizeCustomCredentials,
 } from "../services/agent-credentials.js";
+import { resolveRequestedApprovalPreset } from "../services/approval-preset.js";
 import { readConfigEnvKey } from "../services/config-env.js";
+import { getOriginExternalMessageId } from "../services/message-origin.js";
+import type { PTYService } from "../services/pty-service.js";
+import { getCoordinator } from "../services/pty-service.js";
 import {
   detectAuthFailureKind,
   getOrchestratorAccountPoolShim,
 } from "../services/pty-spawn.js";
-import type { PTYService } from "../services/pty-service.js";
-import { getCoordinator } from "../services/pty-service.js";
 import {
   type CodingAgentType,
   isOpencodeAgentType,
@@ -41,9 +44,11 @@ import {
   toOpencodeCommand,
   toPiCommand,
 } from "../services/pty-types.js";
-import { buildOpencodeSpawnConfig } from "../services/agent-credentials.js";
-import { looksLikeTaskAgentRequest } from "../services/task-agent-frameworks.js";
 import { requireTaskAgentAccess } from "../services/task-policy.js";
+import {
+  formatTaskWorkdirRouteInstructions,
+  resolveTaskWorkdirSelection,
+} from "../services/task-workdir-routes.js";
 import type { CodingWorkspaceService } from "../services/workspace-service.js";
 import { createScratchDir } from "./coding-task-helpers.js";
 import { mergeTaskThreadEvalMetadata } from "./eval-metadata.js";
@@ -131,10 +136,12 @@ export const spawnAgentAction: Action = {
 
   description:
     "Spawn a specific task agent inside an existing workspace when you need direct control. " +
-    "These agents are intentionally open-ended and can handle investigation, writing, planning, testing, synthesis, repo work, and general async task execution. " +
+    "These agents are intentionally open-ended and can handle investigation, current-information lookups, writing, planning, testing, synthesis, repo work, and general async task execution. " +
+    "Use this for live/current/external information when no direct SEARCH tool is exposed, because the configured task-agent provider may have its own web and terminal tools. " +
     "Returns a session ID that can be used to interact with the agent.",
   descriptionCompressed:
-    "Spawn task agent in existing workspace for async coding/research; returns session id for follow-up.",
+    "Spawn task agent in existing workspace for async coding/research/current-info work; returns session id for follow-up.",
+  contexts: ["general", "code", "automation"],
 
   // Spawning kicks off an async subagent whose final answer lands via the
   // synthesis callback, not via this action's ActionResult. Without this
@@ -200,7 +207,7 @@ export const spawnAgentAction: Action = {
       return true;
     }
 
-    return looksLikeTaskAgentRequest(text);
+    return true;
   },
 
   handler: async (
@@ -236,8 +243,10 @@ export const spawnAgentAction: Action = {
     const params = options?.parameters;
     const content = message.content as Record<string, unknown>;
 
-    const task = (params?.task as string) ?? (content.task as string);
+    const plannerTask =
+      (params?.task as string) ?? (content.task as string) ?? "";
     const userText = (content.text as string)?.trim() || "";
+    const task = preserveUserPromptInTask(plannerTask, userText) || userText;
 
     // SPAWN_AGENT spawns a single PTY session and has no `agents` parameter,
     // so a multi-intent prompt routed here would single-task and silently
@@ -273,26 +282,33 @@ export const spawnAgentAction: Action = {
       task,
       "[SPAWN_AGENT]",
     );
+    const workdirSelection = resolveTaskWorkdirSelection(runtime, {
+      routeText: [task, userText].join("\n"),
+      contentWorkdir: content.workdir as string | undefined,
+      plannerWorkdir: params?.workdir as string | undefined,
+    });
+    let workdir = workdirSelection.workdir;
+    const configuredWorkdirRoute = workdirSelection.route;
     const rawAgentType =
       explicitRawType ??
       (await ptyService.resolveAgentType({
         task,
-        workdir:
-          ((params?.workdir as string) ?? (content.workdir as string)) ||
-          undefined,
+        workdir,
       }));
     const agentType = normalizeAgentType(rawAgentType);
     const piRequested = isPiAgentType(rawAgentType);
     const opencodeRequested = isOpencodeAgentType(rawAgentType);
-    const baseTask = preserveUserPromptInTask(task, userText);
+    const baseTask = task;
     const initialTask = piRequested
       ? toPiCommand(baseTask)
       : opencodeRequested
         ? toOpencodeCommand(baseTask)
         : baseTask;
 
-    // Resolve workdir: explicit param > state from PROVISION_WORKSPACE > most recent workspace > cwd
-    let workdir = (params?.workdir as string) ?? (content.workdir as string);
+    // Resolve workdir: content payload > configured route > planner param >
+    // state from PROVISION_WORKSPACE > most recent workspace > scratch.
+    // Planner params are model output; configured routes encode operator
+    // workspace ownership and must win when they match the current request.
     if (!workdir && state?.codingWorkspace) {
       workdir = (state.codingWorkspace as { path: string }).path;
     }
@@ -387,10 +403,22 @@ export const spawnAgentAction: Action = {
       workdir = resolvedWorkdir;
     }
 
-    const memoryContent =
+    const requestedMemoryContent =
       (params?.memoryContent as string) ?? (content.memoryContent as string);
-    const approvalPreset =
-      (params?.approvalPreset as string) ?? (content.approvalPreset as string);
+    const memoryContent =
+      [
+        requestedMemoryContent,
+        configuredWorkdirRoute
+          ? formatTaskWorkdirRouteInstructions(configuredWorkdirRoute)
+          : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n\n") || undefined;
+    const approvalPreset = resolveRequestedApprovalPreset({
+      contentPreset: content.approvalPreset,
+      parameterPreset: params?.approvalPreset,
+      userText,
+    });
     const keepAliveAfterComplete =
       params?.keepAliveAfterComplete === true ||
       content.keepAliveAfterComplete === true;
@@ -542,12 +570,30 @@ export const spawnAgentAction: Action = {
         );
       }
 
+      const replyToExternalMessageId = getOriginExternalMessageId(message);
       const sessionMetadata = {
         threadId: taskThread?.id,
         requestedType: rawAgentType,
         messageId: message.id,
+        ...(replyToExternalMessageId ? { replyToExternalMessageId } : {}),
         userId: (message as unknown as Record<string, unknown>).userId,
         ...(keepAliveAfterComplete ? { keepAliveAfterComplete: true } : {}),
+      };
+
+      let coordinatorTaskRegistered = false;
+      const registerCoordinatorTask = async (session: {
+        id: string;
+      }): Promise<void> => {
+        if (!coordinator || !task || coordinatorTaskRegistered) return;
+        await coordinator.registerTask(session.id, {
+          threadId: taskThread?.id ?? session.id,
+          agentType,
+          label: `agent-${session.id.slice(-8)}`,
+          originalTask: task,
+          workdir,
+          metadata: sessionMetadata,
+        });
+        coordinatorTaskRegistered = true;
       };
 
       // Spawn the PTY session
@@ -570,6 +616,7 @@ export const spawnAgentAction: Action = {
           ? { skipAdapterAutoResponse: true }
           : {}),
         metadata: sessionMetadata,
+        beforeInitialTask: registerCoordinatorTask,
       });
 
       // Watch session output for auth failures so the AccountPool can
@@ -641,16 +688,7 @@ export const spawnAgentAction: Action = {
           }
         }
       });
-      if (coordinator && task) {
-        await coordinator.registerTask(session.id, {
-          threadId: taskThread?.id ?? session.id,
-          agentType,
-          label: `agent-${session.id.slice(-8)}`,
-          originalTask: task,
-          workdir,
-          metadata: sessionMetadata,
-        });
-      }
+      await registerCoordinatorTask(session);
 
       // Store session info in state for subsequent actions
 
@@ -671,6 +709,7 @@ export const spawnAgentAction: Action = {
       return {
         success: true,
         text: "",
+        continueChain: false,
         data: {
           sessionId: session.id,
           agentType: piRequested
