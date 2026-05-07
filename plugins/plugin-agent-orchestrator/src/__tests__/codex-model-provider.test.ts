@@ -16,6 +16,7 @@ import {
   isCodexModelProviderEnabled,
   parseCodexImageDescriptionResult,
   parseCodexObjectResult,
+  parseCodexToolCallResult,
   promptFromGenerateTextParams,
   readCodexModelProviderPriority,
   resolveCodexExecOptions,
@@ -165,6 +166,85 @@ describe("codex model provider", () => {
     expect(prompt).toContain("Model type: ACTION_PLANNER");
     expect(prompt).toContain("<eliza_prompt>");
     expect(prompt).toContain("return <response><text>ok</text></response>");
+  });
+
+  it("adds a tool-call bridge when Codex is used for native tool prompts", () => {
+    const prompt = buildCodexModelPrompt(
+      {
+        prompt: "route the message",
+        tools: [
+          {
+            name: "MESSAGE_HANDLER_PLAN",
+            parameters: {
+              type: "object",
+              properties: {
+                plan: { type: "object" },
+                thought: { type: "string" },
+              },
+              required: ["plan", "thought"],
+            },
+            strict: true,
+          },
+        ],
+        toolChoice: "required",
+      },
+      "RESPONSE_HANDLER",
+    );
+
+    expect(prompt).toContain("cannot emit provider-native tool calls");
+    expect(prompt).toContain(
+      "The host requires exactly one call to MESSAGE_HANDLER_PLAN",
+    );
+    expect(prompt).toContain('"name":"MESSAGE_HANDLER_PLAN"');
+  });
+
+  it("converts required single-tool JSON into native tool calls", () => {
+    const result = parseCodexToolCallResult(
+      '{"plan":{"contexts":["simple"],"reply":"yes"},"thought":"direct"}',
+      {
+        prompt: "route",
+        tools: [{ name: "MESSAGE_HANDLER_PLAN" }],
+        toolChoice: "required",
+      },
+    );
+
+    expect(result).toMatchObject({
+      text: "",
+      finishReason: "tool_calls",
+      toolCalls: [
+        {
+          name: "MESSAGE_HANDLER_PLAN",
+          arguments: {
+            plan: { contexts: ["simple"], reply: "yes" },
+            thought: "direct",
+          },
+          type: "function",
+        },
+      ],
+    });
+  });
+
+  it("converts explicit Codex tool-call JSON into native tool calls", () => {
+    const result = parseCodexToolCallResult(
+      '{"toolCalls":[{"name":"LOOKUP","arguments":{"query":"docs"}}],"messageToUser":"checking"}',
+      {
+        prompt: "lookup",
+        tools: [{ name: "LOOKUP" }, { name: "REPLY" }],
+        toolChoice: "auto",
+      },
+    );
+
+    expect(result).toMatchObject({
+      text: "checking",
+      finishReason: "tool_calls",
+      toolCalls: [
+        {
+          name: "LOOKUP",
+          arguments: { query: "docs" },
+          type: "function",
+        },
+      ],
+    });
   });
 
   it("keeps direct OpenAI runtime credentials out of Codex CLI subprocesses by default", () => {

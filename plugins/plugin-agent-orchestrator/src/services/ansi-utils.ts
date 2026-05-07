@@ -160,11 +160,9 @@ function extractAssistantFinalBlock(lines: string[]): string {
     if (
       text &&
       !isLikelyRawPatchOrSourceDump(text) &&
-      /(?:\bURL:\s*https?:\/\/|https?:\/\/|verified:?|tests? run:?|PR:\s*https?:\/\/github\.com)/i.test(
-        text,
-      )
+      !isSessionBootstrapNoiseLine(text)
     ) {
-      return text;
+      return dedupeCompletionBlockLines(block).join("\n").trim();
     }
   }
   return "";
@@ -180,8 +178,21 @@ function normalizeUrlForDedupe(url: string): string {
 }
 
 function dedupeCompletionBlockLines(lines: string[]): string[] {
+  const urlsWithContext = new Set<string>();
   const seenUrls = new Set<string>();
   const result: string[] = [];
+
+  for (const line of lines) {
+    const matches = line.match(PUBLIC_URL_RE) ?? [];
+    const normalizedMatches = matches.map(normalizeUrlForDedupe);
+    const isBareUrlLine =
+      normalizedMatches.length === 1 && line.trim() === normalizedMatches[0];
+    if (isBareUrlLine) continue;
+
+    for (const normalized of normalizedMatches) {
+      urlsWithContext.add(normalized);
+    }
+  }
 
   for (const line of lines) {
     const matches = line.match(PUBLIC_URL_RE) ?? [];
@@ -189,7 +200,8 @@ function dedupeCompletionBlockLines(lines: string[]): string[] {
     const isBareRepeatedUrl =
       normalizedMatches.length === 1 &&
       line.trim() === normalizedMatches[0] &&
-      seenUrls.has(normalizedMatches[0]);
+      (seenUrls.has(normalizedMatches[0]) ||
+        urlsWithContext.has(normalizedMatches[0]));
     if (isBareRepeatedUrl) continue;
 
     result.push(line);
@@ -351,9 +363,11 @@ export function extractCompletionSummary(raw: string): string {
     return structuredCompletionBlock;
   }
   const lines: string[] = [];
+  const artifactText = strippedLines.slice(-80).join("\n");
+  const artifactLines = artifactText.split("\n").map((line) => line.trim());
 
   // PR / issue URLs
-  const prUrls = stripped.match(
+  const prUrls = artifactText.match(
     /https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g,
   );
   if (prUrls) {
@@ -361,7 +375,7 @@ export function extractCompletionSummary(raw: string): string {
   }
 
   // "Created pull request #N" style messages
-  const prCreated = stripped.match(
+  const prCreated = artifactText.match(
     /(?:Created|Opened)\s+pull\s+request\s+#\d+[^\n]*/gi,
   );
   if (prCreated && !prUrls) {
@@ -369,13 +383,13 @@ export function extractCompletionSummary(raw: string): string {
   }
 
   // Commit hashes
-  const commits = stripped.match(/(?:committed|commit)\s+[a-f0-9]{7,40}/gi);
+  const commits = artifactText.match(/(?:committed|commit)\s+[a-f0-9]{7,40}/gi);
   if (commits) {
     for (const m of new Set(commits)) lines.push(m.trim());
   }
 
   // Files changed summary (e.g. "2 files changed, 15 insertions(+), 3 deletions(-)")
-  const diffStat = stripped.match(
+  const diffStat = artifactText.match(
     /\d+\s+files?\s+changed.*?(?:insertion|deletion)[^\n]*/gi,
   );
   if (diffStat) {
@@ -384,7 +398,7 @@ export function extractCompletionSummary(raw: string): string {
 
   // Hosted app build results. Preserve the user-facing lines the task agent
   // reports after Cloud registration and domain search.
-  const appResultLines = strippedLines.filter((line) =>
+  const appResultLines = artifactLines.filter((line) =>
     /^(?:URL:\s*https?:\/\/|appId:\s*|monetization:\s*|auth:\s*|custom domain options\b|- .+\.(?:com|io|dev|app)\b.*\$|Want me to buy one of these for you\?)/i.test(
       line,
     ),
@@ -393,14 +407,14 @@ export function extractCompletionSummary(raw: string): string {
     for (const line of new Set(appResultLines)) lines.push(line);
   }
 
-  const domainStatusLines = strippedLines.filter((line) =>
+  const domainStatusLines = artifactLines.filter((line) =>
     /^(?:domain|app|status|verified|zoneId|expires|result):\s*\S/i.test(line),
   );
   if (domainStatusLines.length > 0) {
     for (const line of new Set(domainStatusLines)) lines.push(line);
   }
 
-  const publicUrls = stripped.match(PUBLIC_URL_RE);
+  const publicUrls = artifactText.match(PUBLIC_URL_RE);
   if (publicUrls) {
     for (const url of new Set(publicUrls)) {
       const normalizedUrl = normalizeUrlForDedupe(url);
@@ -417,17 +431,34 @@ export function extractCompletionSummary(raw: string): string {
 }
 
 export function summarizeUserFacingTurnOutput(raw: string): string {
+  const cleanedLines = cleanForChat(raw)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const cleaned = dedupeCompletionBlockLines(cleanedLines).join("\n").trim();
+
+  if (
+    cleaned &&
+    cleaned.length <= 4000 &&
+    cleanedLines.length <= 24 &&
+    !isLikelyRawPatchOrSourceDump(cleaned) &&
+    !cleanedLines.some(
+      (line) =>
+        PATCH_MARKER_LINE.test(line) ||
+        TOOL_MARKER_LINE.test(line) ||
+        GIT_NOISE_LINE.test(line),
+    ) &&
+    /(?:\b(?:built|created|implemented|updated|changed|verified|tests? run)\b|https?:\/\/)/i.test(
+      cleaned,
+    )
+  ) {
+    return cleaned;
+  }
+
   const artifactSummary = extractCompletionSummary(raw).trim();
   if (artifactSummary) {
     return artifactSummary;
   }
-
-  const cleaned = cleanForChat(raw)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .join("\n")
-    .trim();
 
   if (!cleaned) {
     return "";

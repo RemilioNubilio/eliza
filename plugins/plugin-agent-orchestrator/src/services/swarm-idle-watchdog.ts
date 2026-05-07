@@ -58,6 +58,17 @@ export async function scanIdleSessions(
         taskCtx.status !== "stopped" &&
         taskCtx.status !== "error"
       ) {
+        if (
+          ctx.inFlightDecisions.has(taskCtx.sessionId) ||
+          ctx.pendingTurnComplete.has(taskCtx.sessionId) ||
+          ctx.pendingBlocked.has(taskCtx.sessionId)
+        ) {
+          ctx.log(
+            `Idle watchdog: "${taskCtx.label}" — PTY session is gone, but a coordinator decision is still pending`,
+          );
+          continue;
+        }
+
         // Suppress the user-facing "Session lost" chat message when the
         // completion handler has already delivered a result: populated
         // completionSummary means the subagent's task_complete path ran,

@@ -6,10 +6,11 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { type IAgentRuntime, logger, type Service } from "@elizaos/core";
 import {
   type AdapterType,
@@ -231,6 +232,99 @@ Your default working directory is \`${workdir}\`. Stay inside it unless the task
 
 function buildInlineWorkspaceTaskPrefix(workdir: string): string {
   return `Work only in \`${workdir}\` unless the task brief or parent memory explicitly names another repo/path as assigned workspace for this task.`;
+}
+
+function settingIsOff(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    /^(?:off|false|0|none|disabled)$/i.test(value.trim())
+  );
+}
+
+function readStringSetting(
+  runtime: IAgentRuntime,
+  key: string,
+): string | undefined {
+  const runtimeValue = runtime.getSetting(key);
+  if (typeof runtimeValue === "string" && runtimeValue.trim()) {
+    return runtimeValue.trim();
+  }
+  return readConfigEnvKey(key) ?? process.env[key];
+}
+
+function buildCodexExecRuntimeEnv(
+  runtime: IAgentRuntime,
+): Record<string, string> | undefined {
+  const explicitSandboxMode = readStringSetting(
+    runtime,
+    "CODEX_EXEC_SANDBOX_MODE",
+  );
+  const codingAgentSandbox = readStringSetting(runtime, "CODING_AGENT_SANDBOX");
+  const env: Record<string, string> = {};
+
+  if (explicitSandboxMode) {
+    env.CODEX_EXEC_SANDBOX_MODE = explicitSandboxMode;
+  } else if (settingIsOff(codingAgentSandbox)) {
+    env.CODEX_EXEC_SANDBOX_MODE = "off";
+  }
+
+  return Object.keys(env).length > 0 ? env : undefined;
+}
+
+function asHookSettings(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function mergeHookSettings(
+  existing: unknown,
+  injected: unknown,
+): Record<string, unknown> {
+  const merged = { ...asHookSettings(existing) };
+  for (const [eventName, eventHooks] of Object.entries(
+    asHookSettings(injected),
+  )) {
+    const currentHooks = merged[eventName];
+    merged[eventName] =
+      Array.isArray(currentHooks) && Array.isArray(eventHooks)
+        ? [...currentHooks, ...eventHooks]
+        : eventHooks;
+  }
+  return merged;
+}
+
+export async function resolveOrchestratorIgnorePath(
+  workdir: string,
+): Promise<string> {
+  let current = resolve(workdir);
+
+  while (true) {
+    const dotGitPath = join(current, ".git");
+    const dotGitStat = await stat(dotGitPath).catch(() => null);
+
+    if (dotGitStat?.isDirectory()) {
+      return join(dotGitPath, "info", "exclude");
+    }
+
+    if (dotGitStat?.isFile()) {
+      const gitFile = await readFile(dotGitPath, "utf-8").catch(() => "");
+      const match = gitFile.match(/^gitdir:\s*(.+)\s*$/im);
+      if (match?.[1]) {
+        const rawGitDir = match[1].trim();
+        const gitDir = isAbsolute(rawGitDir)
+          ? rawGitDir
+          : resolve(current, rawGitDir);
+        return join(gitDir, "info", "exclude");
+      }
+    }
+
+    const parent = dirname(current);
+    if (parent === current) {
+      return join(resolve(workdir), ".gitignore");
+    }
+    current = parent;
+  }
 }
 
 function buildParentRuntimeBridgeMemory(
@@ -1078,11 +1172,10 @@ export class PTYService {
           sessionId,
         });
         if (hookProtocol) {
-          const existingHooks = (settings.hooks ?? {}) as Record<
-            string,
-            unknown
-          >;
-          settings.hooks = { ...existingHooks, ...hookProtocol.settingsHooks };
+          settings.hooks = mergeHookSettings(
+            settings.hooks,
+            hookProtocol.settingsHooks,
+          );
           this.log(`Injecting HTTP hooks for session ${sessionId}`);
         }
 
@@ -1116,11 +1209,10 @@ export class PTYService {
           sessionId,
         });
         if (hookProtocol) {
-          const existingHooks = (settings.hooks ?? {}) as Record<
-            string,
-            unknown
-          >;
-          settings.hooks = { ...existingHooks, ...hookProtocol.settingsHooks };
+          settings.hooks = mergeHookSettings(
+            settings.hooks,
+            hookProtocol.settingsHooks,
+          );
           this.log(`Injecting Gemini CLI hooks for session ${sessionId}`);
         }
 
@@ -1176,6 +1268,9 @@ export class PTYService {
     const mergedSpawnEnv = {
       ...linkedEnv,
       ...codexApprovalEnv,
+      ...(resolvedAgentType === "codex"
+        ? buildCodexExecRuntimeEnv(this.runtime)
+        : undefined),
       ...opencodeConfigEnv,
     };
     const spawnConfig = buildSpawnConfig(
@@ -2211,24 +2306,23 @@ export class PTYService {
     );
   }
 
-  // ─── Gitignore for Orchestrator Files ───
+  // ─── Ignore Rules for Orchestrator Files ───
 
-  /** Marker comment used to detect orchestrator-managed gitignore entries. */
+  /** Marker comment used to detect orchestrator-managed ignore entries. */
   private static readonly GITIGNORE_MARKER =
     "# orchestrator-injected (do not commit agent config/memory files)";
 
-  /** Per-path lock to serialize concurrent gitignore updates for the same workdir. */
+  /** Per-path lock to serialize concurrent ignore updates for the same workdir. */
   private static gitignoreLocks = new Map<string, Promise<void>>();
 
   /**
    * Ensure that orchestrator-injected files (CLAUDE.md, .claude/, GEMINI.md, etc.)
-   * are listed in the workspace .gitignore so agents don't commit them.
-   * Appends to an existing .gitignore or creates one. Idempotent: skips if
-   * the marker comment is already present. Serialized per-path to prevent
-   * duplicate entries from concurrent spawns.
+   * are ignored so agents don't commit them. In git repos, use the local
+   * `.git/info/exclude` file so a task-agent spawn does not dirty tracked
+   * source. In non-git scratch directories, fall back to `.gitignore`.
    */
   private async ensureOrchestratorGitignore(workdir: string): Promise<void> {
-    const gitignorePath = join(workdir, ".gitignore");
+    const gitignorePath = await resolveOrchestratorIgnorePath(workdir);
 
     // Serialize per-path: wait for any in-flight update to the same file.
     const existing_lock = PTYService.gitignoreLocks.get(gitignorePath);
@@ -2250,11 +2344,13 @@ export class PTYService {
     gitignorePath: string,
     workdir: string,
   ): Promise<void> {
+    await mkdir(dirname(gitignorePath), { recursive: true });
+
     let existing = "";
     try {
       existing = await readFile(gitignorePath, "utf-8");
     } catch {
-      // No .gitignore yet, we'll create one
+      // No ignore file yet, we'll create one.
     }
 
     // Idempotent: skip if we already added our entries
@@ -2276,7 +2372,7 @@ export class PTYService {
 
     try {
       if (existing.length === 0) {
-        // No .gitignore yet, create with just our entries
+        // No ignore file yet, create with just our entries.
         await writeFile(gitignorePath, `${entries.join("\n")}\n`, "utf-8");
       } else {
         // Append-only to avoid clobbering concurrent edits
@@ -2288,7 +2384,9 @@ export class PTYService {
         );
       }
     } catch (err) {
-      this.log(`Failed to update .gitignore in ${workdir}: ${err}`);
+      this.log(
+        `Failed to update orchestrator ignore file in ${workdir}: ${err}`,
+      );
     }
   }
 

@@ -17,6 +17,40 @@ const CODEX_WEB_SEARCH_BY_PRESET = {
 
 const CODEX_TASK_AGENT_REASONING_EFFORT = "xhigh";
 
+function settingIsOff(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  return /^(?:off|false|0|none|disabled)$/i.test(value.trim());
+}
+
+function resolveCodexApprovalFlags(approvalPreset) {
+  const sandboxMode =
+    typeof process.env.CODEX_EXEC_SANDBOX_MODE === "string"
+      ? process.env.CODEX_EXEC_SANDBOX_MODE.trim().toLowerCase()
+      : "";
+  const disableSandbox =
+    sandboxMode === "off" ||
+    sandboxMode === "none" ||
+    settingIsOff(process.env.CODING_AGENT_SANDBOX);
+
+  if (disableSandbox) {
+    return ["--dangerously-bypass-approvals-and-sandbox"];
+  }
+
+  if (
+    sandboxMode === "read-only" ||
+    sandboxMode === "workspace-write" ||
+    sandboxMode === "danger-full-access"
+  ) {
+    return ["-s", sandboxMode];
+  }
+
+  return (
+    CODEX_APPROVAL_FLAGS[approvalPreset] ?? CODEX_APPROVAL_FLAGS.autonomous
+  );
+}
+
 function patchCodexAdapter(adapter) {
   if (!adapter || adapter.adapterType !== "codex") {
     return adapter;
@@ -56,10 +90,7 @@ function patchCodexAdapter(adapter) {
       args.push("--model", model);
     }
 
-    args.push(
-      ...(CODEX_APPROVAL_FLAGS[approvalPreset] ??
-        CODEX_APPROVAL_FLAGS.autonomous),
-    );
+    args.push(...resolveCodexApprovalFlags(approvalPreset));
 
     if (config.workdir) {
       args.push("-C", config.workdir);

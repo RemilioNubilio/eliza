@@ -11,9 +11,13 @@ vi.mock("./roles.js", () => ({
 
 import { applyPluginRoleGating } from "./plugin-role-gating.js";
 
-function runtimeWithPolicy(policy: string | undefined): IAgentRuntime {
+function runtimeWithPolicy(
+  policy: string | undefined,
+  actions: Action[] = [],
+): IAgentRuntime {
   return {
     agentId: "agent-id",
+    actions,
     getSetting: vi.fn((key: string) =>
       key === "ACTION_ROLE_POLICY" ? policy : undefined,
     ),
@@ -59,6 +63,32 @@ describe("plugin role gating action policy", () => {
     ).resolves.toBe(true);
     expect(originalValidate).toHaveBeenCalled();
     expect(mocks.checkSenderRole).not.toHaveBeenCalled();
+  });
+
+  it("applies configured policy to declarative action gates used by v5 tools", () => {
+    const action = {
+      name: "SPAWN_AGENT",
+      contextGate: { anyOf: ["general"], roleGate: { minRole: "OWNER" } },
+      roleGate: { minRole: "OWNER" },
+      validate: vi.fn(async () => true),
+    } as unknown as Action;
+    const registeredAction = {
+      ...action,
+      contextGate: { anyOf: ["general"], roleGate: { minRole: "OWNER" } },
+      roleGate: { minRole: "OWNER" },
+    } as unknown as Action;
+
+    applyPluginRoleGating(
+      [pluginWithAction(action)],
+      runtimeWithPolicy(JSON.stringify({ SPAWN_AGENT: "GUEST" }), [
+        registeredAction,
+      ]),
+    );
+
+    expect(action.roleGate).toBeUndefined();
+    expect(action.contextGate).toEqual({ anyOf: ["general"] });
+    expect(registeredAction.roleGate).toBeUndefined();
+    expect(registeredAction.contextGate).toEqual({ anyOf: ["general"] });
   });
 
   it("matches configured policies against action similes", async () => {

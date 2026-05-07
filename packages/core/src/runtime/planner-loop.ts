@@ -916,6 +916,11 @@ async function recordToolStage(args: {
 }): Promise<void> {
 	if (!args.recorder || !args.trajectoryId) return;
 	try {
+		const requestedArgs = (args.toolCall.params ?? {}) as Record<
+			string,
+			unknown
+		>;
+		const effectiveArgs = extractEffectiveArgs(args.result) ?? requestedArgs;
 		const stage: RecordedStage = {
 			stageId: `stage-tool-${args.toolCall.name}-${args.startedAt}`,
 			kind: "tool",
@@ -925,7 +930,9 @@ async function recordToolStage(args: {
 			latencyMs: args.endedAt - args.startedAt,
 			tool: {
 				name: args.toolCall.name,
-				args: (args.toolCall.params ?? {}) as Record<string, unknown>,
+				args: effectiveArgs,
+				requestedArgs:
+					effectiveArgs === requestedArgs ? undefined : requestedArgs,
 				result: args.result,
 				success: args.result.success,
 				durationMs: args.endedAt - args.startedAt,
@@ -938,6 +945,24 @@ async function recordToolStage(args: {
 			"[TrajectoryRecorder] failed to record tool stage",
 		);
 	}
+}
+
+function extractEffectiveArgs(
+	result: PlannerToolResult,
+): Record<string, unknown> | undefined {
+	const data = result.data;
+	if (!data || typeof data !== "object" || Array.isArray(data)) {
+		return undefined;
+	}
+	const effectiveArgs = data.effectiveArgs;
+	if (
+		effectiveArgs &&
+		typeof effectiveArgs === "object" &&
+		!Array.isArray(effectiveArgs)
+	) {
+		return effectiveArgs as Record<string, unknown>;
+	}
+	return undefined;
 }
 
 function plannerToolCallToStreamingToolCall(

@@ -186,4 +186,97 @@ describe("SPAWN_AGENT registration", () => {
       }),
     );
   });
+
+  it("routes from the raw user prompt when planner wording would falsely exclude the route", async () => {
+    const coordinator = {
+      createTaskThread: vi.fn(async () => ({ id: "thread-1" })),
+      registerTask: vi.fn(async () => undefined),
+    };
+    let spawnOptions: Record<string, unknown> | undefined;
+    const ptyService = {
+      coordinator,
+      defaultApprovalPreset: "autonomous",
+      resolveAgentType: vi.fn(async () => "codex"),
+      checkAvailableAgents: vi.fn(async () => [
+        { adapter: "codex", installed: true },
+      ]),
+      spawnSession: vi.fn(async (options: Record<string, unknown>) => {
+        spawnOptions = options;
+        const session = {
+          id: "pty-route",
+          name: options.name as string,
+          agentType: options.agentType as string,
+          workdir: options.workdir as string,
+          status: "running",
+          createdAt: new Date(),
+          lastActivityAt: new Date(),
+          metadata: options.metadata as Record<string, unknown> | undefined,
+        };
+        const beforeInitialTask = options.beforeInitialTask as
+          | ((value: typeof session) => Promise<void> | void)
+          | undefined;
+        await beforeInitialTask?.(session);
+        return session;
+      }),
+      onSessionEvent: vi.fn(() => undefined),
+      subscribeToOutput: vi.fn(() => () => undefined),
+    };
+    const runtime = {
+      agentId: "agent-1",
+      getService: vi.fn((name: string) =>
+        name === "PTY_SERVICE" ? ptyService : undefined,
+      ),
+      getSetting: vi.fn((name: string) => {
+        if (name === "CODING_AGENT_SANDBOX") return "off";
+        if (name === "TASK_AGENT_WORKDIR_ROUTES") {
+          return JSON.stringify([
+            {
+              workdir: "/workspace/site",
+              matchAll: ["app"],
+              matchAny: ["site", "open"],
+              excludeAny: ["production", "cloud"],
+              instructions: "Write static apps under data/apps/<slug>/.",
+            },
+          ]);
+        }
+        return undefined;
+      }),
+      getRoom: vi.fn(async () => ({ source: "discord" })),
+    } as unknown as IAgentRuntime;
+    const message = {
+      id: "message-1",
+      entityId: "agent-1",
+      roomId: "room-1",
+      worldId: "world-1",
+      content: {
+        source: "discord",
+        text: "app-groundcheck-1778176946 build me a tiny polished focus reset timer app I can open on your site.",
+      },
+    } as unknown as Memory;
+
+    const result = await spawnAgentAction.handler?.(
+      runtime,
+      message,
+      undefined,
+      {
+        parameters: {
+          agentType: "codex",
+          task: "Build a tiny polished focus reset timer app in this workspace. Keep it self-contained and production-ready for the Nubilio site.",
+          workdir: "/workspace/planner-scratch",
+        },
+      },
+      vi.fn(),
+    );
+
+    expect(result?.success).toBe(true);
+    expect(spawnOptions).toMatchObject({
+      workdir: "/workspace/site",
+    });
+    expect(String(spawnOptions?.initialTask)).toContain(
+      "app-groundcheck-1778176946",
+    );
+    expect(String(spawnOptions?.memoryContent)).toContain(
+      "Use existing local workspace: /workspace/site",
+    );
+  });
 });

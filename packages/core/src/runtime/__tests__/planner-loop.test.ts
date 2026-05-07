@@ -245,6 +245,64 @@ describe("v5 planner loop skeleton", () => {
 		expect(result.trajectory.steps[0].toolCall?.name).toBe("SPAWN_AGENT");
 	});
 
+	it("records effective tool args while preserving requested planner args", async () => {
+		const runtime = {
+			useModel: vi.fn(async () => ({
+				text: "",
+				toolCalls: [
+					{
+						id: "call-1",
+						name: "SPAWN_AGENT",
+						arguments: {
+							task: "build a timer",
+							workdir: "/scratch/planner-choice",
+						},
+					},
+				],
+			})),
+		};
+		const stages: unknown[] = [];
+		const recorder = {
+			recordStage: vi.fn(async (_trajectoryId: string, stage: unknown) => {
+				stages.push(stage);
+			}),
+		};
+
+		await runPlannerLoop({
+			runtime,
+			context: { id: "ctx" },
+			recorder: recorder as never,
+			trajectoryId: "tj-effective-args",
+			executeToolCall: vi.fn(async () => ({
+				success: true,
+				continueChain: false,
+				data: {
+					effectiveArgs: {
+						task: "build a timer",
+						workdir: "/home/site",
+					},
+				},
+			})),
+			evaluate: vi.fn(),
+		});
+
+		const toolStage = stages.find(
+			(stage) =>
+				typeof stage === "object" &&
+				stage !== null &&
+				(stage as { kind?: unknown }).kind === "tool",
+		) as { tool?: { args?: unknown; requestedArgs?: unknown } } | undefined;
+
+		expect(toolStage?.tool?.args).toEqual({
+			task: "build a timer",
+			workdir: "/home/site",
+		});
+		expect(toolStage?.tool?.requestedArgs).toEqual({
+			task: "build a timer",
+			workdir: "/scratch/planner-choice",
+		});
+	});
+
 	it("throws when the same tool failure repeats beyond the configured limit", async () => {
 		const runtime = {
 			useModel: vi.fn(async () => ({

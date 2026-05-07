@@ -23,7 +23,7 @@ import fs from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { EvaluationResult } from "../types/components";
-import type { ChatMessage, ToolChoice, ToolDefinition } from "../types/model";
+import type { ChatMessage, ToolChoice } from "../types/model";
 import { computeCallCostUsd } from "./cost-table";
 
 // ---------------------------------------------------------------------------
@@ -70,6 +70,7 @@ export interface RecordedModelCall {
 export interface RecordedToolStage {
 	name: string;
 	args: Record<string, unknown>;
+	requestedArgs?: Record<string, unknown>;
 	result: unknown;
 	success: boolean;
 	durationMs: number;

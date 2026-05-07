@@ -3718,7 +3718,7 @@ export async function startEliza(
     // 8a. Apply role gating to protected plugin actions/providers.
     try {
       const { applyPluginRoleGating } = await import("./plugin-role-gating.js");
-      applyPluginRoleGating(runtime.plugins ?? []);
+      applyPluginRoleGating(runtime.plugins ?? [], runtime);
     } catch (err) {
       logger.debug(`[eliza] Plugin role gating skipped: ${formatError(err)}`);
     }
@@ -4174,7 +4174,7 @@ export async function startEliza(
             const { applyPluginRoleGating } = await import(
               "./plugin-role-gating.js"
             );
-            applyPluginRoleGating(newRuntime.plugins ?? []);
+            applyPluginRoleGating(newRuntime.plugins ?? [], newRuntime);
           } catch (err) {
             logger.debug(
               `[eliza] Hot-reload plugin role gating skipped: ${formatError(err)}`,

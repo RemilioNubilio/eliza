@@ -284,8 +284,9 @@ export const spawnAgentAction: Action = {
       task,
       "[SPAWN_AGENT]",
     );
+    const routeText = userText || task;
     const workdirSelection = resolveTaskWorkdirSelection(runtime, {
-      routeText: [task, userText].join("\n"),
+      routeText,
       contentWorkdir: content.workdir as string | undefined,
       plannerWorkdir: params?.workdir as string | undefined,
     });
@@ -720,6 +721,16 @@ export const spawnAgentAction: Action = {
               ? "opencode"
               : session.agentType,
           workdir: session.workdir,
+          effectiveArgs: {
+            ...(params ?? {}),
+            task,
+            workdir: session.workdir,
+            agentType: piRequested
+              ? "pi"
+              : opencodeRequested
+                ? "opencode"
+                : session.agentType,
+          },
           status: session.status,
           suppressActionResultClipboard: true,
         },

@@ -18,6 +18,7 @@
  */
 import type {
   Action,
+  RoleGate as CoreRoleGate,
   IAgentRuntime,
   Memory,
   Plugin,
@@ -27,10 +28,10 @@ import type {
 } from "@elizaos/core";
 import { logger } from "@elizaos/core";
 
-type RoleGate = "user" | "admin" | "owner";
+type RoleGateLevel = "user" | "admin" | "owner";
 type RoleName = "OWNER" | "ADMIN" | "USER" | "GUEST";
 
-const ROLE_GATE_RANK: Record<RoleGate, number> = {
+const ROLE_GATE_RANK: Record<RoleGateLevel, number> = {
   user: 1,
   admin: 2,
   owner: 3,
@@ -42,7 +43,7 @@ const ACTION_ROLE_POLICY_SETTING = "ACTION_ROLE_POLICY";
 // Plugin-level defaults — every action in the plugin gets at least this role.
 // ---------------------------------------------------------------------------
 
-const ROLE_GATED_PLUGINS: Readonly<Record<string, RoleGate>> = {
+const ROLE_GATED_PLUGINS: Readonly<Record<string, RoleGateLevel>> = {
   // Blockchain — financial actions
   "@elizaos/app-browser": "owner",
   "@elizaos/app-steward": "owner",
@@ -94,7 +95,7 @@ const ROLE_GATED_PLUGINS: Readonly<Record<string, RoleGate>> = {
 // Keys are exact action `name` strings from the plugin source.
 // ---------------------------------------------------------------------------
 
-const ACTION_ROLE_OVERRIDES: Readonly<Record<string, RoleGate>> = {
+const ACTION_ROLE_OVERRIDES: Readonly<Record<string, RoleGateLevel>> = {
   // --- agent-orchestrator: escalate dangerous actions to owner ---
   SPAWN_AGENT: "owner",
   SEND_TO_AGENT: "owner",
@@ -159,7 +160,7 @@ const ACTION_ROLE_OVERRIDES: Readonly<Record<string, RoleGate>> = {
 // Keys are exact provider `name` strings.
 // ---------------------------------------------------------------------------
 
-const PROVIDER_ROLE_OVERRIDES: Readonly<Record<string, RoleGate>> = {
+const PROVIDER_ROLE_OVERRIDES: Readonly<Record<string, RoleGateLevel>> = {
   // Shell
   shellHistoryProvider: "admin",
   terminalUsage: "admin",
@@ -208,9 +209,9 @@ const PROVIDER_ROLE_OVERRIDES: Readonly<Record<string, RoleGate>> = {
 // ---------------------------------------------------------------------------
 
 function resolveGateLevel(
-  pluginGate: RoleGate | undefined,
-  overrideGate: RoleGate | undefined,
-): RoleGate | null {
+  pluginGate: RoleGateLevel | undefined,
+  overrideGate: RoleGateLevel | undefined,
+): RoleGateLevel | null {
   if (!pluginGate && !overrideGate) return null;
   if (!pluginGate) return overrideGate ?? null;
   if (!overrideGate) return pluginGate;
@@ -221,7 +222,7 @@ function resolveGateLevel(
 
 function roleCheckPasses(
   check: { isOwner?: boolean; isAdmin?: boolean; role?: string },
-  gate: RoleGate,
+  gate: RoleGateLevel,
 ): boolean {
   switch (gate) {
     case "owner":
@@ -257,7 +258,7 @@ function normalizeRoleName(value: unknown): RoleName | null {
   }
 }
 
-function roleNameToGate(role: RoleName): RoleGate | null {
+function roleNameToGate(role: RoleName): RoleGateLevel | null {
   switch (role) {
     case "OWNER":
       return "owner";
@@ -319,7 +320,7 @@ function parseActionRolePolicy(
 function resolveConfiguredActionGate(
   runtime: IAgentRuntime,
   action: Action,
-): RoleGate | null | undefined {
+): RoleGateLevel | null | undefined {
   const policy = parseActionRolePolicy(runtime);
   const candidates = [
     action.name,
@@ -336,11 +337,56 @@ function resolveConfiguredActionGate(
   return undefined;
 }
 
+function gateLevelToCoreRoleGate(
+  gate: RoleGateLevel | null,
+): CoreRoleGate | undefined {
+  switch (gate) {
+    case "owner":
+      return { minRole: "OWNER" };
+    case "admin":
+      return { minRole: "ADMIN" };
+    case "user":
+      return { minRole: "USER" };
+    default:
+      return undefined;
+  }
+}
+
+function applyDeclarativeActionGate(
+  action: Action,
+  gate: RoleGateLevel | null,
+): void {
+  const roleGate = gateLevelToCoreRoleGate(gate);
+  if (roleGate) {
+    action.roleGate = roleGate;
+  } else {
+    delete action.roleGate;
+  }
+  if (action.contextGate) {
+    const contextGate = { ...action.contextGate };
+    if (roleGate) {
+      contextGate.roleGate = roleGate;
+    } else {
+      delete contextGate.roleGate;
+    }
+    action.contextGate = contextGate;
+  }
+}
+
 /**
  * Wrap an action's validate function so it rejects callers below the gate.
  */
-function gateAction(action: Action, gate: RoleGate): void {
-  if ((action as { __roleGate?: RoleGate }).__roleGate === gate) {
+function gateAction(
+  action: Action,
+  gate: RoleGateLevel,
+  configuredGate?: RoleGateLevel | null,
+): void {
+  applyDeclarativeActionGate(
+    action,
+    configuredGate === undefined ? gate : configuredGate,
+  );
+
+  if ((action as { __roleGate?: RoleGateLevel }).__roleGate === gate) {
     return;
   }
 
@@ -380,15 +426,15 @@ function gateAction(action: Action, gate: RoleGate): void {
 
     return originalValidate ? originalValidate(runtime, message, state) : true;
   };
-  (action as { __roleGate?: RoleGate }).__roleGate = gate;
+  (action as { __roleGate?: RoleGateLevel }).__roleGate = gate;
 }
 
 /**
  * Wrap a provider's get function so it returns empty content for callers
  * below the gate. Providers don't block — they just withhold context.
  */
-function gateProvider(provider: Provider, gate: RoleGate): void {
-  if ((provider as { __roleGate?: RoleGate }).__roleGate === gate) {
+function gateProvider(provider: Provider, gate: RoleGateLevel): void {
+  if ((provider as { __roleGate?: RoleGateLevel }).__roleGate === gate) {
     return;
   }
 
@@ -408,10 +454,10 @@ function gateProvider(provider: Provider, gate: RoleGate): void {
 
     return originalGet.call(provider, runtime, message, state);
   };
-  (provider as { __roleGate?: RoleGate }).__roleGate = gate;
+  (provider as { __roleGate?: RoleGateLevel }).__roleGate = gate;
 }
 
-function resolvePluginGate(pluginName: string): RoleGate | undefined {
+function resolvePluginGate(pluginName: string): RoleGateLevel | undefined {
   return (
     ROLE_GATED_PLUGINS[pluginName] ??
     ROLE_GATED_PLUGINS[pluginName.replace(/^@elizaos\/plugin-/, "")] ??
@@ -426,7 +472,10 @@ function resolvePluginGate(pluginName: string): RoleGate | undefined {
  * 1. Actions get gated to `max(plugin floor, action override)`.
  * 2. Providers in PROVIDER_ROLE_OVERRIDES get gated.
  */
-export function applyPluginRoleGating(plugins: Plugin[]): void {
+export function applyPluginRoleGating(
+  plugins: Plugin[],
+  runtime?: IAgentRuntime,
+): void {
   let totalActions = 0;
   let totalProviders = 0;
 
@@ -440,7 +489,19 @@ export function applyPluginRoleGating(plugins: Plugin[]): void {
         const actionOverride = ACTION_ROLE_OVERRIDES[action.name];
         const effectiveGate = resolveGateLevel(pluginGate, actionOverride);
         if (effectiveGate) {
-          gateAction(action, effectiveGate);
+          const targets = new Set<Action>([action]);
+          const registeredAction = runtime?.actions?.find(
+            (candidate) => candidate.name === action.name,
+          );
+          if (registeredAction) {
+            targets.add(registeredAction);
+          }
+          for (const target of targets) {
+            const configuredGate = runtime
+              ? resolveConfiguredActionGate(runtime, target)
+              : undefined;
+            gateAction(target, effectiveGate, configuredGate);
+          }
           totalActions++;
         }
       }

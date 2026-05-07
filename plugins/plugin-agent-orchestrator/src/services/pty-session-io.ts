@@ -96,7 +96,10 @@ export async function stopSession(
   try {
     const session = ctx.manager.get(sessionId);
     if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
+      log(
+        `Stop requested for missing session ${sessionId}; cleaning local state`,
+      );
+      return;
     }
 
     if (ctx.usingBunWorker) {
@@ -159,10 +162,87 @@ export async function stopSession(
   }
 }
 
+const ORCHESTRATOR_HOOK_PATH = "/api/coding-agents/hooks";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isOrchestratorHook(value: unknown): boolean {
+  if (typeof value === "string") {
+    return value.includes(ORCHESTRATOR_HOOK_PATH);
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  return Object.values(value).some((entry) => isOrchestratorHook(entry));
+}
+
+function removeOrchestratorHookEntry(value: unknown): unknown | null {
+  if (!isRecord(value)) {
+    return isOrchestratorHook(value) ? null : value;
+  }
+
+  const hooks = value.hooks;
+  if (Array.isArray(hooks)) {
+    const filteredHooks = hooks.filter((hook) => !isOrchestratorHook(hook));
+    if (filteredHooks.length === 0) {
+      return null;
+    }
+    return { ...value, hooks: filteredHooks };
+  }
+
+  return isOrchestratorHook(value) ? null : value;
+}
+
+export function removeOrchestratorHooksFromSettings(
+  settings: Record<string, unknown>,
+): boolean {
+  if (!isRecord(settings.hooks)) {
+    return false;
+  }
+
+  let changed = false;
+  const nextHooks: Record<string, unknown> = {};
+  for (const [eventName, eventHooks] of Object.entries(settings.hooks)) {
+    if (!Array.isArray(eventHooks)) {
+      if (isOrchestratorHook(eventHooks)) {
+        changed = true;
+        continue;
+      }
+      nextHooks[eventName] = eventHooks;
+      continue;
+    }
+
+    const filtered = eventHooks
+      .map((hook) => removeOrchestratorHookEntry(hook))
+      .filter((hook): hook is NonNullable<unknown> => hook !== null);
+    if (filtered.length !== eventHooks.length) {
+      changed = true;
+    }
+    if (filtered.length > 0) {
+      nextHooks[eventName] = filtered;
+    } else {
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return false;
+  }
+
+  if (Object.keys(nextHooks).length > 0) {
+    settings.hooks = nextHooks;
+  } else {
+    delete settings.hooks;
+  }
+  return true;
+}
+
 /**
- * Remove injected hooks from a workspace's agent settings files.
- * Cleans both .claude/settings.json and .gemini/settings.json.
- * Best-effort — errors are logged but not thrown.
+ * Remove injected telemetry hooks from a workspace's agent settings files.
+ * Project-owned hooks are preserved. Best-effort — errors are logged but not
+ * thrown.
  */
 async function cleanupAgentHooks(
   workdir: string,
@@ -176,8 +256,7 @@ async function cleanupAgentHooks(
     try {
       const raw = await readFile(settingsPath, "utf-8");
       const settings = JSON.parse(raw) as Record<string, unknown>;
-      if (!settings.hooks) continue;
-      delete settings.hooks;
+      if (!removeOrchestratorHooksFromSettings(settings)) continue;
       await writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
       log(`Cleaned up hooks from ${settingsPath}`);
     } catch (err: unknown) {

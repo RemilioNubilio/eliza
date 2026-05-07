@@ -7,12 +7,16 @@ import path from "node:path";
 import {
   fetchRemoteMedia,
   type GenerateTextParams,
+  type GenerateTextResult,
   type IAgentRuntime,
   type ImageDescriptionParams,
   type ImageDescriptionResult,
   type LookupFn,
   logger,
   type ObjectGenerationParams,
+  type ToolCall,
+  type ToolChoice,
+  type ToolDefinition,
 } from "@elizaos/core";
 import { readConfigEnvKey } from "./config-env.js";
 
@@ -163,6 +167,72 @@ export function promptFromGenerateTextParams(
   return JSON.stringify(params);
 }
 
+function toolChoiceName(choice: ToolChoice | undefined): string | undefined {
+  if (
+    !choice ||
+    choice === "auto" ||
+    choice === "none" ||
+    choice === "required"
+  ) {
+    return undefined;
+  }
+  if (typeof choice === "object") {
+    const record = choice as Record<string, unknown>;
+    if (typeof record.name === "string") {
+      return record.name;
+    }
+    const fn = record.function;
+    if (fn && typeof fn === "object" && !Array.isArray(fn)) {
+      const functionName = (fn as Record<string, unknown>).name;
+      return typeof functionName === "string" ? functionName : undefined;
+    }
+  }
+  return undefined;
+}
+
+function requiredSingleTool(
+  params: GenerateTextParams,
+): ToolDefinition | undefined {
+  const tools = Array.isArray(params.tools) ? params.tools : [];
+  const selectedName = toolChoiceName(params.toolChoice);
+  if (selectedName) {
+    return tools.find((tool) => tool.name === selectedName);
+  }
+  if (params.toolChoice === "required" && tools.length === 1) {
+    return tools[0];
+  }
+  return undefined;
+}
+
+function buildCodexToolBridgeInstructions(params: GenerateTextParams): string {
+  const tools = Array.isArray(params.tools) ? params.tools : [];
+  if (tools.length === 0) {
+    return "";
+  }
+  const toolSummary = tools
+    .map((tool) =>
+      JSON.stringify({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+        strict: tool.strict,
+      }),
+    )
+    .join("\n");
+  const selectedTool = requiredSingleTool(params);
+  const selectedInstruction = selectedTool
+    ? `The host requires exactly one call to ${selectedTool.name}. Return only that tool's arguments as a JSON object matching its parameters.`
+    : 'If a tool is needed, return JSON only in this shape: {"toolCalls":[{"name":"TOOL_NAME","arguments":{...}}],"messageToUser":"optional user-facing text"}.';
+
+  return [
+    "The host supplied native tool definitions, but this Codex CLI subprocess cannot emit provider-native tool calls.",
+    selectedInstruction,
+    "Do not answer in natural language when a tool call is required. Do not include markdown fences or commentary around the JSON.",
+    "Available tools:",
+    toolSummary,
+  ].join("\n");
+}
+
 export function buildCodexModelPrompt(
   params: GenerateTextParams,
   modelType?: string,
@@ -180,6 +250,7 @@ export function buildCodexModelPrompt(
     "Return only the final model output. No labels, no status text, no markdown fences unless the prompt explicitly asks for markdown.",
     modelType ? `Model type: ${modelType}.` : "",
     formatHint,
+    buildCodexToolBridgeInstructions(params),
     "",
     "<eliza_prompt>",
     promptFromGenerateTextParams(params),
@@ -298,6 +369,141 @@ export function parseCodexObjectResult(text: string): Record<string, unknown> {
     }
   }
   throw new Error("Codex object model returned non-JSON output");
+}
+
+function parseToolCallArguments(
+  value: unknown,
+): Record<string, unknown> | string {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Keep opaque string arguments for providers/tools that accept them.
+    }
+    return trimmed;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function makeToolCall(
+  name: string,
+  args: Record<string, unknown> | string,
+  id?: unknown,
+): ToolCall {
+  return {
+    id:
+      typeof id === "string" && id.trim()
+        ? id.trim()
+        : `codex-tool-${randomUUID()}`,
+    name,
+    arguments: args as ToolCall["arguments"],
+    type: "function",
+    status: "pending",
+  };
+}
+
+function normalizeNamedToolCall(
+  value: unknown,
+  availableToolNames: Set<string>,
+): ToolCall | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const functionRecord =
+    record.function &&
+    typeof record.function === "object" &&
+    !Array.isArray(record.function)
+      ? (record.function as Record<string, unknown>)
+      : undefined;
+  const name = String(
+    record.name ?? record.toolName ?? record.tool ?? functionRecord?.name ?? "",
+  ).trim();
+  if (!name || !availableToolNames.has(name)) {
+    return null;
+  }
+  const args = parseToolCallArguments(
+    record.arguments ??
+      record.args ??
+      record.input ??
+      record.params ??
+      functionRecord?.arguments,
+  );
+  return makeToolCall(name, args, record.id ?? record.toolCallId);
+}
+
+function normalizeToolCallArray(
+  value: unknown,
+  availableToolNames: Set<string>,
+): ToolCall[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => normalizeNamedToolCall(entry, availableToolNames))
+    .filter((entry): entry is ToolCall => entry !== null);
+}
+
+export function parseCodexToolCallResult(
+  text: string,
+  params: GenerateTextParams,
+): GenerateTextResult | null {
+  const tools = Array.isArray(params.tools) ? params.tools : [];
+  if (tools.length === 0) {
+    return null;
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = parseCodexObjectResult(text);
+  } catch {
+    return null;
+  }
+
+  const availableToolNames = new Set(tools.map((tool) => tool.name));
+  const explicitCalls = normalizeToolCallArray(
+    parsed.toolCalls ?? parsed.calls,
+    availableToolNames,
+  );
+  if (explicitCalls.length > 0) {
+    return {
+      text:
+        typeof parsed.messageToUser === "string" ? parsed.messageToUser : "",
+      toolCalls: explicitCalls,
+      finishReason: "tool_calls",
+      providerMetadata: { provider: "codex-cli-tool-bridge" },
+    };
+  }
+
+  const namedCall = normalizeNamedToolCall(parsed, availableToolNames);
+  if (namedCall) {
+    return {
+      text: "",
+      toolCalls: [namedCall],
+      finishReason: "tool_calls",
+      providerMetadata: { provider: "codex-cli-tool-bridge" },
+    };
+  }
+
+  const selectedTool = requiredSingleTool(params);
+  if (selectedTool) {
+    return {
+      text: "",
+      toolCalls: [makeToolCall(selectedTool.name, parsed)],
+      finishReason: "tool_calls",
+      providerMetadata: { provider: "codex-cli-tool-bridge" },
+    };
+  }
+
+  return null;
 }
 
 export function parseCodexImageDescriptionResult(
@@ -726,7 +932,7 @@ export async function codexCliImageDescriptionModel(
 export async function codexCliTextModel(
   runtime: IAgentRuntime,
   params: GenerateTextParams,
-): Promise<string> {
+): Promise<string | GenerateTextResult> {
   const rawModelType = (params as unknown as { modelType?: unknown }).modelType;
   const modelType = typeof rawModelType === "string" ? rawModelType : undefined;
   const options = resolveCodexExecOptions(runtime);
@@ -734,7 +940,8 @@ export async function codexCliTextModel(
   logger.info(
     `[codex-model-provider] running codex exec for ${modelType ?? "text"} in ${options.workdir}`,
   );
-  return runCodexExec(prompt, options);
+  const text = await runCodexExec(prompt, options);
+  return parseCodexToolCallResult(text, params) ?? text;
 }
 
 export async function codexCliObjectModel(

@@ -540,17 +540,16 @@ export const startCodingTaskAction: BackgroundAction = {
       repo = normalizeRepositoryInput(repo);
     }
 
-    const routeText = [
+    const plannerRouteText = [
       params?.task as string | undefined,
       params?.agents as string | undefined,
       content.task as string | undefined,
       content.agents as string | undefined,
-      userText,
     ]
       .filter(Boolean)
       .join("\n");
     const workdirSelection = resolveTaskWorkdirSelection(runtime, {
-      routeText,
+      routeText: userText || plannerRouteText,
       repo,
       contentWorkdir,
       plannerWorkdir,

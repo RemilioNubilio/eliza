@@ -1289,7 +1289,15 @@ export async function handleMultiAgent(
     return {
       success: false,
       text: failureMessage,
-      data: { agents: results, suppressActionResultClipboard: true },
+      data: {
+        agents: results,
+        effectiveArgs: {
+          ...(repo ? { repo } : {}),
+          ...(requestedWorkdir ? { workdir: requestedWorkdir } : {}),
+          agents: agentsParam,
+        },
+        suppressActionResultClipboard: true,
+      },
     };
   }
 
@@ -1297,7 +1305,15 @@ export async function handleMultiAgent(
     success: true,
     text: "",
     continueChain: false,
-    data: { agents: results, suppressActionResultClipboard: true },
+    data: {
+      agents: results,
+      effectiveArgs: {
+        ...(repo ? { repo } : {}),
+        ...(requestedWorkdir ? { workdir: requestedWorkdir } : {}),
+        agents: agentsParam,
+      },
+      suppressActionResultClipboard: true,
+    },
   };
 }
 
