@@ -758,8 +758,9 @@ export const spawnAgentAction: Action = {
     {
       name: "agentType",
       description:
-        "Specific task-agent framework to spawn. Options: claude (Claude Code), codex (OpenAI Codex), gemini (Google Gemini), aider, pi, shell (generic shell). " +
-        "If omitted, the orchestrator picks the preferred available framework.",
+        "Specific reasoning task-agent framework to spawn. Options: claude (Claude Code), codex (OpenAI Codex), gemini (Google Gemini), aider. " +
+        "If omitted, the orchestrator picks the preferred available framework. " +
+        "Do NOT select 'shell' or 'pi' for natural-language tasks; those are raw command sessions and the handler will ignore them for prose.",
       required: false,
       schema: { type: "string" as const },
     },
@@ -799,7 +800,7 @@ export const spawnAgentAction: Action = {
     {
       name: "keepAliveAfterComplete",
       description:
-        "Keep the spawned task-agent session alive after a completed turn so it can receive another tracked task.",
+        "Keep the spawned task-agent session alive after a completed turn so it can receive another tracked task. Leave unset or false for normal one-off chat tasks; set true only when the user explicitly asks to keep working in the same task-agent session.",
       required: false,
       schema: { type: "boolean" as const },
     },

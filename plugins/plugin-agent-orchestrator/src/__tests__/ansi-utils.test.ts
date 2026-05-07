@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  closeUnbalancedMarkdownFences,
   extractCompletionSummary,
   summarizeUserFacingTurnOutput,
 } from "../services/ansi-utils.js";
@@ -40,6 +41,52 @@ describe("extractCompletionSummary", () => {
         "Built Pocket Breath.",
         "URL: https://nubilio.org/apps/pocket-breath/",
         "Verified: public 200 OK and controls work.",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps the whole app result block when verification follows changed files", () => {
+    const raw = [
+      "Built the static app at:",
+      "",
+      "URL: https://nubilio.org/apps/tiny-stretch-timer/",
+      "",
+      "Files changed:",
+      "- `data/apps/tiny-stretch-timer/index.html`",
+      "- `data/apps/tiny-stretch-timer/style.css`",
+      "- `data/apps/tiny-stretch-timer/app.js`",
+      "- `data/apps/tiny-stretch-timer/meta.json`",
+      "",
+      "Verified:",
+      "- `node --check` passed for `app.js`",
+      "- Local route returned `200 OK`",
+      "- Public route returned `200 OK`",
+      "",
+      "Browser automation was not available: Chromium is not installed.",
+      "",
+      "Tag: app-currentargs-1778184418",
+    ].join("\n");
+
+    expect(extractCompletionSummary(raw)).toBe(
+      [
+        "Built the static app at:",
+        "",
+        "URL: https://nubilio.org/apps/tiny-stretch-timer/",
+        "",
+        "Files changed:",
+        "- `data/apps/tiny-stretch-timer/index.html`",
+        "- `data/apps/tiny-stretch-timer/style.css`",
+        "- `data/apps/tiny-stretch-timer/app.js`",
+        "- `data/apps/tiny-stretch-timer/meta.json`",
+        "",
+        "Verified:",
+        "- `node --check` passed for `app.js`",
+        "- Local route returned `200 OK`",
+        "- Public route returned `200 OK`",
+        "",
+        "Browser automation was not available: Chromium is not installed.",
+        "",
+        "Tag: app-currentargs-1778184418",
       ].join("\n"),
     );
   });
@@ -96,6 +143,29 @@ describe("summarizeUserFacingTurnOutput", () => {
         "btc-final BTC/USD: $79,821.015",
         "Source: Coinbase Spot Price API https://api.coinbase.com/v2/prices/BTC-USD/spot",
         "UTC timestamp: 2026-05-07T17:11:49.779Z",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("closeUnbalancedMarkdownFences", () => {
+  it("closes an unfinished fenced block before chat delivery", () => {
+    expect(
+      closeUnbalancedMarkdownFences(
+        [
+          "disk-fresh Disk check: urgent.",
+          "`df -h` source:",
+          "```text",
+          "/dev/sda1 387G 372G 15G 97% /",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "disk-fresh Disk check: urgent.",
+        "`df -h` source:",
+        "```text",
+        "/dev/sda1 387G 372G 15G 97% /",
+        "```",
       ].join("\n"),
     );
   });

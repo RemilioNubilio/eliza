@@ -181,4 +181,25 @@ describe("completion synthesis guards", () => {
       "other",
     ]);
   });
+
+  it("deduplicates partial and complete versions of the same summary", () => {
+    const partial = [
+      "disk-fresh Disk check: urgent. `/` is 97% used (`372G/387G`, only `15G` free), so this VPS needs cleanup soon.",
+      "`df -h` source:",
+      "```text",
+      "/dev/sda1 387G 372G 15G 97% /",
+    ].join("\n");
+    const complete = [
+      "disk-fresh Disk check: urgent. `/` is 97% used (`372G/387G`, only `15G` free), so this VPS needs cleanup soon.",
+      "`df -h` source:",
+      "```text",
+      "/dev/sda1  387G  372G  15G  97%  /",
+      "```",
+    ].join("\n");
+
+    expect(uniqueSummaryParts([partial, complete])).toEqual([
+      `${partial}\n\`\`\``,
+    ]);
+    expect(uniqueSummaryParts([complete, partial])).toEqual([complete]);
+  });
 });

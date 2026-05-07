@@ -89,6 +89,12 @@ describe("v5 planner loop skeleton", () => {
 		expect(v5PlannerTemplate).toContain(
 			"prior attachments, memory, or conversation snippets are not a substitute",
 		);
+		expect(v5PlannerTemplate).toContain(
+			"the current request is the latest user message",
+		);
+		expect(v5PlannerTemplate).toContain(
+			"preserve exact current-turn tags/tokens",
+		);
 	});
 
 	it("calls ACTION_PLANNER, executes the first queued tool, then evaluates", async () => {

@@ -14,6 +14,7 @@ import {
   codexCliObjectModel,
   codexCliTextModel,
   isCodexModelProviderEnabled,
+  isInvalidHostToolRefusal,
   parseCodexImageDescriptionResult,
   parseCodexObjectResult,
   parseCodexToolCallResult,
@@ -21,6 +22,7 @@ import {
   readCodexModelProviderPriority,
   resolveCodexExecOptions,
   runCodexExec,
+  shouldRetryCodexToolBridge,
 } from "../services/codex-model-provider.js";
 
 function runtimeWithSettings(settings: Record<string, string>): IAgentRuntime {
@@ -196,9 +198,58 @@ describe("codex model provider", () => {
     expect(prompt).toContain("cannot emit provider-native tool calls");
     expect(prompt).toContain("choose an available host tool");
     expect(prompt).toContain(
+      "A refusal such as 'I cannot run/search/browse from this context' is invalid",
+    );
+    expect(prompt).toContain(
+      "ground tool arguments in the latest/current user request",
+    );
+    expect(prompt).toContain(
       "The host requires exactly one call to MESSAGE_HANDLER_PLAN",
     );
     expect(prompt).toContain('"name":"MESSAGE_HANDLER_PLAN"');
+  });
+
+  it("identifies invalid tool refusals from the Codex bridge", () => {
+    expect(
+      isInvalidHostToolRefusal(
+        "I can’t run `df -h` from this context right now.",
+      ),
+    ).toBe(true);
+    expect(
+      isInvalidHostToolRefusal(
+        "I can’t help delete production data because that would be destructive.",
+      ),
+    ).toBe(false);
+  });
+
+  it("retries plain prose from ACTION_PLANNER tool prompts", () => {
+    const params = {
+      prompt: "plan",
+      tools: [{ name: "SPAWN_AGENT" }],
+      toolChoice: "auto" as const,
+    };
+
+    expect(
+      shouldRetryCodexToolBridge(
+        "disk tag `/` is still critically high.",
+        params,
+        "ACTION_PLANNER",
+      ),
+    ).toBe(true);
+    expect(
+      shouldRetryCodexToolBridge(
+        '{"thought":"done","toolCalls":[],"messageToUser":"ok"}',
+        params,
+        "ACTION_PLANNER",
+      ),
+    ).toBe(false);
+    expect(
+      shouldRetryCodexToolBridge(
+        "plain final answer",
+        { prompt: "answer" },
+        "TEXT_SMALL",
+      ),
+    ).toBe(false);
   });
 
   it("converts required single-tool JSON into native tool calls", () => {

@@ -93,6 +93,8 @@ const COMPLETION_BLOCK_ANCHOR_LINE =
   /^(?:built|created|implemented|updated|added|done\b|completed\b|url:\s*https?:\/\/|https?:\/\/|appId:\s*|verified:?|tests? run:?)/i;
 const COMPLETION_BLOCK_SIGNAL_LINE =
   /^(?:url:\s*https?:\/\/|appId:\s*|monetization:\s*|auth:\s*|verified:?|tests? run:?|pr:\s*https?:\/\/github\.com)/i;
+const COMPLETION_BLOCK_SECTION_LINE =
+  /^(?:files changed:?|changed files:?|verified:?|validation:?|browser automation\b|remaining blocker:?|tag:)/i;
 
 /** Codex/Claude launcher banners and trust screens that pollute failover prompts. */
 const SESSION_BOOTSTRAP_NOISE_PATTERNS = [
@@ -162,7 +164,9 @@ function extractAssistantFinalBlock(lines: string[]): string {
       !isLikelyRawPatchOrSourceDump(text) &&
       !isSessionBootstrapNoiseLine(text)
     ) {
-      return dedupeCompletionBlockLines(block).join("\n").trim();
+      return closeUnbalancedMarkdownFences(
+        dedupeCompletionBlockLines(block).join("\n").trim(),
+      );
     }
   }
   return "";
@@ -213,6 +217,16 @@ function dedupeCompletionBlockLines(lines: string[]): string[] {
   return result;
 }
 
+export function closeUnbalancedMarkdownFences(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+
+  const fenceCount =
+    trimmed.split("\n").filter((line) => line.trimStart().startsWith("```"))
+      .length ?? 0;
+  return fenceCount % 2 === 0 ? trimmed : `${trimmed}\n\`\`\``;
+}
+
 function extractStructuredCompletionBlock(lines: string[]): string {
   const normalized = lines.map((line) => line.trim());
   for (let i = normalized.length - 1; i >= 0; i--) {
@@ -220,17 +234,17 @@ function extractStructuredCompletionBlock(lines: string[]): string {
     if (!COMPLETION_BLOCK_SIGNAL_LINE.test(line)) continue;
 
     let start = i;
-    while (start > 0) {
-      const previous = normalized[start - 1];
-      if (!previous) {
-        start -= 1;
-        continue;
+    const scanFloor = Math.max(0, i - 30);
+    for (let j = i; j >= scanFloor; j--) {
+      const current = normalized[j];
+      if (!current) continue;
+      if (FINAL_BLOCK_STOP_LINE.test(current)) break;
+      if (
+        COMPLETION_BLOCK_ANCHOR_LINE.test(current) ||
+        COMPLETION_BLOCK_SECTION_LINE.test(current)
+      ) {
+        start = j;
       }
-      if (FINAL_BLOCK_STOP_LINE.test(previous)) break;
-      if (!COMPLETION_BLOCK_ANCHOR_LINE.test(previous) && start < i - 2) {
-        break;
-      }
-      start -= 1;
     }
 
     const block: string[] = [];
@@ -253,7 +267,7 @@ function extractStructuredCompletionBlock(lines: string[]): string {
         text,
       )
     ) {
-      return text;
+      return closeUnbalancedMarkdownFences(text);
     }
   }
   return "";
@@ -427,19 +441,35 @@ export function extractCompletionSummary(raw: string): string {
     }
   }
 
-  return lines.join("\n");
+  return closeUnbalancedMarkdownFences(lines.join("\n"));
 }
 
 export function summarizeUserFacingTurnOutput(raw: string): string {
+  const strippedLines = applyAnsiStrip(raw)
+    .split("\n")
+    .map((line) => line.trim());
+  const assistantFinalBlock = extractAssistantFinalBlock(strippedLines);
+  if (assistantFinalBlock) {
+    return assistantFinalBlock;
+  }
+  const structuredCompletionBlock =
+    extractStructuredCompletionBlock(strippedLines);
+  if (structuredCompletionBlock) {
+    return structuredCompletionBlock;
+  }
+
   const cleanedLines = cleanForChat(raw)
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  const cleaned = dedupeCompletionBlockLines(cleanedLines).join("\n").trim();
+  const cleaned = closeUnbalancedMarkdownFences(
+    dedupeCompletionBlockLines(cleanedLines).join("\n").trim(),
+  );
 
   if (
     cleaned &&
     cleaned.length <= 4000 &&
+    cleanedLines.length > 1 &&
     cleanedLines.length <= 24 &&
     !isLikelyRawPatchOrSourceDump(cleaned) &&
     !cleanedLines.some(
@@ -448,7 +478,7 @@ export function summarizeUserFacingTurnOutput(raw: string): string {
         TOOL_MARKER_LINE.test(line) ||
         GIT_NOISE_LINE.test(line),
     ) &&
-    /(?:\b(?:built|created|implemented|updated|changed|verified|tests? run)\b|https?:\/\/)/i.test(
+    /(?:\b(?:built|created|implemented|updated|changed|verified|tests? run|source)\b|utc timestamp:|appId:|monetization:|auth:|PR:\s*https?:\/\/github\.com)/i.test(
       cleaned,
     )
   ) {

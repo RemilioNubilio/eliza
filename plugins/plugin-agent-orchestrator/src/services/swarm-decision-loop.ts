@@ -12,6 +12,7 @@ import * as path from "node:path";
 import { ModelType } from "@elizaos/core";
 import {
   cleanForChat,
+  closeUnbalancedMarkdownFences,
   extractCompletionSummary,
   summarizeUserFacingTurnOutput,
 } from "./ansi-utils.js";
@@ -508,17 +509,44 @@ export function isCompletingWithCapturedOutput(task: {
 }
 
 export function uniqueSummaryParts(parts: string[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
+  const entries: Array<{ key: string; value: string }> = [];
   for (const part of parts) {
-    const trimmed = part.trim();
+    const trimmed = closeUnbalancedMarkdownFences(part);
     if (!trimmed) continue;
-    const key = trimmed.replace(/\s+/g, " ");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(trimmed);
+    const key = normalizeSummaryPartForDedupe(trimmed);
+    const overlappingIndex = entries.findIndex((entry) =>
+      areDuplicateSummaryParts(entry.key, key),
+    );
+    if (overlappingIndex >= 0) {
+      if (
+        key !== entries[overlappingIndex].key &&
+        trimmed.length > entries[overlappingIndex].value.length
+      ) {
+        entries[overlappingIndex] = { key, value: trimmed };
+      }
+      continue;
+    }
+    entries.push({ key, value: trimmed });
   }
-  return result;
+  return entries.map((entry) => entry.value);
+}
+
+function normalizeSummaryPartForDedupe(text: string): string {
+  return text
+    .replace(/^```[a-z0-9_-]*$/gim, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function areDuplicateSummaryParts(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const minMeaningfulLength = 80;
+  return (
+    a.length >= minMeaningfulLength &&
+    b.length >= minMeaningfulLength &&
+    (a.includes(b) || b.includes(a))
+  );
 }
 
 function stringMetadataValue(value: unknown): string | undefined {

@@ -3,6 +3,26 @@ import { describe, expect, it, vi } from "vitest";
 import { spawnAgentAction } from "../actions/spawn-agent.js";
 
 describe("SPAWN_AGENT registration", () => {
+  it("describes agentType as a reasoning-agent selector, not a prose shell route", () => {
+    const agentType = spawnAgentAction.parameters?.find(
+      (param) => param.name === "agentType",
+    );
+
+    expect(agentType?.description).toContain(
+      "Specific reasoning task-agent framework",
+    );
+    expect(agentType?.description).toContain("Do NOT select 'shell' or 'pi'");
+  });
+
+  it("documents keepAliveAfterComplete as explicit opt-in", () => {
+    const keepAlive = spawnAgentAction.parameters?.find(
+      (param) => param.name === "keepAliveAfterComplete",
+    );
+
+    expect(keepAlive?.description).toContain("Leave unset or false");
+    expect(keepAlive?.description).toContain("explicitly asks");
+  });
+
   it("registers coordinator task metadata before delivering the initial task", async () => {
     const order: string[] = [];
     const coordinator = {

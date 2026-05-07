@@ -231,7 +231,9 @@ function buildCodexToolBridgeInstructions(params: GenerateTextParams): string {
     selectedInstruction,
     "Do not use Codex CLI's own hidden tools, web search, shell, or filesystem access to satisfy a host-tool request.",
     "For live/current/external data, filesystem/runtime state, app builds, PR work, commands, or verification, choose an available host tool instead of answering directly.",
+    "For planner calls, ground tool arguments in the latest/current user request from the context object. Do not copy older tags, task text, workdirs, URLs, ids, or stale facts from previous conversation snippets.",
     "Do not answer in natural language when a tool call is required. Do not include markdown fences or commentary around the JSON.",
+    "A refusal such as 'I cannot run/search/browse from this context' is invalid when an available host tool can attempt that work.",
     "Available tools:",
     toolSummary,
   ].join("\n");
@@ -262,6 +264,64 @@ export function buildCodexModelPrompt(
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+export function isInvalidHostToolRefusal(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /\b(?:can'?t|cannot|can’t|unable to|not able to)\b/i.test(normalized) &&
+    /\b(?:run|execute|browse|search|look\s+up|inspect|check|access|use|perform)\b/i.test(
+      normalized,
+    ) &&
+    /\b(?:from this context|in this context|right now|here|available tool|tools?|command|web|filesystem|runtime|shell)\b/i.test(
+      normalized,
+    )
+  );
+}
+
+function isJsonObjectOutput(text: string): boolean {
+  try {
+    parseCodexObjectResult(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function shouldRetryCodexToolBridge(
+  text: string,
+  params: GenerateTextParams,
+  modelType?: string,
+): boolean {
+  const tools = Array.isArray(params.tools) ? params.tools : [];
+  if (tools.length === 0) {
+    return false;
+  }
+  if (isInvalidHostToolRefusal(text)) {
+    return true;
+  }
+  return modelType === "ACTION_PLANNER" && !isJsonObjectOutput(text);
+}
+
+function buildCodexToolBridgeRetryPrompt(
+  originalPrompt: string,
+  previousOutput: string,
+): string {
+  return [
+    "Your previous output was invalid for this elizaOS host-tool planning call.",
+    "You claimed you could not run/search/browse/check from this context, but the host supplied tools that can attempt the work.",
+    "Return JSON only using the host tool-call shape from the original prompt. Choose the smallest relevant host tool call.",
+    "If no host tool is appropriate after applying the original safety and planning rules, return a normal final answer, but do not refuse merely because this Codex CLI subprocess cannot use its own hidden tools.",
+    "",
+    "<previous_invalid_output>",
+    previousOutput.trim(),
+    "</previous_invalid_output>",
+    "",
+    originalPrompt,
+  ].join("\n");
 }
 
 export function buildCodexImageDescriptionPrompt(
@@ -945,7 +1005,21 @@ export async function codexCliTextModel(
     `[codex-model-provider] running codex exec for ${modelType ?? "text"} in ${options.workdir}`,
   );
   const text = await runCodexExec(prompt, options);
-  return parseCodexToolCallResult(text, params) ?? text;
+  const toolCallResult = parseCodexToolCallResult(text, params);
+  if (toolCallResult) {
+    return toolCallResult;
+  }
+  if (shouldRetryCodexToolBridge(text, params, modelType)) {
+    logger.info(
+      `[codex-model-provider] retrying ${modelType ?? "text"} after invalid host-tool refusal`,
+    );
+    const retryText = await runCodexExec(
+      buildCodexToolBridgeRetryPrompt(prompt, text),
+      options,
+    );
+    return parseCodexToolCallResult(retryText, params) ?? retryText;
+  }
+  return text;
 }
 
 export async function codexCliObjectModel(

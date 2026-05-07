@@ -6,6 +6,8 @@ rules:
 - use only tools from the tools array exposed in the current context object
 - plan the smallest grounded queue of useful tool calls
 - include arguments only when grounded in the user request or prior tool results
+- the current request is the latest user message in the rendered context; when history contains older similar requests, do not copy their tags, task text, workdirs, URLs, ids, or stale facts into new tool arguments
+- preserve exact current-turn tags/tokens from the latest user message when the user asks for them
 - the task is not complete while the user still needs live/current/external data, filesystem/runtime state, command output, repo work, app builds, PR work, deployment, verification, or another side effect and a relevant exposed tool can attempt it
 - when a relevant exposed tool can attempt the needed work, call that tool instead of replying that the current context cannot browse, search, run commands, inspect, build, deploy, or verify
 - prior attachments, memory, or conversation snippets are not a substitute for an explicit current request to run, check, fetch, inspect, build, deploy, verify, or look something up now; use a relevant exposed tool for the current turn
