@@ -129,6 +129,8 @@ export function buildCodexExecArgs(
     "never",
     "-c",
     `model_reasoning_effort=${options.reasoningEffort}`,
+    "-c",
+    "tools.web_search=false",
   ];
   if (useOutputLastMessage) {
     args.push("--output-last-message", outputFile);
@@ -227,6 +229,8 @@ function buildCodexToolBridgeInstructions(params: GenerateTextParams): string {
   return [
     "The host supplied native tool definitions, but this Codex CLI subprocess cannot emit provider-native tool calls.",
     selectedInstruction,
+    "Do not use Codex CLI's own hidden tools, web search, shell, or filesystem access to satisfy a host-tool request.",
+    "For live/current/external data, filesystem/runtime state, app builds, PR work, commands, or verification, choose an available host tool instead of answering directly.",
     "Do not answer in natural language when a tool call is required. Do not include markdown fences or commentary around the JSON.",
     "Available tools:",
     toolSummary,

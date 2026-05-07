@@ -69,6 +69,13 @@ describe("v5 planner loop skeleton", () => {
 		]);
 	});
 
+	it("treats non-JSON planner text as a terminal message", () => {
+		const output = parsePlannerOutput("Done from the model.");
+
+		expect(output.toolCalls).toEqual([]);
+		expect(output.messageToUser).toBe("Done from the model.");
+	});
+
 	it("instructs planners to use exposed tools for unresolved live or external work", () => {
 		expect(v5PlannerTemplate).toContain(
 			"the task is not complete while the user still needs live/current/external data",

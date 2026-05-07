@@ -563,7 +563,15 @@ function parseJsonPlannerOutput(raw: string): {
 	messageToUser?: string;
 	raw: Record<string, unknown>;
 } {
-	const parsed = parseJsonObject<RawPlannerOutput>(raw) ?? {};
+	const trimmed = raw.trim();
+	const parsed = parseJsonObject<RawPlannerOutput>(trimmed);
+	if (!parsed) {
+		return {
+			toolCalls: [],
+			messageToUser: getNonEmptyString(trimmed),
+			raw: { text: trimmed },
+		};
+	}
 	const messageToUser = getNonEmptyString(parsed.messageToUser ?? parsed.text);
 	const toolCalls = normalizeToolCalls(
 		parsed.toolCalls ?? parsed.tools ?? parsed.actions ?? parsed.action,

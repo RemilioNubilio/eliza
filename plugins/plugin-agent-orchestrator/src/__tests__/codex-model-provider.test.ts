@@ -55,6 +55,8 @@ describe("codex model provider", () => {
       "never",
       "-c",
       "model_reasoning_effort=low",
+      "-c",
+      "tools.web_search=false",
       "--output-last-message",
       "/tmp/out.txt",
       "--model",
@@ -192,6 +194,7 @@ describe("codex model provider", () => {
     );
 
     expect(prompt).toContain("cannot emit provider-native tool calls");
+    expect(prompt).toContain("choose an available host tool");
     expect(prompt).toContain(
       "The host requires exactly one call to MESSAGE_HANDLER_PLAN",
     );
