@@ -23,6 +23,107 @@ describe("SPAWN_AGENT registration", () => {
     expect(keepAlive?.description).toContain("explicitly asks");
   });
 
+  it("executes keepAliveAfterComplete only when the current user asks to reuse the session", async () => {
+    const coordinator = {
+      createTaskThread: vi.fn(async () => ({ id: "thread-1" })),
+      registerTask: vi.fn(async () => undefined),
+    };
+    let spawnOptions: Record<string, unknown> | undefined;
+    const ptyService = {
+      coordinator,
+      defaultApprovalPreset: "autonomous",
+      resolveAgentType: vi.fn(async () => "codex"),
+      checkAvailableAgents: vi.fn(async () => [
+        { adapter: "codex", installed: true },
+      ]),
+      spawnSession: vi.fn(async (options: Record<string, unknown>) => {
+        spawnOptions = options;
+        const session = {
+          id: "pty-keepalive",
+          name: options.name as string,
+          agentType: options.agentType as string,
+          workdir: options.workdir as string,
+          status: "running",
+          createdAt: new Date(),
+          lastActivityAt: new Date(),
+          metadata: options.metadata as Record<string, unknown> | undefined,
+        };
+        const beforeInitialTask = options.beforeInitialTask as
+          | ((value: typeof session) => Promise<void> | void)
+          | undefined;
+        await beforeInitialTask?.(session);
+        return session;
+      }),
+      onSessionEvent: vi.fn(() => undefined),
+      subscribeToOutput: vi.fn(() => () => undefined),
+    };
+    const runtime = {
+      agentId: "agent-1",
+      getService: vi.fn((name: string) =>
+        name === "PTY_SERVICE" ? ptyService : undefined,
+      ),
+      getSetting: vi.fn((name: string) =>
+        name === "CODING_AGENT_SANDBOX" ? "off" : undefined,
+      ),
+      getRoom: vi.fn(async () => ({ source: "discord" })),
+    } as unknown as IAgentRuntime;
+    const run = async (text: string) =>
+      spawnAgentAction.handler?.(
+        runtime,
+        {
+          id: `message-${text.length}`,
+          entityId: "agent-1",
+          roomId: "room-1",
+          worldId: "world-1",
+          content: { source: "discord", text },
+        } as unknown as Memory,
+        undefined,
+        {
+          parameters: {
+            agentType: "codex",
+            task: "build the app",
+            workdir: "/tmp",
+            keepAliveAfterComplete: true,
+          },
+        },
+        vi.fn(),
+      );
+
+    const normalResult = await run("build the app and send me the URL");
+
+    expect(normalResult?.success).toBe(true);
+    expect(spawnOptions?.metadata).not.toMatchObject({
+      keepAliveAfterComplete: true,
+    });
+    expect(normalResult?.data).toMatchObject({
+      effectiveArgs: { keepAliveAfterComplete: false },
+    });
+    expect(coordinator.registerTask).toHaveBeenLastCalledWith(
+      "pty-keepalive",
+      expect.not.objectContaining({
+        metadata: expect.objectContaining({ keepAliveAfterComplete: true }),
+      }),
+    );
+
+    const reuseResult = await run(
+      "build the app and keep the same task agent session open for follow-up work",
+    );
+
+    expect(reuseResult?.success).toBe(true);
+    expect(spawnOptions?.metadata).toMatchObject({
+      keepAliveAfterComplete: true,
+    });
+    expect(reuseResult?.data).toMatchObject({
+      effectiveArgs: { keepAliveAfterComplete: true },
+    });
+    expect(coordinator.registerTask).toHaveBeenLastCalledWith(
+      "pty-keepalive",
+      expect.objectContaining({
+        metadata: expect.objectContaining({ keepAliveAfterComplete: true }),
+      }),
+    );
+  });
+
   it("registers coordinator task metadata before delivering the initial task", async () => {
     const order: string[] = [];
     const coordinator = {
@@ -183,6 +284,8 @@ describe("SPAWN_AGENT registration", () => {
           agentType: "codex",
           task: "Look up the current BTC price in USD and include btc-finalclean-1778164527888.",
           workdir: "/workspace/stale-btc-scratch",
+          memoryContent:
+            "Work only in /workspace/stale-btc-scratch while checking the BTC price.",
         },
       },
       vi.fn(),
@@ -198,6 +301,10 @@ describe("SPAWN_AGENT registration", () => {
     expect(String(spawnOptions?.memoryContent)).toContain(
       "Use existing local workspace: /workspace/site",
     );
+    expect(String(spawnOptions?.memoryContent)).not.toContain(
+      "stale-btc-scratch",
+    );
+    expect(String(spawnOptions?.memoryContent)).not.toContain("BTC price");
     expect(coordinator.registerTask).toHaveBeenCalledWith(
       "pty-grounded",
       expect.objectContaining({

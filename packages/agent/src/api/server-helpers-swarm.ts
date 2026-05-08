@@ -75,8 +75,15 @@ export async function routeAutonomyTextToUser(
     return;
   }
 
-  // Ephemeral sources: broadcast to UI but don't persist to DB.
-  const ephemeralSources = new Set(["coding-agent", "coordinator", "action"]);
+  // Ephemeral sources: broadcast to UI but don't persist to DB. Connector
+  // bridges, such as swarm synthesis, are persisted by the destination
+  // connector when the actual platform message is observed.
+  const ephemeralSources = new Set([
+    "coding-agent",
+    "coordinator",
+    "action",
+    "swarm_synthesis",
+  ]);
 
   const messageId = crypto.randomUUID() as UUID;
 
@@ -219,7 +226,7 @@ export function wireCodingAgentSwarmSynthesis(st: ServerState): boolean {
 }
 
 /**
- * Handle swarm completion by synthesizing a summary via the LLM.
+ * Handle swarm completion by routing the captured task result to the user.
  */
 export async function handleSwarmSynthesis(
   st: { runtime: AgentRuntime | null },

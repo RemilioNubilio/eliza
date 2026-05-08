@@ -84,18 +84,11 @@ const PATCH_ADDED_REMOVED_LINE = /^[+-]\s/;
 const SOURCE_PUNCTUATION_LINE =
   /[{}();=]|\b(?:const|let|var|function|return|class|import|export)\b/;
 const PUBLIC_URL_RE =
-  /https?:\/\/(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"')\]]*)?/gi;
+  /https?:\/\/(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"'`)\]]*)?/gi;
 const ASSISTANT_FINAL_MARKER_LINE =
   /^(?:codex|claude|claude code|gemini|opencode|openai)$/i;
 const FINAL_BLOCK_STOP_LINE =
   /^(?:diff --git\b|exec\b|tokens used\b|thinking\b|error:\s|warning:\s|index\s+[a-f0-9]{7,}\.\.[a-f0-9]{7,}|@@\s|---\s+[ab]\/|\+\+\+\s+[ab]\/)/i;
-const COMPLETION_BLOCK_ANCHOR_LINE =
-  /^(?:built|created|implemented|updated|added|done\b|completed\b|url:\s*https?:\/\/|https?:\/\/|appId:\s*|verified:?|tests? run:?)/i;
-const COMPLETION_BLOCK_SIGNAL_LINE =
-  /^(?:url:\s*https?:\/\/|appId:\s*|monetization:\s*|auth:\s*|verified:?|tests? run:?|pr:\s*https?:\/\/github\.com)/i;
-const COMPLETION_BLOCK_SECTION_LINE =
-  /^(?:files changed:?|changed files:?|verified:?|validation:?|browser automation\b|remaining blocker:?|tag:)/i;
-
 /** Codex/Claude launcher banners and trust screens that pollute failover prompts. */
 const SESSION_BOOTSTRAP_NOISE_PATTERNS = [
   /^OpenAI Codex\b/i,
@@ -178,15 +171,146 @@ function lineContainsPublicUrl(line: string): boolean {
 }
 
 function normalizeUrlForDedupe(url: string): string {
-  return url.trim().replace(/[.,;:!?]+$/u, "");
+  return url.trim().replace(/[`.,;:!?]+$/u, "");
+}
+
+function unwrapInlineCodeUrls(line: string): string {
+  return line.replace(
+    /`(https?:\/\/(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^`\s<>"')\]]*)?)`/giu,
+    "$1",
+  );
+}
+
+function normalizeCompletionLineForDedupe(line: string): string {
+  return unwrapInlineCodeUrls(line)
+    .replace(PUBLIC_URL_RE, (url) => normalizeUrlForDedupe(url).toLowerCase())
+    .replace(/[→←]/g, " ")
+    .replace(/[`*_~]/g, "")
+    .replace(/[^\p{L}\p{N}:/#.-]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function shouldDedupeCompletionLine(line: string, key: string): boolean {
+  return key.length >= 8 || line.includes(":") || lineContainsPublicUrl(line);
+}
+
+function compactCompletionBlankLines(lines: string[]): string[] {
+  const compacted: string[] = [];
+  for (const line of lines) {
+    if (!line.trim()) {
+      if (compacted.length > 0 && compacted.at(-1)?.trim()) {
+        compacted.push("");
+      }
+      continue;
+    }
+    compacted.push(line);
+  }
+
+  while (compacted.length > 0 && !compacted.at(-1)?.trim()) {
+    compacted.pop();
+  }
+
+  return compacted;
+}
+
+function isSummaryLabelLine(line: string): boolean {
+  return /^(?:[-*]\s+)?[\p{L}\p{N}][^:\n]{0,80}:\s+\S/u.test(
+    unwrapInlineCodeUrls(line).trim(),
+  );
+}
+
+function isBulletSummaryLine(line: string): boolean {
+  return /^[-*]\s+\S/u.test(unwrapInlineCodeUrls(line).trim());
+}
+
+function isSummarySectionHeadingLine(line: string): boolean {
+  const trimmed = unwrapInlineCodeUrls(line).trim();
+  return (
+    trimmed.length > 1 &&
+    trimmed.length <= 120 &&
+    /[\p{L}\p{N}]/u.test(trimmed) &&
+    /:\s*$/u.test(trimmed) &&
+    !SOURCE_PUNCTUATION_LINE.test(trimmed)
+  );
+}
+
+function isSentenceLikeSummaryLine(line: string): boolean {
+  const trimmed = unwrapInlineCodeUrls(line).trim();
+  return (
+    trimmed.length <= 280 &&
+    /[\p{L}\p{N}]/u.test(trimmed) &&
+    /[.!?]$/u.test(trimmed)
+  );
+}
+
+function isStructuredSummaryLine(line: string): boolean {
+  const trimmed = unwrapInlineCodeUrls(line).trim();
+  return (
+    lineContainsPublicUrl(trimmed) ||
+    isSummaryLabelLine(trimmed) ||
+    isSummarySectionHeadingLine(trimmed) ||
+    isBulletSummaryLine(trimmed) ||
+    isSentenceLikeSummaryLine(trimmed)
+  );
+}
+
+function isConciseUserFacingSummary(
+  text: string,
+  lines: readonly string[],
+): boolean {
+  if (!text || text.length > 4000 || lines.length < 1 || lines.length > 24) {
+    return false;
+  }
+  if (isLikelyRawPatchOrSourceDump(text)) {
+    return false;
+  }
+  if (
+    lines.some(
+      (line) =>
+        PATCH_MARKER_LINE.test(line) ||
+        TOOL_MARKER_LINE.test(line) ||
+        GIT_NOISE_LINE.test(line),
+    )
+  ) {
+    return false;
+  }
+
+  const meaningfulLines = lines.filter((line) => /[\p{L}\p{N}]/u.test(line));
+  if (meaningfulLines.length === 0) {
+    return false;
+  }
+
+  if (meaningfulLines.some(lineContainsPublicUrl)) {
+    return true;
+  }
+
+  const summaryShapedLines = meaningfulLines.filter(
+    (line) =>
+      isSummaryLabelLine(line) ||
+      isBulletSummaryLine(line) ||
+      isSentenceLikeSummaryLine(line),
+  );
+  const mostlyShortLines =
+    meaningfulLines.filter((line) => line.length <= 280).length /
+      meaningfulLines.length >=
+    0.75;
+
+  return (
+    mostlyShortLines &&
+    summaryShapedLines.length >= Math.min(2, meaningfulLines.length)
+  );
 }
 
 function dedupeCompletionBlockLines(lines: string[]): string[] {
   const urlsWithContext = new Set<string>();
   const seenUrls = new Set<string>();
+  const seenLineKeys = new Set<string>();
   const result: string[] = [];
+  const normalizedLines = lines.map(unwrapInlineCodeUrls);
 
-  for (const line of lines) {
+  for (const line of normalizedLines) {
     const matches = line.match(PUBLIC_URL_RE) ?? [];
     const normalizedMatches = matches.map(normalizeUrlForDedupe);
     const isBareUrlLine =
@@ -198,7 +322,15 @@ function dedupeCompletionBlockLines(lines: string[]): string[] {
     }
   }
 
-  for (const line of lines) {
+  let inFence = false;
+  for (const line of normalizedLines) {
+    const fence = line.trim();
+    if (fence.startsWith("```")) {
+      inFence = !inFence || !/^```\s*$/.test(fence);
+      result.push(line);
+      continue;
+    }
+
     const matches = line.match(PUBLIC_URL_RE) ?? [];
     const normalizedMatches = matches.map(normalizeUrlForDedupe);
     const isBareRepeatedUrl =
@@ -208,13 +340,27 @@ function dedupeCompletionBlockLines(lines: string[]): string[] {
         urlsWithContext.has(normalizedMatches[0]));
     if (isBareRepeatedUrl) continue;
 
+    if (!inFence && line.trim()) {
+      const key = normalizeCompletionLineForDedupe(line);
+      if (
+        key &&
+        seenLineKeys.has(key) &&
+        shouldDedupeCompletionLine(line, key)
+      ) {
+        continue;
+      }
+      if (key && shouldDedupeCompletionLine(line, key)) {
+        seenLineKeys.add(key);
+      }
+    }
+
     result.push(line);
     for (const normalized of normalizedMatches) {
       seenUrls.add(normalized);
     }
   }
 
-  return result;
+  return compactCompletionBlankLines(result);
 }
 
 export function closeUnbalancedMarkdownFences(text: string): string {
@@ -261,7 +407,7 @@ function extractStructuredCompletionBlock(lines: string[]): string {
   const normalized = lines.map((line) => line.trim());
   for (let i = normalized.length - 1; i >= 0; i--) {
     const line = normalized[i];
-    if (!COMPLETION_BLOCK_SIGNAL_LINE.test(line)) continue;
+    if (!lineContainsPublicUrl(line)) continue;
 
     let start = i;
     const scanFloor = Math.max(0, i - 30);
@@ -269,12 +415,11 @@ function extractStructuredCompletionBlock(lines: string[]): string {
       const current = normalized[j];
       if (!current) continue;
       if (FINAL_BLOCK_STOP_LINE.test(current)) break;
-      if (
-        COMPLETION_BLOCK_ANCHOR_LINE.test(current) ||
-        COMPLETION_BLOCK_SECTION_LINE.test(current)
-      ) {
+      if (isStructuredSummaryLine(current)) {
         start = j;
+        continue;
       }
+      if (j < i) break;
     }
 
     const block: string[] = [];
@@ -289,13 +434,10 @@ function extractStructuredCompletionBlock(lines: string[]): string {
     }
 
     const text = dedupeCompletionBlockLines(block).join("\n").trim();
+    const textLines = text.split("\n").filter((textLine) => textLine.trim());
     if (
-      text &&
       lineContainsPublicUrl(text) &&
-      !isLikelyRawPatchOrSourceDump(text) &&
-      /(?:\bverified:?|tests? run:?|built|created|implemented|updated|added|appId:|monetization:|auth:|PR:\s*https?:\/\/github\.com)/i.test(
-        text,
-      )
+      isConciseUserFacingSummary(text, textLines)
     ) {
       return closeUnbalancedMarkdownFences(text);
     }
@@ -408,7 +550,6 @@ export function extractCompletionSummary(raw: string): string {
   }
   const lines: string[] = [];
   const artifactText = strippedLines.slice(-80).join("\n");
-  const artifactLines = artifactText.split("\n").map((line) => line.trim());
 
   // PR / issue URLs
   const prUrls = artifactText.match(
@@ -438,24 +579,6 @@ export function extractCompletionSummary(raw: string): string {
   );
   if (diffStat) {
     for (const m of diffStat) lines.push(m.trim());
-  }
-
-  // Hosted app build results. Preserve the user-facing lines the task agent
-  // reports after Cloud registration and domain search.
-  const appResultLines = artifactLines.filter((line) =>
-    /^(?:URL:\s*https?:\/\/|appId:\s*|monetization:\s*|auth:\s*|custom domain options\b|- .+\.(?:com|io|dev|app)\b.*\$|Want me to buy one of these for you\?)/i.test(
-      line,
-    ),
-  );
-  if (appResultLines.length > 0) {
-    for (const line of new Set(appResultLines)) lines.push(line);
-  }
-
-  const domainStatusLines = artifactLines.filter((line) =>
-    /^(?:domain|app|status|verified|zoneId|expires|result):\s*\S/i.test(line),
-  );
-  if (domainStatusLines.length > 0) {
-    for (const line of new Set(domainStatusLines)) lines.push(line);
   }
 
   const publicUrls = artifactText.match(PUBLIC_URL_RE);
@@ -496,22 +619,7 @@ export function summarizeUserFacingTurnOutput(raw: string): string {
     dedupeCompletionBlockLines(cleanedLines).join("\n").trim(),
   );
 
-  if (
-    cleaned &&
-    cleaned.length <= 4000 &&
-    cleanedLines.length > 1 &&
-    cleanedLines.length <= 24 &&
-    !isLikelyRawPatchOrSourceDump(cleaned) &&
-    !cleanedLines.some(
-      (line) =>
-        PATCH_MARKER_LINE.test(line) ||
-        TOOL_MARKER_LINE.test(line) ||
-        GIT_NOISE_LINE.test(line),
-    ) &&
-    /(?:\b(?:built|created|implemented|updated|changed|verified|tests? run|source)\b|utc timestamp:|appId:|monetization:|auth:|PR:\s*https?:\/\/github\.com)/i.test(
-      cleaned,
-    )
-  ) {
+  if (isConciseUserFacingSummary(cleaned, cleanedLines)) {
     return cleaned;
   }
 

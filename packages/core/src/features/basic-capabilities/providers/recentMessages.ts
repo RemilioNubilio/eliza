@@ -18,6 +18,15 @@ import { addHeader, formatMessages, formatPosts } from "../../../utils.ts";
 const spec = requireProviderSpec("RECENT_MESSAGES");
 const MAX_RECENT_MESSAGES_LOOKBACK = 50;
 const MAX_RECENT_INTERACTIONS = 20;
+const INTERNAL_BRIDGE_MESSAGE_SOURCES = new Set(["swarm_synthesis"]);
+
+function isInternalBridgeMessage(memory: Memory): boolean {
+	const source =
+		typeof memory.content?.source === "string"
+			? memory.content.source.trim()
+			: "";
+	return INTERNAL_BRIDGE_MESSAGE_SOURCES.has(source);
+}
 
 function buildFormattingFallbackEntity(memory: Memory): Entity | null {
 	const metadata = memory.metadata as CustomMetadata | undefined;
@@ -207,7 +216,9 @@ export const recentMessagesProvider: Provider = {
 			);
 
 			const dialogueMessages = recentMessagesData.filter(
-				(msg) => !(msg.content && msg.content.type === "action_result"),
+				(msg) =>
+					!(msg.content && msg.content.type === "action_result") &&
+					!isInternalBridgeMessage(msg),
 			);
 
 			// Room entity lookups only include current participants. Historical room

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatTaskWorkdirRouteInstructions,
   parseTaskWorkdirRoutes,
+  resolveTaskMemoryContent,
   resolveTaskWorkdirRoute,
   resolveTaskWorkdirSelection,
 } from "../services/task-workdir-routes.js";
@@ -173,5 +174,32 @@ describe("task workdir routes", () => {
       workdir: "/workspace/lookup",
       source: "planner",
     });
+  });
+
+  it("drops planner-authored memory when an operator route overrides planner workdir", () => {
+    expect(
+      resolveTaskMemoryContent({
+        contentMemoryContent: undefined,
+        plannerMemoryContent: "Work only in /workspace/stale-pr-worktree.",
+        workdirSelection: { source: "route" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      resolveTaskMemoryContent({
+        contentMemoryContent: "Operator structured memory",
+        plannerMemoryContent: "Work only in /workspace/stale-pr-worktree.",
+        workdirSelection: { source: "route" },
+      }),
+    ).toBe("Operator structured memory");
+  });
+
+  it("keeps planner memory when no configured route overrides it", () => {
+    expect(
+      resolveTaskMemoryContent({
+        plannerMemoryContent: "Use the requested repo checkout.",
+        workdirSelection: { source: "planner" },
+      }),
+    ).toBe("Use the requested repo checkout.");
   });
 });

@@ -5,7 +5,9 @@ export const v5PlannerTemplate = `task: Plan the next native tool calls.
 rules:
 - use only tools from the tools array exposed in the current context object
 - plan the smallest grounded queue of useful tool calls
-- include arguments only when grounded in the user request or prior tool results
+- include only arguments that are both grounded in the user request or prior tool results and declared by the selected tool's parameter schema
+- never add undeclared tuning knobs such as model, reasoning, provider, timeout, or approval fields unless that exact parameter is listed for the selected tool
+- set optional session-lifetime/reuse fields true only when the latest user message explicitly asks to keep or reuse the same agent/session; otherwise omit them or set false
 - the current request is the latest user message in the rendered context; when history contains older similar requests, do not copy their tags, task text, workdirs, URLs, ids, or stale facts into new tool arguments
 - preserve exact current-turn tags/tokens from the latest user message when the user asks for them
 - the task is not complete while the user still needs live/current/external data, filesystem/runtime state, command output, repo work, app builds, PR work, deployment, verification, or another side effect and a relevant exposed tool can attempt it

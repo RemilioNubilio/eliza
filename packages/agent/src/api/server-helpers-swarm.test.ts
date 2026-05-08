@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { handleSwarmSynthesis } from "./server-helpers-swarm.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  handleSwarmSynthesis,
+  routeAutonomyTextToUser,
+} from "./server-helpers-swarm.js";
 
 const runtime = {
   getService() {
@@ -85,5 +88,43 @@ describe("handleSwarmSynthesis", () => {
       source: "swarm_synthesis",
       inReplyTo: "1501955635959435505",
     });
+  });
+});
+
+describe("routeAutonomyTextToUser", () => {
+  it("does not persist swarm synthesis before the connector stores the platform reply", async () => {
+    const createMemory = vi.fn();
+    const broadcastWs = vi.fn();
+    const state = {
+      runtime: {
+        agentId: "00000000-0000-0000-0000-000000000001",
+        createMemory,
+      },
+      activeConversationId: "conv-1",
+      conversations: new Map([
+        [
+          "conv-1",
+          {
+            id: "conv-1",
+            roomId: "00000000-0000-0000-0000-000000000002",
+            updatedAt: "2026-05-07T00:00:00.000Z",
+          },
+        ],
+      ]),
+      broadcastWs,
+    } as never;
+
+    await routeAutonomyTextToUser(state, "done", "swarm_synthesis");
+
+    expect(createMemory).not.toHaveBeenCalled();
+    expect(broadcastWs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "proactive-message",
+        message: expect.objectContaining({
+          text: "done",
+          source: "swarm_synthesis",
+        }),
+      }),
+    );
   });
 });

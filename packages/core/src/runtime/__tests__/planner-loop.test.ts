@@ -95,6 +95,13 @@ describe("v5 planner loop skeleton", () => {
 		expect(v5PlannerTemplate).toContain(
 			"preserve exact current-turn tags/tokens",
 		);
+		expect(v5PlannerTemplate).toContain(
+			"declared by the selected tool's parameter schema",
+		);
+		expect(v5PlannerTemplate).toContain("never add undeclared tuning knobs");
+		expect(v5PlannerTemplate).toContain(
+			"session-lifetime/reuse fields true only when the latest user message explicitly asks",
+		);
 	});
 
 	it("calls ACTION_PLANNER, executes the first queued tool, then evaluates", async () => {

@@ -89,13 +89,23 @@ describe("v5 message handler routing", () => {
 		const parsed = parseMessageHandlerOutput(`{
   "processMessage": "RESPOND",
   "thought": "Direct.",
-  "plan": { "contexts": ["simple"], "reply": "Done." }
+  "plan": { "contexts": ["simple"], "reply": "Done.", "requiresTool": false }
 }`);
 		expect(parsed).toMatchObject({
 			processMessage: "RESPOND",
 			thought: "Direct.",
-			plan: { contexts: ["simple"], reply: "Done." },
+			plan: { contexts: ["simple"], reply: "Done.", requiresTool: false },
 		});
+	});
+
+	it("preserves the requiresTool router signal for planner enforcement", () => {
+		const parsed = parseMessageHandlerOutput(`{
+  "processMessage": "RESPOND",
+  "thought": "Needs current runtime state.",
+  "plan": { "contexts": ["general"], "requiresTool": true }
+}`);
+
+		expect(parsed?.plan.requiresTool).toBe(true);
 	});
 
 	it("coerces legacy simple:true with empty contexts to ['simple']", () => {

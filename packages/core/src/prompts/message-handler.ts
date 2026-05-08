@@ -15,6 +15,7 @@ rules:
 - choose processMessage=IGNORE when the message should be ignored
 - choose processMessage=STOP when the user asks the agent to stop or disengage
 - plan.contexts is a list of context ids drawn from available_contexts, such as calendar or email
+- plan.requiresTool is true when the current message needs tools, actions, subagents, providers, filesystem/runtime inspection, network/browser/API lookup, live/current/external data, side effects, long-running work, or verification; otherwise false
 - never invent context ids that are not in available_contexts
 - choose plan.contexts=["simple"] (and only "simple") when ALL of the following are true:
     * the message is purely conversational, a greeting, or a factual question the agent can answer from training alone
@@ -54,8 +55,9 @@ export const v5MessageHandlerSchema: JSONSchema = {
 					items: { type: "string" },
 				},
 				reply: { type: "string" },
+				requiresTool: { type: "boolean" },
 			},
-			required: ["contexts"],
+			required: ["contexts", "requiresTool"],
 		},
 		thought: { type: "string" },
 	},

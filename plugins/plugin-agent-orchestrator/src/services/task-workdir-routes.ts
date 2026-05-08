@@ -23,6 +23,12 @@ export interface TaskWorkdirSelection {
   source: "content" | "route" | "planner" | "none";
 }
 
+export interface TaskMemoryContentInput {
+  contentMemoryContent?: unknown;
+  plannerMemoryContent?: unknown;
+  workdirSelection: Pick<TaskWorkdirSelection, "source">;
+}
+
 const ROUTES_SETTING_KEYS = [
   "TASK_AGENT_WORKDIR_ROUTES",
   "PARALLAX_TASK_AGENT_WORKDIR_ROUTES",
@@ -45,6 +51,12 @@ function normalizeWorkdir(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeMemoryContent(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }
 
 function normalizeStringList(value: unknown): string[] {
@@ -178,6 +190,22 @@ export function resolveTaskWorkdirSelection(
   }
 
   return { route: null, source: "none" };
+}
+
+export function resolveTaskMemoryContent(
+  input: TaskMemoryContentInput,
+): string | undefined {
+  const contentMemory = normalizeMemoryContent(input.contentMemoryContent);
+  const plannerMemory = normalizeMemoryContent(input.plannerMemoryContent);
+
+  // A configured route encodes operator-owned workspace policy and may
+  // intentionally override stale planner args. Planner-authored memory can
+  // contradict that route, so keep only explicit structured content memory.
+  if (input.workdirSelection.source === "route") {
+    return contentMemory;
+  }
+
+  return plannerMemory ?? contentMemory;
 }
 
 export function formatTaskWorkdirRouteInstructions(

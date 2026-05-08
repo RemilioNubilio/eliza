@@ -112,9 +112,9 @@ describe("extractCompletionSummary", () => {
 });
 
 describe("summarizeUserFacingTurnOutput", () => {
-  it("preserves concise captured Codex final answers with tags and verification", () => {
+  it("preserves concise captured Codex final answers with verification", () => {
     const raw = [
-      "app-racefix-1778174949598",
+      "transient correlation id",
       "",
       "Built the stretch break timer here: https://nubilio.org/apps/stretch-break-timer/",
       "",
@@ -123,8 +123,8 @@ describe("summarizeUserFacingTurnOutput", () => {
 
     expect(summarizeUserFacingTurnOutput(raw)).toBe(
       [
-        "app-racefix-1778174949598",
         "Built the stretch break timer here: https://nubilio.org/apps/stretch-break-timer/",
+        "",
         "Changed `data/apps/stretch-break-timer/` with the app HTML/CSS/JS/meta. Verified `app.js` syntax, local route `200` for HTML/CSS/JS, and public Nubilio route `200` for HTML/CSS/JS/meta.",
       ].join("\n"),
     );
@@ -143,6 +143,91 @@ describe("summarizeUserFacingTurnOutput", () => {
         "btc-final BTC/USD: $79,821.015",
         "Source: Coinbase Spot Price API https://api.coinbase.com/v2/prices/BTC-USD/spot",
         "UTC timestamp: 2026-05-07T17:11:49.779Z",
+      ].join("\n"),
+    );
+  });
+
+  it("unwraps inline-code URLs so Discord can autolink them", () => {
+    const raw = [
+      "Branch: `feature/example`",
+      "Open PR: `#123`",
+      "`https://github.com/example/project/pull/123`",
+      "Remotes:",
+      "- `origin`: `https://github.com/example/project.git`",
+    ].join("\n");
+
+    expect(summarizeUserFacingTurnOutput(raw)).toBe(
+      [
+        "Branch: `feature/example`",
+        "Open PR: `#123`",
+        "https://github.com/example/project/pull/123",
+        "Remotes:",
+        "- `origin`: https://github.com/example/project.git",
+      ].join("\n"),
+    );
+  });
+
+  it("preserves generic structured summaries by shape instead of task keywords", () => {
+    const raw = [
+      "Result:",
+      "Location: `https://example.com/reports/status`",
+      "Checks:",
+      "- first route returned `200`",
+      "- second route returned `200`",
+      "Outcome: ready for review.",
+    ].join("\n");
+
+    expect(summarizeUserFacingTurnOutput(raw)).toBe(
+      [
+        "Result:",
+        "Location: https://example.com/reports/status",
+        "Checks:",
+        "- first route returned `200`",
+        "- second route returned `200`",
+        "Outcome: ready for review.",
+      ].join("\n"),
+    );
+  });
+
+  it("collapses duplicated status summaries while keeping the richer repeated line", () => {
+    const raw = [
+      "Branch: `remilio/local-eliza-link-precedence-20260507` at `46191f5c9`",
+      "Worktree: clean.",
+      "Upstream/tracking: `origin/develop`. Ahead/behind relative to `origin/develop`: `ahead 1, behind 1`.",
+      "Open PR: `#2119` open, `RemilioNubilio:remilio/local-eliza-link-precedence-20260507` `develop`",
+      "`https://github.com/milady-ai/milady/pull/2119`",
+      "Remotes:",
+      "- `origin`: `https://github.com/milady-ai/milady.git`",
+      "- `remilio`: `https://github.com/RemilioNubilio/milady.git`",
+      "No files changed.",
+      "",
+      "Branch: `remilio/local-eliza-link-precedence-20260507` at `46191f5c9`",
+      "",
+      "Worktree: clean.",
+      "",
+      "Upstream/tracking: `origin/develop`. Ahead/behind relative to `origin/develop`: `ahead 1, behind 1`.",
+      "",
+      "Open PR: `#2119` open, `RemilioNubilio:remilio/local-eliza-link-precedence-20260507` → `develop`",
+      "`https://github.com/milady-ai/milady/pull/2119`",
+      "",
+      "Remotes:",
+      "- `origin`: `https://github.com/milady-ai/milady.git`",
+      "- `remilio`: `https://github.com/RemilioNubilio/milady.git`",
+      "",
+      "No files changed.",
+    ].join("\n");
+
+    expect(summarizeUserFacingTurnOutput(raw)).toBe(
+      [
+        "Branch: `remilio/local-eliza-link-precedence-20260507` at `46191f5c9`",
+        "Worktree: clean.",
+        "Upstream/tracking: `origin/develop`. Ahead/behind relative to `origin/develop`: `ahead 1, behind 1`.",
+        "Open PR: `#2119` open, `RemilioNubilio:remilio/local-eliza-link-precedence-20260507` `develop`",
+        "https://github.com/milady-ai/milady/pull/2119",
+        "Remotes:",
+        "- `origin`: https://github.com/milady-ai/milady.git",
+        "- `remilio`: https://github.com/RemilioNubilio/milady.git",
+        "No files changed.",
       ].join("\n"),
     );
   });

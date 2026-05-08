@@ -24,12 +24,14 @@ describe("completionReasoningFromTurnOutput", () => {
     ).toBe("https://github.com/elizaOS/eliza/pull/7459");
   });
 
-  it("extracts public app URLs from ordinary completion text", () => {
+  it("keeps ordinary completion text with public URLs readable", () => {
     expect(
       completionReasoningFromTurnOutput(
         "Built the app at https://nubilio.org/apps/breath-orbit/ and verified it returns 200.",
       ),
-    ).toBe("https://nubilio.org/apps/breath-orbit/");
+    ).toBe(
+      "Built the app at https://nubilio.org/apps/breath-orbit/ and verified it returns 200.",
+    );
   });
 
   it("does not surface raw patch/source dumps as the final chat answer", () => {

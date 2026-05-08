@@ -47,6 +47,7 @@ import {
 import { requireTaskAgentAccess } from "../services/task-policy.js";
 import {
   formatTaskWorkdirRouteInstructions,
+  resolveTaskMemoryContent,
   resolveTaskWorkdirSelection,
 } from "../services/task-workdir-routes.js";
 import type { CodingWorkspaceService } from "../services/workspace-service.js";
@@ -117,6 +118,46 @@ function getMessageText(message: Memory): string {
   }
 
   return typeof message.content?.text === "string" ? message.content.text : "";
+}
+
+function hasExplicitKeepAliveIntent(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ");
+
+  return (
+    /\b(?:keep|leave|stay|remain|hold)\b.{0,80}\b(?:alive|open|running|active|available)\b/u.test(
+      normalized,
+    ) ||
+    /\b(?:do not|don't|dont)\b.{0,40}\b(?:close|stop|kill|terminate|shut(?:down)?)\b/u.test(
+      normalized,
+    ) ||
+    /\b(?:reuse|continue|follow up|followup)\b.{0,80}\b(?:same|this)\b.{0,40}\b(?:task agent|agent|session|pty)\b/u.test(
+      normalized,
+    ) ||
+    /\b(?:same|this)\b.{0,40}\b(?:task agent|agent|session|pty)\b.{0,80}\b(?:reuse|continue|follow up|followup|later|again)\b/u.test(
+      normalized,
+    )
+  );
+}
+
+function resolveKeepAliveAfterComplete(options: {
+  contentValue: unknown;
+  parameterValue: unknown;
+  userText: string;
+}): boolean {
+  const requested =
+    options.contentValue === true || options.parameterValue === true;
+  if (!requested) {
+    return false;
+  }
+
+  const userText = options.userText.trim();
+  if (userText.length === 0) {
+    // Programmatic callers without a natural-language user turn are already
+    // providing an explicit structured payload.
+    return true;
+  }
+
+  return hasExplicitKeepAliveIntent(userText);
 }
 
 export const spawnAgentAction: Action = {
@@ -406,8 +447,11 @@ export const spawnAgentAction: Action = {
       workdir = resolvedWorkdir;
     }
 
-    const requestedMemoryContent =
-      (params?.memoryContent as string) ?? (content.memoryContent as string);
+    const requestedMemoryContent = resolveTaskMemoryContent({
+      contentMemoryContent: content.memoryContent,
+      plannerMemoryContent: params?.memoryContent,
+      workdirSelection,
+    });
     const memoryContent =
       [
         requestedMemoryContent,
@@ -422,9 +466,11 @@ export const spawnAgentAction: Action = {
       parameterPreset: params?.approvalPreset,
       userText,
     });
-    const keepAliveAfterComplete =
-      params?.keepAliveAfterComplete === true ||
-      content.keepAliveAfterComplete === true;
+    const keepAliveAfterComplete = resolveKeepAliveAfterComplete({
+      contentValue: content.keepAliveAfterComplete,
+      parameterValue: params?.keepAliveAfterComplete,
+      userText,
+    });
 
     // Custom credentials for MCP servers and other integrations
     const customCredentialKeys = runtime.getSetting("CUSTOM_CREDENTIAL_KEYS") as
@@ -730,6 +776,7 @@ export const spawnAgentAction: Action = {
               : opencodeRequested
                 ? "opencode"
                 : session.agentType,
+            keepAliveAfterComplete,
           },
           status: session.status,
           suppressActionResultClipboard: true,

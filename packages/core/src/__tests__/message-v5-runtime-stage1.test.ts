@@ -283,6 +283,43 @@ describe("runV5MessageRuntimeStage1", () => {
 		expect(providerNames).not.toContain("CHARACTER");
 	});
 
+	it("carries tool-required routing into the planner prompt when tools are exposed", async () => {
+		const runtime = makeRuntime([
+			JSON.stringify({
+				processMessage: "RESPOND",
+				plan: { contexts: ["general"], requiresTool: true },
+				thought: "The user asked for current runtime state.",
+			}),
+			JSON.stringify({
+				thought: "Mistaken direct answer.",
+				toolCalls: [],
+				messageToUser: "Looks fine.",
+			}),
+		]);
+		runtime.actions = [
+			{
+				name: "CHECK_RUNTIME",
+				description: "Check current runtime state.",
+				contexts: ["general"],
+				handler: vi.fn(async () => ({ success: true, text: "checked" })),
+			},
+		] as unknown as IAgentRuntime["actions"];
+
+		await runV5MessageRuntimeStage1({
+			runtime,
+			message: makeMessage(),
+			state: makeState(),
+			responseId: "00000000-0000-0000-0000-000000000005" as UUID,
+		});
+
+		const plannerParams = useModelCalls(runtime)[1]?.[1] as {
+			messages?: Array<{ role?: string; content?: string | null }>;
+		};
+		expect(plannerParams.messages?.[1]?.content).toContain(
+			"Stage 1 router marked this current turn as requiring a tool",
+		);
+	});
+
 	it("returns a simple no-context reply without calling the planner", async () => {
 		const runtime = makeRuntime([
 			JSON.stringify({

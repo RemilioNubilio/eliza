@@ -50,6 +50,8 @@ export function parseMessageHandlerOutput(
 		? plan.contexts.map((context) => String(context).trim()).filter(Boolean)
 		: [];
 	const reply = typeof plan.reply === "string" ? plan.reply : undefined;
+	const requiresTool =
+		typeof plan.requiresTool === "boolean" ? plan.requiresTool : undefined;
 
 	// Backward-compatibility shim: legacy `plan.simple === true` (or root-level
 	// `simple: true`) with empty contexts is treated as `["simple"]`. New
@@ -66,6 +68,7 @@ export function parseMessageHandlerOutput(
 		plan: {
 			contexts,
 			reply,
+			...(requiresTool !== undefined ? { requiresTool } : {}),
 			...(typeof plan.simple === "boolean" ||
 			typeof (parsed as { simple?: unknown }).simple === "boolean"
 				? {

@@ -38,6 +38,7 @@ import { normalizeRepositoryInput } from "../services/repo-input.js";
 import { requireTaskAgentAccess } from "../services/task-policy.js";
 import {
   formatTaskWorkdirRouteInstructions,
+  resolveTaskMemoryContent,
   resolveTaskWorkdirSelection,
 } from "../services/task-workdir-routes.js";
 import type { CodingWorkspaceService } from "../services/workspace-service.js";
@@ -484,8 +485,8 @@ export const startCodingTaskAction: BackgroundAction = {
         (content.text as string),
       "[START_CODING_TASK]",
     );
-    const requestedMemoryContent =
-      (params?.memoryContent as string) ?? (content.memoryContent as string);
+    const plannerMemoryContent = params?.memoryContent;
+    const contentMemoryContent = content.memoryContent;
     const plannerWorkdir = params?.workdir as string | undefined;
     const contentWorkdir = content.workdir as string | undefined;
     const approvalPreset = resolveRequestedApprovalPreset({
@@ -556,6 +557,11 @@ export const startCodingTaskAction: BackgroundAction = {
     });
     const configuredWorkdirRoute = workdirSelection.route;
     const workdir = workdirSelection.workdir;
+    const requestedMemoryContent = resolveTaskMemoryContent({
+      contentMemoryContent,
+      plannerMemoryContent,
+      workdirSelection,
+    });
     const memoryContent = [
       requestedMemoryContent,
       configuredWorkdirRoute

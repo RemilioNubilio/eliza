@@ -145,7 +145,6 @@ import {
 	type ContextRoutingDecision,
 	getActiveRoutingContexts,
 	inferContextRoutingFromMessage,
-	parseContextList,
 	parseContextRoutingMetadata,
 	setContextRoutingMetadata,
 } from "../utils/context-routing";
@@ -1210,22 +1209,6 @@ function createV5MessageContextObject(args: {
 	availableContexts?: readonly ContextDefinition[];
 }): ContextObject {
 	const events: ContextEvent[] = [];
-	const addInstruction = (
-		id: string,
-		content: string | undefined,
-		stable = false,
-	) => {
-		if (!content?.trim()) {
-			return;
-		}
-		events.push({
-			id,
-			type: "instruction",
-			source: "message-service",
-			content: content.trim(),
-			stable,
-		});
-	};
 
 	appendStateProviderEvents(
 		events,
@@ -1957,6 +1940,9 @@ export async function runV5MessageRuntimeStage1(args: {
 				processMessage: messageHandler.processMessage,
 				plan: {
 					contexts: messageHandler.plan.contexts,
+					...(messageHandler.plan.requiresTool !== undefined
+						? { requiresTool: messageHandler.plan.requiresTool }
+						: {}),
 					...(messageHandler.plan.reply !== undefined
 						? { reply: messageHandler.plan.reply }
 						: {}),
@@ -1974,6 +1960,19 @@ export async function runV5MessageRuntimeStage1(args: {
 			logger: args.runtime.logger as PlannerRuntime["logger"],
 		};
 		const plannerTools = collectPlannerTools(plannerContextWithDecision);
+		const effectivePlannerContext =
+			messageHandler.plan.requiresTool === true && plannerTools.length > 0
+				? appendContextEvent(plannerContextWithDecision, {
+						id: `tool-required:${messageHandlerEndedAt}`,
+						type: "instruction",
+						source: "message-service",
+						createdAt: messageHandlerEndedAt,
+						content:
+							"The Stage 1 router marked this current turn as requiring a tool. " +
+							"Do not answer directly from memory, chat history, prior attachments, or prior tool output. " +
+							"Call at least one exposed non-terminal tool that can attempt the current request.",
+					})
+				: plannerContextWithDecision;
 		const evaluatorEffects: EvaluatorEffects = {
 			copyToClipboard: () => undefined,
 			messageToUser: () => undefined,
@@ -1996,7 +1995,7 @@ export async function runV5MessageRuntimeStage1(args: {
 
 		const plannerResult = await runPlannerLoop({
 			runtime: plannerRuntime,
-			context: plannerContextWithDecision,
+			context: effectivePlannerContext,
 			config: args.plannerLoopConfig,
 			tools: plannerTools.length > 0 ? plannerTools : undefined,
 			evaluatorEffects,
@@ -2006,7 +2005,7 @@ export async function runV5MessageRuntimeStage1(args: {
 				executeV5PlannedToolCall({
 					runtime: args.runtime,
 					toolCall,
-					plannerContext: plannerContextWithDecision,
+					plannerContext: effectivePlannerContext,
 					executorCtx: {
 						message: args.message,
 						state: plannerState,
