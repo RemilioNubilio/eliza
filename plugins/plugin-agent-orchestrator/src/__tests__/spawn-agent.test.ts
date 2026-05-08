@@ -22,6 +22,90 @@ describe("SPAWN_AGENT registration", () => {
     expect(keepAlive).toBeUndefined();
   });
 
+  it("treats role aliases like worker as omitted and uses the configured default framework", async () => {
+    const coordinator = {
+      createTaskThread: vi.fn(async () => ({ id: "thread-1" })),
+      registerTask: vi.fn(async () => undefined),
+    };
+    let spawnOptions: Record<string, unknown> | undefined;
+    const ptyService = {
+      coordinator,
+      defaultApprovalPreset: "autonomous",
+      resolveAgentType: vi.fn(async () => "codex"),
+      checkAvailableAgents: vi.fn(async () => [
+        { adapter: "codex", installed: true },
+      ]),
+      spawnSession: vi.fn(async (options: Record<string, unknown>) => {
+        spawnOptions = options;
+        const session = {
+          id: "pty-worker-alias",
+          name: options.name as string,
+          agentType: options.agentType as string,
+          workdir: options.workdir as string,
+          status: "running",
+          createdAt: new Date(),
+          lastActivityAt: new Date(),
+          metadata: options.metadata as Record<string, unknown> | undefined,
+        };
+        const beforeInitialTask = options.beforeInitialTask as
+          | ((value: typeof session) => Promise<void> | void)
+          | undefined;
+        await beforeInitialTask?.(session);
+        return session;
+      }),
+      onSessionEvent: vi.fn(() => undefined),
+      subscribeToOutput: vi.fn(() => () => undefined),
+    };
+    const runtime = {
+      agentId: "agent-1",
+      getService: vi.fn((name: string) =>
+        name === "PTY_SERVICE" ? ptyService : undefined,
+      ),
+      getSetting: vi.fn((name: string) =>
+        name === "CODING_AGENT_SANDBOX" ? "off" : undefined,
+      ),
+      getRoom: vi.fn(async () => ({ source: "discord" })),
+    } as unknown as IAgentRuntime;
+
+    const result = await spawnAgentAction.handler?.(
+      runtime,
+      {
+        id: "message-worker-alias",
+        entityId: "agent-1",
+        roomId: "room-1",
+        worldId: "world-1",
+        content: {
+          source: "discord",
+          text: "build a small app",
+        },
+      } as unknown as Memory,
+      undefined,
+      {
+        parameters: {
+          agentType: "worker",
+          task: "build a small app",
+          workdir: "/tmp",
+        },
+      },
+      vi.fn(),
+    );
+
+    expect(result?.success).toBe(true);
+    expect(ptyService.resolveAgentType).toHaveBeenCalledWith({
+      task: "build a small app",
+      workdir: "/tmp",
+    });
+    expect(spawnOptions).toMatchObject({
+      agentType: "codex",
+      initialTask: "build a small app",
+      workdir: "/tmp",
+    });
+    expect(result?.data).toMatchObject({
+      agentType: "codex",
+      effectiveArgs: { agentType: "codex" },
+    });
+  });
+
   it("executes keepAliveAfterComplete only when the current user asks to reuse the session", async () => {
     const coordinator = {
       createTaskThread: vi.fn(async () => ({ id: "thread-1" })),
@@ -176,7 +260,7 @@ describe("SPAWN_AGENT registration", () => {
       worldId: "world-1",
       content: {
         source: "discord",
-        text: "look up btc",
+        text: "look up the asset price",
       },
     } as unknown as Memory;
 
@@ -187,7 +271,7 @@ describe("SPAWN_AGENT registration", () => {
       {
         parameters: {
           agentType: "codex",
-          task: "look up btc",
+          task: "look up the asset price",
           workdir: "/tmp",
         },
       },
@@ -202,7 +286,7 @@ describe("SPAWN_AGENT registration", () => {
       expect.objectContaining({
         threadId: "thread-1",
         agentType: "codex",
-        originalTask: "look up btc",
+        originalTask: "look up the asset price",
         workdir: "/tmp",
       }),
     );

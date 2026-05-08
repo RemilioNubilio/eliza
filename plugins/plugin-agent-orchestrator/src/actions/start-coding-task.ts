@@ -33,7 +33,10 @@ import { resolveRequestedApprovalPreset } from "../services/approval-preset.js";
 import type { CustomValidatorSpec } from "../services/custom-validator-runner.js";
 import type { PTYService } from "../services/pty-service.js";
 import { getCoordinator } from "../services/pty-service.js";
-import { normalizeAgentType } from "../services/pty-types.js";
+import {
+  normalizeAgentType,
+  normalizeKnownAgentType,
+} from "../services/pty-types.js";
 import { normalizeRepositoryInput } from "../services/repo-input.js";
 import { requireTaskAgentAccess } from "../services/task-policy.js";
 import {
@@ -553,8 +556,14 @@ export const startCodingTaskAction: BackgroundAction = {
       (params?.task as string) ??
       (content.task as string) ??
       (content.text as string);
+    const explicitAgentType = normalizeKnownAgentType(explicitRawType);
+    if (explicitRawType && !explicitAgentType) {
+      logger.warn(
+        `[START_CODING_TASK] ignoring unknown agentType="${explicitRawType}"; using the configured preferred framework`,
+      );
+    }
     const rawAgentType =
-      explicitRawType ??
+      (explicitAgentType ? explicitRawType : undefined) ??
       (await ptyService.resolveAgentType({
         task: selectionTask,
         repo,
@@ -656,7 +665,7 @@ export const startCodingTaskAction: BackgroundAction = {
       workdir,
       defaultAgentType,
       rawAgentType,
-      agentTypeExplicit: Boolean(explicitRawType),
+      agentTypeExplicit: Boolean(explicitAgentType),
       agentSelectionStrategy: ptyService.agentSelectionStrategy,
       memoryContent,
       approvalPreset,

@@ -40,6 +40,7 @@ import {
   isOpencodeAgentType,
   isPiAgentType,
   normalizeAgentType,
+  normalizeKnownAgentType,
   type SessionInfo,
   toOpencodeCommand,
   toPiCommand,
@@ -339,10 +340,16 @@ export const spawnAgentAction: Action = {
       task,
       "[SPAWN_AGENT]",
     );
+    const explicitAgentType = normalizeKnownAgentType(explicitRawType);
+    if (explicitRawType && !explicitAgentType) {
+      logger.warn(
+        `[SPAWN_AGENT] ignoring unknown agentType="${explicitRawType}"; using the configured preferred framework`,
+      );
+    }
     let workdir = workdirSelection.workdir;
     const configuredWorkdirRoute = workdirSelection.route;
     const rawAgentType =
-      explicitRawType ??
+      (explicitAgentType ? explicitRawType : undefined) ??
       (await ptyService.resolveAgentType({
         task,
         workdir,

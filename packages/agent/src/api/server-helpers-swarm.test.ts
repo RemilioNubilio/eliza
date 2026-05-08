@@ -24,8 +24,8 @@ describe("handleSwarmSynthesis", () => {
             agentType: "codex",
             originalTask: "build a small app",
             status: "completed",
-            completionSummary: "https://nubilio.org/apps/breath-ring/",
-            workdir: "/home/milady/projects/agent-home",
+            completionSummary: "https://example.com/apps/breath-ring/",
+            workdir: "/workspace/site",
           },
         ],
         total: 1,
@@ -38,7 +38,46 @@ describe("handleSwarmSynthesis", () => {
       },
     );
 
-    expect(routed).toEqual(["https://nubilio.org/apps/breath-ring/"]);
+    expect(routed).toEqual(["https://example.com/apps/breath-ring/"]);
+  });
+
+  it("uses validator-accepted task evidence when available", async () => {
+    const routed: string[] = [];
+
+    await handleSwarmSynthesis(
+      { runtime },
+      {
+        tasks: [
+          {
+            sessionId: "pty-1",
+            label: "status",
+            agentType: "codex",
+            originalTask: "inspect the project status",
+            status: "completed",
+            completionSummary:
+              "Additional artifact: https://example.com/report",
+            validationSummary:
+              "Branch: feature/status-check\nWorktree: clean\nOpen PR: https://github.com/example/project/pull/123\nNo files changed.",
+          },
+        ],
+        total: 1,
+        completed: 1,
+        stopped: 0,
+        errored: 0,
+      },
+      async (text) => {
+        routed.push(text);
+      },
+    );
+
+    expect(routed).toEqual([
+      [
+        "Branch: feature/status-check",
+        "Worktree: clean",
+        "Open PR: https://github.com/example/project/pull/123",
+        "No files changed.",
+      ].join("\n"),
+    ]);
   });
 
   it("routes async connector synthesis as a reply to the originating external message when available", async () => {

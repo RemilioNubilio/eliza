@@ -238,6 +238,7 @@ export async function handleSwarmSynthesis(
       originalTask: string;
       status: string;
       completionSummary: string;
+      validationSummary?: string;
       roomId?: string | null;
       workdir?: string;
       replyToExternalMessageId?: string | null;
@@ -305,6 +306,7 @@ async function buildSynthesisResultText(payload: {
   tasks: Array<{
     originalTask: string;
     completionSummary: string;
+    validationSummary?: string;
     status: string;
     agentType: string;
     workdir?: string;
@@ -320,6 +322,7 @@ async function buildSynthesisResultText(payload: {
 async function buildTaskResultLine(task: {
   originalTask: string;
   completionSummary: string;
+  validationSummary?: string;
   agentType: string;
   workdir?: string;
 }): Promise<string> {
@@ -328,8 +331,11 @@ async function buildTaskResultLine(task: {
   // completionSummary is already the captured user-facing output.
   if (task.agentType === "claude" && task.workdir) {
     const finalText = await readAgentFinalAssistantMessage(task.workdir);
-    if (finalText) return finalText;
+    if (finalText) {
+      return task.validationSummary?.trim() || finalText;
+    }
   }
+  if (task.validationSummary) return task.validationSummary;
   if (task.completionSummary) return task.completionSummary;
   const portMatch = task.originalTask.match(/port\s+(\d+)/i);
   const port = portMatch?.[1];

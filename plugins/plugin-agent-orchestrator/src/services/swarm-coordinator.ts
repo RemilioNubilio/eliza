@@ -33,7 +33,7 @@ import {
 } from "./coordinator-event-normalizer.js";
 import type { PTYService } from "./pty-service.js";
 import type { CodingAgentType } from "./pty-types.js";
-import { normalizeAgentType } from "./pty-types.js";
+import { normalizeAgentType, normalizeKnownAgentType } from "./pty-types.js";
 import type {
   CoordinationLLMResponse,
   SharedDecision,
@@ -110,6 +110,8 @@ export interface TaskCompletionSummary {
   originalTask: string;
   status: string;
   completionSummary: string;
+  /** Validator-accepted user-facing summary, when a completion validator ran. */
+  validationSummary?: string;
   /** Subagent's working directory — used by synthesis to read the final
    *  assistant response from the Claude Code session jsonl after the PTY
    *  session has been cleaned up. */
@@ -166,6 +168,8 @@ export interface TaskContext {
   taskDelivered: boolean;
   /** Summary of what the agent accomplished, populated on completion. */
   completionSummary?: string;
+  /** Validator-accepted summary to use as final-answer evidence. */
+  validationSummary?: string;
   /** Index into sharedDecisions[]: tracks which decisions this agent has already seen. */
   lastSeenDecisionIndex: number;
   /** Timestamp of last coordinator-sent input. Used to suppress stall/turn-complete
@@ -640,6 +644,9 @@ export class SwarmCoordinator implements SwarmCoordinatorContext {
       taskDelivered: raw.taskDelivered === true,
       ...(typeof raw.completionSummary === "string"
         ? { completionSummary: raw.completionSummary }
+        : {}),
+      ...(typeof raw.validationSummary === "string"
+        ? { validationSummary: raw.validationSummary }
         : {}),
       lastSeenDecisionIndex:
         typeof raw.lastSeenDecisionIndex === "number"
@@ -1688,8 +1695,9 @@ export class SwarmCoordinator implements SwarmCoordinatorContext {
       throw new Error(`Task thread ${threadId} has no resumable workspace`);
     }
 
-    const requestedFramework = agentType
-      ? normalizeAgentType(agentType)
+    const explicitFramework = normalizeKnownAgentType(agentType);
+    const requestedFramework = explicitFramework
+      ? explicitFramework
       : latestSession?.framework
         ? normalizeAgentType(latestSession.framework)
         : normalizeAgentType(await this.ptyService.resolveAgentType());
@@ -1858,6 +1866,9 @@ export class SwarmCoordinator implements SwarmCoordinatorContext {
       lastSeenDecisionIndex: taskCtx.lastSeenDecisionIndex,
       lastInputSentAt: taskCtx.lastInputSentAt,
       stoppedAt: taskCtx.stoppedAt,
+      metadata: {
+        validationSummary: taskCtx.validationSummary ?? null,
+      },
     });
     if (!taskCtx.taskNodeId) {
       return;
@@ -1875,6 +1886,7 @@ export class SwarmCoordinator implements SwarmCoordinatorContext {
       repo: taskCtx.repo ?? null,
       metadata: {
         completionSummary: taskCtx.completionSummary ?? null,
+        validationSummary: taskCtx.validationSummary ?? null,
       },
     });
 
@@ -1898,6 +1910,7 @@ export class SwarmCoordinator implements SwarmCoordinatorContext {
           releasedAt: new Date().toISOString(),
           metadata: {
             completionSummary: taskCtx.completionSummary ?? null,
+            validationSummary: taskCtx.validationSummary ?? null,
           },
         });
       }

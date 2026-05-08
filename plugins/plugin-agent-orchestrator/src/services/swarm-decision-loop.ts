@@ -972,7 +972,11 @@ async function checkAllTasksCompleteAsync(
         .filter((sd) => sd.agentLabel === t.label)
         .map((sd) => sd.summary)
         .join("; ");
-      const body = decisions || t.completionSummary || "no output captured";
+      const body =
+        t.validationSummary ||
+        decisions ||
+        t.completionSummary ||
+        "no output captured";
       return tasks.length === 1 ? body : `• ${t.label}: ${body}`;
     });
     const text =
@@ -1009,6 +1013,7 @@ async function checkAllTasksCompleteAsync(
         originalTask: t.originalTask,
         status: t.status,
         completionSummary: uniqueSummaryParts(summaryParts).join("\n") || "",
+        validationSummary: t.validationSummary,
         // Forward the task's workdir so buildTaskLine in synthesis can
         // read the agent's end_turn jsonl directly. Without this, the
         // session is already killed by the time synthesis runs and
@@ -1555,19 +1560,9 @@ export async function executeDecision(
           await ctx.syncTaskContext(taskCtx);
           // Validator-driven continuation is coordinator-internal;
           // synthesis reports the final outcome.
-        } else {
-          ctx.broadcast({
-            type: "escalation",
-            sessionId,
-            timestamp: Date.now(),
-            data: {
-              reason: "validation_escalation",
-              summary: validation.summary,
-            },
-          });
-          // Escalations surface via the broadcast event above; chat
-          // stays quiet until the coordinator reaches a terminal state.
+          return;
         }
+
         // verdict === "escalate": the subagent finished with an answer but
         // the validator LLM could not prove acceptance from available
         // evidence. The answer itself is still in the session jsonl — mark
@@ -1585,6 +1580,15 @@ export async function executeDecision(
             summary: validation.summary,
           },
         });
+      }
+
+      const validationSummary =
+        validation.verdict === "pass"
+          ? summarizeUserFacingTurnOutput(validation.summary) ||
+            validation.summary.trim()
+          : "";
+      if (validationSummary) {
+        taskCtx.validationSummary = validationSummary;
       }
 
       taskCtx.status = "completed";
@@ -1640,7 +1644,7 @@ export async function executeDecision(
           data: {
             status: "completed",
             completionSummary: taskCtx.completionSummary,
-            validationSummary: validation.summary,
+            validationSummary: taskCtx.validationSummary ?? validation.summary,
           },
         }),
       ]);
@@ -1656,7 +1660,7 @@ export async function executeDecision(
           repo: taskCtx.repo,
           workdir: taskCtx.workdir,
           completionSummary: taskCtx.completionSummary,
-          validationSummary: validation.summary,
+          validationSummary: taskCtx.validationSummary ?? validation.summary,
         })
         .catch((err) => {
           ctx.log(
@@ -1670,7 +1674,7 @@ export async function executeDecision(
         timestamp: Date.now(),
         data: {
           reasoning: decision.reasoning,
-          validationSummary: validation.summary,
+          validationSummary: taskCtx.validationSummary ?? validation.summary,
         },
       });
 

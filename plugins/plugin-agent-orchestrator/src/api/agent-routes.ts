@@ -26,6 +26,7 @@ import { getCoordinator } from "../services/pty-service.js";
 import {
   isPiAgentType,
   normalizeAgentType,
+  normalizeKnownAgentType,
   toPiCommand,
 } from "../services/pty-types.js";
 import { getTaskAgentFrameworkState } from "../services/task-agent-frameworks.js";
@@ -618,9 +619,13 @@ export async function handleAgentRoutes(
       }
 
       // Resolve requested framework; PTYService applies model preferences centrally.
-      const agentStr = agentType
-        ? (agentType as string).toLowerCase()
-        : await ctx.ptyService.resolveAgentType();
+      const requestedAgentStr =
+        typeof agentType === "string" ? agentType.toLowerCase() : undefined;
+      const requestedAgentType = normalizeKnownAgentType(requestedAgentStr);
+      const agentStr =
+        requestedAgentType && requestedAgentStr
+          ? requestedAgentStr
+          : await ctx.ptyService.resolveAgentType();
       const piRequested = isPiAgentType(agentStr);
       const normalizedType = normalizeAgentType(agentStr);
       const aiderProvider =

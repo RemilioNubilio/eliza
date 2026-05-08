@@ -60,8 +60,24 @@ export const isOpencodeAgentType = (
   return OPENCODE_AGENT_ALIASES.has(input.toLowerCase().trim());
 };
 
-/** Normalize user-provided agent type string to a valid CodingAgentType */
-export const normalizeAgentType = (input: string): CodingAgentType => {
+const AGENT_TYPE_ALIASES: Record<string, CodingAgentType> = {
+  claude: "claude",
+  "claude-code": "claude",
+  claudecode: "claude",
+  codex: "codex",
+  openai: "codex",
+  "openai-codex": "codex",
+  gemini: "gemini",
+  google: "gemini",
+  aider: "aider",
+  shell: "shell",
+  bash: "shell",
+};
+
+export const normalizeKnownAgentType = (
+  input: string | undefined | null,
+): CodingAgentType | undefined => {
+  if (!input) return undefined;
   const normalized = input.toLowerCase().trim();
   if (isPiAgentType(normalized)) {
     // PI currently runs through the generic shell adapter.
@@ -71,20 +87,12 @@ export const normalizeAgentType = (input: string): CodingAgentType => {
     // OpenCode also runs through the generic shell adapter — see toOpencodeCommand.
     return "shell";
   }
-  const mapping: Record<string, CodingAgentType> = {
-    claude: "claude",
-    "claude-code": "claude",
-    claudecode: "claude",
-    codex: "codex",
-    openai: "codex",
-    "openai-codex": "codex",
-    gemini: "gemini",
-    google: "gemini",
-    aider: "aider",
-    shell: "shell",
-    bash: "shell",
-  };
-  return mapping[normalized] ?? "claude";
+  return AGENT_TYPE_ALIASES[normalized];
+};
+
+/** Normalize user-provided agent type string to a valid CodingAgentType */
+export const normalizeAgentType = (input: string): CodingAgentType => {
+  return normalizeKnownAgentType(input) ?? "claude";
 };
 
 /** Build the initial shell command for Pi agent sessions. */

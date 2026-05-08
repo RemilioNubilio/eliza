@@ -61,5 +61,6 @@ export interface TaskCompletionSummary {
   originalTask: string;
   status: string;
   completionSummary: string;
+  validationSummary?: string;
   [key: string]: unknown;
 }

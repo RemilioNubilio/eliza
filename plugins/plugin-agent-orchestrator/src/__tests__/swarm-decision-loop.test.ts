@@ -1,13 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   completeDecisionWithTurnOutput,
   completionReasoningFromTurnOutput,
+  executeDecision,
   isCompletingWithCapturedOutput,
   isMissingPtySessionError,
   shouldIgnoreStoppedEventDuringCompletion,
   taskAgentFailureReasonFromTurnOutput,
   uniqueSummaryParts,
 } from "../services/swarm-decision-loop.js";
+import { validateTaskCompletion } from "../services/task-validation.js";
+
+vi.mock("../services/task-validation.js", () => ({
+  validateTaskCompletion: vi.fn(),
+}));
+
+const mockedValidateTaskCompletion = vi.mocked(validateTaskCompletion);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("completionReasoningFromTurnOutput", () => {
   it("uses the subagent output instead of internal assessor diagnostics", () => {
@@ -111,6 +123,65 @@ Verified:
       completionReasoningFromTurnOutput(`URL: https://example.com/apps/breath-ring/
 https://example.com/apps/breath-ring/`),
     ).toBe("URL: https://example.com/apps/breath-ring/");
+  });
+});
+
+describe("executeDecision", () => {
+  it("keeps a task active when validation requests a revision", async () => {
+    mockedValidateTaskCompletion.mockResolvedValueOnce({
+      verdict: "revise",
+      summary: "The task still needs a final PR link.",
+      followUpPrompt: "Continue and report the final PR link.",
+      reportPath: "",
+      artifacts: [],
+    });
+
+    const sessionId = "pty-test";
+    const taskCtx = {
+      agentType: "codex",
+      completionSummary: "",
+      label: "agent-test",
+      originalTask: "make a small docs PR",
+      status: "active",
+      threadId: "thread-test",
+      workdir: "/repo",
+    };
+    const stopSession = vi.fn(async () => undefined);
+    const sendToSession = vi.fn(async () => undefined);
+    const updateThreadSummary = vi.fn(async () => undefined);
+    const broadcast = vi.fn();
+    const ctx = {
+      broadcast,
+      log: vi.fn(),
+      ptyService: {
+        getSessionOutput: vi.fn(async () => "I am checking the final PR."),
+        sendToSession,
+        stopSession,
+      },
+      syncTaskContext: vi.fn(async () => undefined),
+      taskRegistry: {
+        appendEvent: vi.fn(async () => undefined),
+        getSession: vi.fn(async () => null),
+        updateThreadSummary,
+      },
+      tasks: new Map([[sessionId, taskCtx]]),
+    };
+
+    await executeDecision(ctx as never, sessionId, {
+      action: "complete",
+      reasoning: "I am checking the final PR.",
+    });
+
+    expect(sendToSession).toHaveBeenCalledWith(
+      sessionId,
+      "Continue and report the final PR link.",
+    );
+    expect(stopSession).not.toHaveBeenCalled();
+    expect(taskCtx.status).toBe("active");
+    expect(updateThreadSummary).not.toHaveBeenCalled();
+    expect(broadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "task_complete" }),
+    );
   });
 });
 
