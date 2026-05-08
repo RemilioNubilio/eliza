@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   closeUnbalancedMarkdownFences,
   extractCompletionSummary,
+  formatMarkdownTablesForChat,
   summarizeUserFacingTurnOutput,
 } from "../services/ansi-utils.js";
 
@@ -166,6 +167,28 @@ describe("extractCompletionSummary", () => {
 });
 
 describe("summarizeUserFacingTurnOutput", () => {
+  it("formats markdown tables as chat-friendly bullets", () => {
+    const raw = [
+      "Filesystem summary:",
+      "",
+      "| Mount | Size | Used | Avail | Use% |",
+      "|---|---:|---:|---:|---:|",
+      "| `/` | 100G | 92G | 8G | 92% |",
+      "| `/boot` | 1G | 90M | 910M | 9% |",
+      "",
+      "Assessment: root needs cleanup soon.",
+    ].join("\n");
+
+    expect(summarizeUserFacingTurnOutput(raw)).toBe(
+      [
+        "Filesystem summary:",
+        "- `/`: Size: 100G, Used: 92G, Avail: 8G, Use%: 92%",
+        "- `/boot`: Size: 1G, Used: 90M, Avail: 910M, Use%: 9%",
+        "Assessment: root needs cleanup soon.",
+      ].join("\n"),
+    );
+  });
+
   it("preserves concise captured Codex final answers with verification", () => {
     const raw = [
       "transient correlation id",
@@ -282,6 +305,32 @@ describe("summarizeUserFacingTurnOutput", () => {
         "- `origin`: https://github.com/example/project.git",
         "- `fork`: https://github.com/example-fork/project.git",
         "No files changed.",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("formatMarkdownTablesForChat", () => {
+  it("keeps fenced pipe text unchanged", () => {
+    expect(
+      formatMarkdownTablesForChat(
+        [
+          "Raw output:",
+          "```text",
+          "| a | b |",
+          "|---|---|",
+          "| 1 | 2 |",
+          "```",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "Raw output:",
+        "```text",
+        "| a | b |",
+        "|---|---|",
+        "| 1 | 2 |",
+        "```",
       ].join("\n"),
     );
   });

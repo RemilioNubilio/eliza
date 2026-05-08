@@ -241,4 +241,35 @@ describe("completion synthesis guards", () => {
     ]);
     expect(uniqueSummaryParts([complete, partial])).toEqual([complete]);
   });
+
+  it("deduplicates equivalent table summaries with different markdown table syntax", () => {
+    const tableWithoutSeparator = [
+      "Filesystem summary:",
+      "| Mount | Size | Used | Avail | Use% |",
+      "| `/` | 100G | 92G | 8G | 92% |",
+      "| `/boot` | 1G | 90M | 910M | 9% |",
+      "Assessment: root needs cleanup soon.",
+    ].join("\n");
+    const tableWithSeparator = [
+      "Filesystem summary:",
+      "",
+      "| Mount | Size | Used | Avail | Use% |",
+      "|---|---:|---:|---:|---:|",
+      "| `/` | 100G | 92G | 8G | 92% |",
+      "| `/boot` | 1G | 90M | 910M | 9% |",
+      "",
+      "Assessment: root needs cleanup soon.",
+    ].join("\n");
+
+    expect(
+      uniqueSummaryParts([tableWithoutSeparator, tableWithSeparator]),
+    ).toEqual([
+      [
+        "Filesystem summary:",
+        "- `/`: Size: 100G, Used: 92G, Avail: 8G, Use%: 92%",
+        "- `/boot`: Size: 1G, Used: 90M, Avail: 910M, Use%: 9%",
+        "Assessment: root needs cleanup soon.",
+      ].join("\n"),
+    ]);
+  });
 });

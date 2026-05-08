@@ -157,8 +157,10 @@ function extractAssistantFinalBlock(lines: string[]): string {
       !isLikelyRawPatchOrSourceDump(text) &&
       !isSessionBootstrapNoiseLine(text)
     ) {
-      return closeUnbalancedMarkdownFences(
-        dedupeCompletionBlockLines(block).join("\n").trim(),
+      return formatMarkdownTablesForChat(
+        closeUnbalancedMarkdownFences(
+          dedupeCompletionBlockLines(block).join("\n").trim(),
+        ),
       );
     }
   }
@@ -213,6 +215,94 @@ function compactCompletionBlankLines(lines: string[]): string[] {
   }
 
   return compacted;
+}
+
+function isMarkdownTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  return (
+    trimmed.startsWith("|") &&
+    trimmed.endsWith("|") &&
+    trimmed.slice(1, -1).includes("|")
+  );
+}
+
+function parseMarkdownTableRow(line: string): string[] {
+  return line
+    .trim()
+    .slice(1, -1)
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparatorRow(line: string): boolean {
+  const cells = parseMarkdownTableRow(line);
+  return (
+    cells.length >= 2 &&
+    cells.every((cell) => /^:?-{3,}:?$/u.test(cell.replace(/\s+/g, "")))
+  );
+}
+
+function formatMarkdownTableRowsForChat(rows: string[]): string[] {
+  if (rows.length < 2 || isMarkdownTableSeparatorRow(rows[0])) {
+    return rows;
+  }
+
+  const headers = parseMarkdownTableRow(rows[0]);
+  const bodyRows = rows
+    .slice(isMarkdownTableSeparatorRow(rows[1]) ? 2 : 1)
+    .filter((row) => !isMarkdownTableSeparatorRow(row))
+    .map(parseMarkdownTableRow);
+
+  if (headers.length < 2 || bodyRows.length === 0) {
+    return rows;
+  }
+
+  const formattedRows = bodyRows.map((row) => {
+    const rowLabel = row[0] || headers[0] || "row";
+    const details = headers
+      .slice(1)
+      .map((header, index) => {
+        const value = row[index + 1];
+        return value ? `${header || `column ${index + 2}`}: ${value}` : "";
+      })
+      .filter(Boolean);
+    return details.length > 0 ? `- ${rowLabel}: ${details.join(", ")}` : "";
+  });
+
+  return formattedRows.every(Boolean) ? formattedRows : rows;
+}
+
+export function formatMarkdownTablesForChat(text: string): string {
+  const lines = text.split("\n");
+  const result: string[] = [];
+  let inFence = false;
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    const fence = line.trim();
+    if (fence.startsWith("```")) {
+      inFence = !inFence || !/^```\s*$/u.test(fence);
+      result.push(line);
+      continue;
+    }
+
+    if (!inFence && isMarkdownTableRow(line)) {
+      const tableRows = [line];
+      while (index + 1 < lines.length && isMarkdownTableRow(lines[index + 1])) {
+        tableRows.push(lines[index + 1]);
+        index += 1;
+      }
+      result.push(...formatMarkdownTableRowsForChat(tableRows));
+      continue;
+    }
+
+    result.push(line);
+  }
+
+  return result
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function isBareUrlLineAfterValueHeading(
@@ -566,7 +656,7 @@ function extractStructuredCompletionBlock(lines: string[]): string {
       lineContainsPublicUrl(text) &&
       isConciseUserFacingSummary(text, textLines)
     ) {
-      return closeUnbalancedMarkdownFences(text);
+      return formatMarkdownTablesForChat(closeUnbalancedMarkdownFences(text));
     }
   }
   return "";
@@ -721,7 +811,9 @@ export function extractCompletionSummary(raw: string): string {
     }
   }
 
-  return closeUnbalancedMarkdownFences(lines.join("\n"));
+  return formatMarkdownTablesForChat(
+    closeUnbalancedMarkdownFences(lines.join("\n")),
+  );
 }
 
 export function summarizeUserFacingTurnOutput(raw: string): string {
@@ -742,8 +834,10 @@ export function summarizeUserFacingTurnOutput(raw: string): string {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  const cleaned = closeUnbalancedMarkdownFences(
-    dedupeCompletionBlockLines(cleanedLines).join("\n").trim(),
+  const cleaned = formatMarkdownTablesForChat(
+    closeUnbalancedMarkdownFences(
+      dedupeCompletionBlockLines(cleanedLines).join("\n").trim(),
+    ),
   );
 
   if (isConciseUserFacingSummary(cleaned, cleanedLines)) {

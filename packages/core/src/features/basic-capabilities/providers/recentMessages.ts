@@ -28,6 +28,27 @@ function isInternalBridgeMessage(memory: Memory): boolean {
 	return INTERNAL_BRIDGE_MESSAGE_SOURCES.has(source);
 }
 
+function normalizeDialogueText(memory: Memory): string {
+	return typeof memory.content?.text === "string"
+		? memory.content.text.replace(/\s+/g, " ").trim()
+		: "";
+}
+
+function dedupeConsecutiveDialogueMessages(messages: Memory[]): Memory[] {
+	const deduped: Memory[] = [];
+	for (const message of messages) {
+		const previous = deduped.at(-1);
+		if (
+			previous?.entityId === message.entityId &&
+			normalizeDialogueText(previous) === normalizeDialogueText(message)
+		) {
+			continue;
+		}
+		deduped.push(message);
+	}
+	return deduped;
+}
+
 function buildFormattingFallbackEntity(memory: Memory): Entity | null {
 	const metadata = memory.metadata as CustomMetadata | undefined;
 	const entityName =
@@ -215,10 +236,12 @@ export const recentMessagesProvider: Provider = {
 				(msg) => msg.content && msg.content.type === "action_result",
 			);
 
-			const dialogueMessages = recentMessagesData.filter(
-				(msg) =>
-					!(msg.content && msg.content.type === "action_result") &&
-					!isInternalBridgeMessage(msg),
+			const dialogueMessages = dedupeConsecutiveDialogueMessages(
+				recentMessagesData.filter(
+					(msg) =>
+						!(msg.content && msg.content.type === "action_result") &&
+						!isInternalBridgeMessage(msg),
+				),
 			);
 
 			// Room entity lookups only include current participants. Historical room

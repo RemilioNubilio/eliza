@@ -67,4 +67,23 @@ describe("recentMessagesProvider", () => {
 		expect(result.text).toContain("Agent: done");
 		expect(result.text?.match(/Agent: done/g)).toHaveLength(1);
 	});
+
+	it("omits consecutive duplicate dialogue rows from the same sender", async () => {
+		const memories = [
+			makeMemory("msg-1", USER_ID, "are you there?", "discord", 1000),
+			makeMemory("msg-2", AGENT_ID, "yes", "runtime", 2000),
+			makeMemory("msg-3", AGENT_ID, " yes ", "discord", 3000),
+			makeMemory("msg-4", USER_ID, "next task", "discord", 4000),
+		];
+
+		const result = await recentMessagesProvider.get(
+			makeRuntime(memories),
+			makeMemory("current", USER_ID, "status", "discord", 5000),
+			{ values: {}, data: {}, text: "" },
+		);
+
+		expect(result.data?.recentMessages).toHaveLength(3);
+		expect(result.text?.match(/Agent: yes/g)).toHaveLength(1);
+		expect(result.text).toContain("User: next task");
+	});
 });

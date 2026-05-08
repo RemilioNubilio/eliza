@@ -14,6 +14,7 @@ import {
   cleanForChat,
   closeUnbalancedMarkdownFences,
   extractCompletionSummary,
+  formatMarkdownTablesForChat,
   summarizeUserFacingTurnOutput,
 } from "./ansi-utils.js";
 import {
@@ -537,7 +538,9 @@ export function isMissingPtySessionError(error: unknown): boolean {
 export function uniqueSummaryParts(parts: string[]): string[] {
   const entries: Array<{ key: string; value: string }> = [];
   for (const part of parts) {
-    const trimmed = closeUnbalancedMarkdownFences(part);
+    const trimmed = formatMarkdownTablesForChat(
+      closeUnbalancedMarkdownFences(part),
+    );
     if (!trimmed) continue;
     const key = normalizeSummaryPartForDedupe(trimmed);
     const overlappingIndex = entries.findIndex((entry) =>
@@ -560,6 +563,7 @@ export function uniqueSummaryParts(parts: string[]): string[] {
 function normalizeSummaryPartForDedupe(text: string): string {
   return text
     .replace(/^```[a-z0-9_-]*$/gim, "")
+    .replace(/^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/gim, "")
     .replace(/\s+/g, " ")
     .trim();
 }
