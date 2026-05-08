@@ -76,6 +76,44 @@ describe("handleSwarmSynthesis", () => {
         "Worktree: clean",
         "Open PR: https://github.com/example/project/pull/123",
         "No files changed.",
+        "https://example.com/report",
+      ].join("\n"),
+    ]);
+  });
+
+  it("preserves concrete URLs from task evidence when validator summaries abbreviate them", async () => {
+    const routed: string[] = [];
+
+    await handleSwarmSynthesis(
+      { runtime },
+      {
+        tasks: [
+          {
+            sessionId: "pty-1",
+            label: "docs",
+            agentType: "codex",
+            originalTask: "make a small docs update and report the link",
+            status: "completed",
+            completionSummary:
+              "Opened review: https://example.com/org/project/pull/123\nValidation passed.",
+            validationSummary:
+              "A small docs update is open as review #123 and validation passed.",
+          },
+        ],
+        total: 1,
+        completed: 1,
+        stopped: 0,
+        errored: 0,
+      },
+      async (text) => {
+        routed.push(text);
+      },
+    );
+
+    expect(routed).toEqual([
+      [
+        "A small docs update is open as review #123 and validation passed.",
+        "https://example.com/org/project/pull/123",
       ].join("\n"),
     ]);
   });

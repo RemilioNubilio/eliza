@@ -326,16 +326,21 @@ async function buildTaskResultLine(task: {
   agentType: string;
   workdir?: string;
 }): Promise<string> {
+  const validationSummary = task.validationSummary?.trim();
   // Claude Code persists final assistant messages in per-workdir jsonl. That
   // path is Claude-specific; for Codex and other agents the coordinator's
   // completionSummary is already the captured user-facing output.
   if (task.agentType === "claude" && task.workdir) {
     const finalText = await readAgentFinalAssistantMessage(task.workdir);
     if (finalText) {
-      return task.validationSummary?.trim() || finalText;
+      return validationSummary
+        ? preserveEvidenceUrls(validationSummary, finalText)
+        : finalText;
     }
   }
-  if (task.validationSummary) return task.validationSummary;
+  if (validationSummary) {
+    return preserveEvidenceUrls(validationSummary, task.completionSummary);
+  }
   if (task.completionSummary) return task.completionSummary;
   const portMatch = task.originalTask.match(/port\s+(\d+)/i);
   const port = portMatch?.[1];
@@ -345,6 +350,35 @@ async function buildTaskResultLine(task: {
     return `built and serving at http://${host}:${port}`;
   }
   return `built the files but server isn't running on port ${port} yet`;
+}
+
+function collectHttpUrls(text: string): string[] {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const match of text.matchAll(/\bhttps?:\/\/[^\s<>"'`]+/giu)) {
+    const candidate = match[0].replace(/[),.;:!?]+$/u, "");
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    if (!seen.has(candidate)) {
+      seen.add(candidate);
+      urls.push(candidate);
+    }
+  }
+  return urls;
+}
+
+function preserveEvidenceUrls(summary: string, evidence: string): string {
+  const missingUrls = collectHttpUrls(evidence).filter(
+    (url) => !summary.includes(url),
+  );
+  if (missingUrls.length === 0) return summary;
+  return [summary, ...missingUrls].join("\n");
 }
 
 async function readAgentFinalAssistantMessage(
