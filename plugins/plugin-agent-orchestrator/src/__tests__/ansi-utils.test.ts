@@ -129,6 +129,40 @@ describe("extractCompletionSummary", () => {
       ].join("\n"),
     );
   });
+
+  it("keeps heading value lines between URL and verification sections", () => {
+    const raw = [
+      "Built the tiny ambient app here:",
+      "",
+      "https://example.com/apps/ambient-clock/",
+      "",
+      "Files added:",
+      "`data/apps/ambient-clock/{index.html,style.css,app.js,meta.json}`",
+      "",
+      "Verified:",
+      "- `node --check data/apps/ambient-clock/app.js`",
+      "- Public HTTP + assets: `https://example.com/apps/ambient-clock/`, `style.css`, `app.js`",
+      "",
+      "Browser automation was not available in this environment.",
+    ].join("\n");
+
+    expect(extractCompletionSummary(raw)).toBe(
+      [
+        "Built the tiny ambient app here:",
+        "",
+        "https://example.com/apps/ambient-clock/",
+        "",
+        "Files added:",
+        "`data/apps/ambient-clock/{index.html,style.css,app.js,meta.json}`",
+        "",
+        "Verified:",
+        "- `node --check data/apps/ambient-clock/app.js`",
+        "- Public HTTP + assets: https://example.com/apps/ambient-clock/, `style.css`, `app.js`",
+        "",
+        "Browser automation was not available in this environment.",
+      ].join("\n"),
+    );
+  });
 });
 
 describe("summarizeUserFacingTurnOutput", () => {

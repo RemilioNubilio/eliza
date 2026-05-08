@@ -14,16 +14,12 @@ describe("SPAWN_AGENT registration", () => {
     expect(agentType?.description).toContain("Do NOT select 'shell' or 'pi'");
   });
 
-  it("documents keepAliveAfterComplete as explicit opt-in", () => {
+  it("keeps keepAliveAfterComplete out of planner-facing parameters", () => {
     const keepAlive = spawnAgentAction.parameters?.find(
       (param) => param.name === "keepAliveAfterComplete",
     );
 
-    expect(keepAlive?.description).toContain("Leave unset or false");
-    expect(keepAlive?.description).toContain("explicitly asks");
-    expect(keepAlive?.description).toContain(
-      "Do not set true merely because an app",
-    );
+    expect(keepAlive).toBeUndefined();
   });
 
   it("executes keepAliveAfterComplete only when the current user asks to reuse the session", async () => {

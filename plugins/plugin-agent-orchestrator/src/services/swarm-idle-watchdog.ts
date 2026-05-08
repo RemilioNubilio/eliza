@@ -73,10 +73,20 @@ export async function scanIdleSessions(
         // completion handler has already delivered a result: populated
         // completionSummary means the subagent's task_complete path ran,
         // the PTY was force-stopped intentionally, and the user already
-        // got their answer via swarm synthesis. Only surface "Session
-        // lost" for genuine mid-work crashes where there's no delivered
-        // result to explain the silence.
+        // has a deliverable answer for swarm synthesis. Only surface
+        // "Session lost" for genuine mid-work crashes where there's no
+        // delivered result to explain the silence.
         const normalCompletion = Boolean(taskCtx.completionSummary);
+        if (normalCompletion) {
+          ctx.log(
+            `Idle watchdog: "${taskCtx.label}" — PTY session no longer exists after captured completion, marking as completed`,
+          );
+          taskCtx.status = "completed";
+          await ctx.syncTaskContext(taskCtx);
+          checkAllTasksComplete(ctx);
+          continue;
+        }
+
         ctx.log(
           `Idle watchdog: "${taskCtx.label}" — PTY session no longer exists, marking as stopped`,
         );

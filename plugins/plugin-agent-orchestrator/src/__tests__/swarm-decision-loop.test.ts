@@ -3,6 +3,8 @@ import {
   completeDecisionWithTurnOutput,
   completionReasoningFromTurnOutput,
   isCompletingWithCapturedOutput,
+  isMissingPtySessionError,
+  shouldIgnoreStoppedEventDuringCompletion,
   taskAgentFailureReasonFromTurnOutput,
   uniqueSummaryParts,
 } from "../services/swarm-decision-loop.js";
@@ -177,6 +179,40 @@ describe("completion synthesis guards", () => {
         completionSummary: "final answer",
       }),
     ).toBe(false);
+  });
+
+  it("ignores session-end stopped events while completion assessment is in flight", () => {
+    expect(
+      shouldIgnoreStoppedEventDuringCompletion({
+        task: { status: "active" },
+        hasInFlightDecision: true,
+        hasPendingTurnComplete: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldIgnoreStoppedEventDuringCompletion({
+        task: { status: "tool_running" },
+        hasInFlightDecision: false,
+        hasPendingTurnComplete: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldIgnoreStoppedEventDuringCompletion({
+        task: { status: "active" },
+        hasInFlightDecision: false,
+        hasPendingTurnComplete: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("recognizes missing PTY session errors for completion finalization", () => {
+    expect(
+      isMissingPtySessionError(new Error("Session pty-123 not found")),
+    ).toBe(true);
+    expect(
+      isMissingPtySessionError(new Error("Session pty-123 is blocked")),
+    ).toBe(false);
+    expect(isMissingPtySessionError("Session pty-123 not found")).toBe(false);
   });
 
   it("deduplicates identical completion summaries", () => {

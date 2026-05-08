@@ -508,6 +508,32 @@ export function isCompletingWithCapturedOutput(task: {
   );
 }
 
+export function shouldIgnoreStoppedEventDuringCompletion(options: {
+  task: { status: string; completionSummary?: string };
+  hasInFlightDecision: boolean;
+  hasPendingTurnComplete: boolean;
+}): boolean {
+  if (options.task.status === "completed" || options.task.status === "error") {
+    return true;
+  }
+
+  if (isCompletingWithCapturedOutput(options.task)) {
+    return true;
+  }
+
+  return (
+    (options.task.status === "active" ||
+      options.task.status === "tool_running") &&
+    (options.hasInFlightDecision || options.hasPendingTurnComplete)
+  );
+}
+
+export function isMissingPtySessionError(error: unknown): boolean {
+  return (
+    error instanceof Error && /^Session\s+.+\s+not found$/u.test(error.message)
+  );
+}
+
 export function uniqueSummaryParts(parts: string[]): string[] {
   const entries: Array<{ key: string; value: string }> = [];
   for (const part of parts) {
@@ -2348,7 +2374,24 @@ export async function handleTurnComplete(
       // synthesis path own the user-facing notification.
     }
 
-    await executeDecision(ctx, sessionId, decision);
+    try {
+      await executeDecision(ctx, sessionId, decision);
+    } catch (err) {
+      if (
+        decision.action === "complete" &&
+        isMissingPtySessionError(err) &&
+        taskCtx.completionSummary?.trim()
+      ) {
+        ctx.log(
+          `Completing "${taskCtx.label}" from captured output after PTY session disappeared`,
+        );
+        taskCtx.status = "completed";
+        await ctx.syncTaskContext(taskCtx);
+        checkAllTasksComplete(ctx);
+        return;
+      }
+      throw err;
+    }
 
     // executeDecision only stops the session on "complete" / "respond".
     // Escalate and ignore need an explicit stop to release the PTY that
@@ -2362,8 +2405,19 @@ export async function handleTurnComplete(
     }
   } finally {
     ctx.inFlightDecisions.delete(sessionId);
-    await drainPendingBlocked(ctx, sessionId);
-    await drainPendingTurnComplete(ctx, sessionId);
+    const latestTask = ctx.tasks.get(sessionId);
+    if (
+      latestTask?.status === "completed" ||
+      latestTask?.status === "stopped" ||
+      latestTask?.status === "error"
+    ) {
+      ctx.pendingBlocked.delete(sessionId);
+      ctx.pendingTurnComplete.delete(sessionId);
+      ctx.lastBlockedPromptFingerprint.delete(sessionId);
+    } else {
+      await drainPendingBlocked(ctx, sessionId);
+      await drainPendingTurnComplete(ctx, sessionId);
+    }
   }
 }
 

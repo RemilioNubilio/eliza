@@ -44,7 +44,7 @@ import {
   executeDecision as execDecision,
   handleBlocked,
   handleTurnComplete,
-  isCompletingWithCapturedOutput,
+  shouldIgnoreStoppedEventDuringCompletion,
 } from "./swarm-decision-loop.js";
 import { SwarmHistory } from "./swarm-history.js";
 import { scanIdleSessions } from "./swarm-idle-watchdog.js";
@@ -2841,6 +2841,28 @@ export class SwarmCoordinator implements SwarmCoordinatorContext {
         const coalesceTimer = setTimeout(() => {
           this.turnCompleteCoalesceTimers.delete(sessionId);
           const currentTask = this.tasks.get(sessionId);
+          if (
+            currentTask?.completionSummary &&
+            !this.ptyService?.getSession(sessionId)
+          ) {
+            currentTask.status = "completed";
+            this.log(
+              `Skipping coalesced turn-complete for "${currentTask.label}": PTY is gone after captured completion`,
+            );
+            void this.syncTaskContext(currentTask)
+              .catch((err) => {
+                this.log(
+                  `Failed to sync completed task after coalesced turn-complete: ${err}`,
+                );
+              })
+              .then(() => checkAllTasksComplete(this))
+              .catch((err) => {
+                this.log(
+                  `Failed to finish swarm after coalesced completion: ${err}`,
+                );
+              });
+            return;
+          }
           // Accept both "active" and "tool_running" as live pre-validation
           // states. Subagents that use tools (curl, file ops, etc.) sit in
           // "tool_running" almost continuously, so by the time task_complete
@@ -2925,7 +2947,13 @@ export class SwarmCoordinator implements SwarmCoordinatorContext {
         // the PTY stopped event while the completion decision is still
         // finishing its registry writes. executeDecision will mark it
         // completed and fire synthesis once validation finishes.
-        if (isCompletingWithCapturedOutput(taskCtx)) {
+        if (
+          shouldIgnoreStoppedEventDuringCompletion({
+            task: taskCtx,
+            hasInFlightDecision: this.inFlightDecisions.has(sessionId),
+            hasPendingTurnComplete: this.pendingTurnComplete.has(sessionId),
+          })
+        ) {
           this.log(
             `Ignoring stopped event for ${taskCtx.label}; completion is already being finalized`,
           );

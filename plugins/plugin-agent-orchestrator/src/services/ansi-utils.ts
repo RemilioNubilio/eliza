@@ -250,6 +250,30 @@ function isSummarySectionHeadingLine(line: string): boolean {
   );
 }
 
+function isConciseHeadingValueLine(line: string): boolean {
+  const trimmed = unwrapInlineCodeUrls(line).trim();
+  if (!trimmed || trimmed.length > 280 || !/[\p{L}\p{N}]/u.test(trimmed)) {
+    return false;
+  }
+  if (
+    PATCH_MARKER_LINE.test(trimmed) ||
+    TOOL_MARKER_LINE.test(trimmed) ||
+    GIT_NOISE_LINE.test(trimmed) ||
+    FINAL_BLOCK_STOP_LINE.test(trimmed)
+  ) {
+    return false;
+  }
+  if (
+    /^\s*(?:const|let|var|function|return|class|import|export)\b/u.test(trimmed)
+  ) {
+    return false;
+  }
+  if (/[;=]\s*$/u.test(trimmed)) {
+    return false;
+  }
+  return true;
+}
+
 function isSentenceLikeSummaryLine(line: string): boolean {
   const trimmed = unwrapInlineCodeUrls(line).trim();
   return (
@@ -511,6 +535,15 @@ function extractStructuredCompletionBlock(lines: string[]): string {
       if (FINAL_BLOCK_STOP_LINE.test(current)) break;
       if (isStructuredSummaryLine(current)) {
         start = j;
+        continue;
+      }
+      if (
+        j > 0 &&
+        isSummarySectionHeadingLine(normalized[j - 1]) &&
+        isConciseHeadingValueLine(current)
+      ) {
+        start = j - 1;
+        j -= 1;
         continue;
       }
       if (j < i) break;

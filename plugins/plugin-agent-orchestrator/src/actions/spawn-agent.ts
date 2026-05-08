@@ -144,20 +144,24 @@ function resolveKeepAliveAfterComplete(options: {
   parameterValue: unknown;
   userText: string;
 }): boolean {
+  const userText = options.userText.trim();
+  if (hasExplicitKeepAliveIntent(userText)) {
+    return true;
+  }
+
   const requested =
     options.contentValue === true || options.parameterValue === true;
   if (!requested) {
     return false;
   }
 
-  const userText = options.userText.trim();
   if (userText.length === 0) {
     // Programmatic callers without a natural-language user turn are already
     // providing an explicit structured payload.
     return true;
   }
 
-  return hasExplicitKeepAliveIntent(userText);
+  return false;
 }
 
 export const spawnAgentAction: Action = {
@@ -847,13 +851,6 @@ export const spawnAgentAction: Action = {
         type: "string" as const,
         enum: ["readonly", "standard", "permissive", "autonomous"],
       },
-    },
-    {
-      name: "keepAliveAfterComplete",
-      description:
-        "Keep the spawned task-agent session alive after a completed turn so it can receive another tracked task. Leave unset or false for normal one-off tasks. Set true only when the latest user message explicitly asks to keep, reuse, continue, or follow up in the same task-agent session. Do not set true merely because an app, server, file, URL, or PR should remain available after the task completes.",
-      required: false,
-      schema: { type: "boolean" as const },
     },
   ],
 };
