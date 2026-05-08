@@ -1960,19 +1960,20 @@ export async function runV5MessageRuntimeStage1(args: {
 			logger: args.runtime.logger as PlannerRuntime["logger"],
 		};
 		const plannerTools = collectPlannerTools(plannerContextWithDecision);
-		const effectivePlannerContext =
-			messageHandler.plan.requiresTool === true && plannerTools.length > 0
-				? appendContextEvent(plannerContextWithDecision, {
-						id: `tool-required:${messageHandlerEndedAt}`,
-						type: "instruction",
-						source: "message-service",
-						createdAt: messageHandlerEndedAt,
-						content:
-							"The Stage 1 router marked this current turn as requiring a tool. " +
-							"Do not answer directly from memory, chat history, prior attachments, or prior tool output. " +
-							"Call at least one exposed non-terminal tool that can attempt the current request.",
-					})
-				: plannerContextWithDecision;
+		const requireNonTerminalToolCall =
+			messageHandler.plan.requiresTool === true && plannerTools.length > 0;
+		const effectivePlannerContext = requireNonTerminalToolCall
+			? appendContextEvent(plannerContextWithDecision, {
+					id: `tool-required:${messageHandlerEndedAt}`,
+					type: "instruction",
+					source: "message-service",
+					createdAt: messageHandlerEndedAt,
+					content:
+						"The Stage 1 router marked this current turn as requiring a tool. " +
+						"Do not answer directly from memory, chat history, prior attachments, or prior tool output. " +
+						"Call at least one exposed non-terminal tool that can attempt the current request.",
+				})
+			: plannerContextWithDecision;
 		const evaluatorEffects: EvaluatorEffects = {
 			copyToClipboard: () => undefined,
 			messageToUser: () => undefined,
@@ -1998,6 +1999,7 @@ export async function runV5MessageRuntimeStage1(args: {
 			context: effectivePlannerContext,
 			config: args.plannerLoopConfig,
 			tools: plannerTools.length > 0 ? plannerTools : undefined,
+			requireNonTerminalToolCall,
 			evaluatorEffects,
 			recorder,
 			trajectoryId,

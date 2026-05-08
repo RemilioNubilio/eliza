@@ -235,6 +235,65 @@ describe("v5 planner loop skeleton", () => {
 		expect(result.finalMessage).toBe("Final answer.");
 	});
 
+	it("retries premature terminal output when a non-terminal tool call is required", async () => {
+		const runtime = {
+			useModel: vi
+				.fn()
+				.mockResolvedValueOnce(`{
+  "thought": "I can answer directly.",
+  "messageToUser": "Looks fine.",
+  "toolCalls": []
+}`)
+				.mockResolvedValueOnce({
+					text: "",
+					toolCalls: [
+						{
+							id: "call-1",
+							name: "LOOKUP",
+							arguments: { query: "status" },
+						},
+					],
+				}),
+		};
+		const executeToolCall = vi.fn(async () => ({
+			success: true,
+			text: "checked",
+		}));
+		const evaluate = vi.fn(async () => ({
+			success: true,
+			decision: "FINISH" as const,
+			thought: "Done.",
+			messageToUser: "Checked.",
+		}));
+
+		const result = await runPlannerLoop({
+			runtime,
+			context: { id: "ctx" },
+			tools: [
+				{
+					name: "LOOKUP",
+					description: "Lookup current status.",
+				},
+			] as never,
+			requireNonTerminalToolCall: true,
+			executeToolCall,
+			evaluate,
+		});
+
+		expect(runtime.useModel).toHaveBeenCalledTimes(2);
+		const retryParams = runtime.useModel.mock.calls[1]?.[1] as {
+			messages?: Array<{ role?: string; content?: string | null }>;
+		};
+		expect(retryParams.messages?.[1]?.content).toContain(
+			"previous planner response was not valid",
+		);
+		expect(executeToolCall).toHaveBeenCalledWith(
+			{ id: "call-1", name: "LOOKUP", params: { query: "status" } },
+			expect.objectContaining({ iteration: 2 }),
+		);
+		expect(result.finalMessage).toBe("Checked.");
+	});
+
 	it("stops planning when an action opts out of chaining", async () => {
 		const runtime = {
 			useModel: vi.fn(async () => ({

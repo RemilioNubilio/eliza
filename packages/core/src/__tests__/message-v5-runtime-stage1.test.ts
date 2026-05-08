@@ -283,7 +283,7 @@ describe("runV5MessageRuntimeStage1", () => {
 		expect(providerNames).not.toContain("CHARACTER");
 	});
 
-	it("carries tool-required routing into the planner prompt when tools are exposed", async () => {
+	it("enforces tool-required routing when tools are exposed", async () => {
 		const runtime = makeRuntime([
 			JSON.stringify({
 				processMessage: "RESPOND",
@@ -295,17 +295,34 @@ describe("runV5MessageRuntimeStage1", () => {
 				toolCalls: [],
 				messageToUser: "Looks fine.",
 			}),
+			{
+				text: "",
+				toolCalls: [
+					{
+						id: "call-1",
+						name: "CHECK_RUNTIME",
+						arguments: {},
+					},
+				],
+			},
+			JSON.stringify({
+				success: true,
+				decision: "FINISH",
+				thought: "Checked.",
+				messageToUser: "Checked.",
+			}),
 		]);
+		const handler = vi.fn(async () => ({ success: true, text: "checked" }));
 		runtime.actions = [
 			{
 				name: "CHECK_RUNTIME",
 				description: "Check current runtime state.",
 				contexts: ["general"],
-				handler: vi.fn(async () => ({ success: true, text: "checked" })),
+				handler,
 			},
 		] as unknown as IAgentRuntime["actions"];
 
-		await runV5MessageRuntimeStage1({
+		const result = await runV5MessageRuntimeStage1({
 			runtime,
 			message: makeMessage(),
 			state: makeState(),
@@ -318,6 +335,17 @@ describe("runV5MessageRuntimeStage1", () => {
 		expect(plannerParams.messages?.[1]?.content).toContain(
 			"Stage 1 router marked this current turn as requiring a tool",
 		);
+		const retryPlannerParams = useModelCalls(runtime)[2]?.[1] as {
+			messages?: Array<{ role?: string; content?: string | null }>;
+		};
+		expect(retryPlannerParams.messages?.[1]?.content).toContain(
+			"previous planner response was not valid",
+		);
+		expect(handler).toHaveBeenCalledTimes(1);
+		expect(result.kind).toBe("planned_reply");
+		if (result.kind === "planned_reply") {
+			expect(result.result.responseContent?.text).toBe("Checked.");
+		}
 	});
 
 	it("returns a simple no-context reply without calling the planner", async () => {
