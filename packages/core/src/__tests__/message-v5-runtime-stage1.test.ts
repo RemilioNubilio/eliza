@@ -205,6 +205,9 @@ describe("runV5MessageRuntimeStage1", () => {
 		);
 		expect(systemContent).toContain("message_handler_stage:");
 		expect(systemContent).toContain("available_contexts:");
+		expect(systemContent).toContain(
+			"platform mention, reply target, channel, room, or connector context does not by itself disqualify the simple shortcut",
+		);
 		// Prior dialogue lands as a `message:user:` segment in the user content,
 		// NOT as a `# Conversation Messages` text dump from RECENT_MESSAGES.
 		expect(userContent).toContain("message:user:");

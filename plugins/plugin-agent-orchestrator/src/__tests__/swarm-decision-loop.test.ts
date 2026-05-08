@@ -11,9 +11,11 @@ describe("completionReasoningFromTurnOutput", () => {
   it("uses the subagent output instead of internal assessor diagnostics", () => {
     expect(
       completionReasoningFromTurnOutput(
-        "BTC is $101,234.56 USD on Coinbase as of 2026-05-07 10:55 UTC.",
+        "Asset price is $101,234.56 USD from Market API as of 2026-05-07 10:55 UTC.",
       ),
-    ).toBe("BTC is $101,234.56 USD on Coinbase as of 2026-05-07 10:55 UTC.");
+    ).toBe(
+      "Asset price is $101,234.56 USD from Market API as of 2026-05-07 10:55 UTC.",
+    );
   });
 
   it("keeps artifact summaries when the task produced a PR", () => {
@@ -27,10 +29,10 @@ describe("completionReasoningFromTurnOutput", () => {
   it("keeps ordinary completion text with public URLs readable", () => {
     expect(
       completionReasoningFromTurnOutput(
-        "Built the app at https://nubilio.org/apps/breath-orbit/ and verified it returns 200.",
+        "Built the app at https://example.com/apps/breath-orbit/ and verified it returns 200.",
       ),
     ).toBe(
-      "Built the app at https://nubilio.org/apps/breath-orbit/ and verified it returns 200.",
+      "Built the app at https://example.com/apps/breath-orbit/ and verified it returns 200.",
     );
   });
 
@@ -63,7 +65,7 @@ diff --git a/app.js b/app.js
 codex
 Built the static breathing timer at \`data/apps/breath-ring/\`.
 
-URL: https://nubilio.org/apps/breath-ring/
+URL: https://example.com/apps/breath-ring/
 
 Verified:
 - \`node --check data/apps/breath-ring/app.js\`
@@ -75,7 +77,7 @@ tokens used
 79,074`),
     ).toBe(`Built the static breathing timer at \`data/apps/breath-ring/\`.
 
-URL: https://nubilio.org/apps/breath-ring/
+URL: https://example.com/apps/breath-ring/
 
 Verified:
 - \`node --check data/apps/breath-ring/app.js\`
@@ -86,16 +88,16 @@ Verified:
     expect(
       completionReasoningFromTurnOutput(`Built the static breathing timer at \`data/apps/breath-ring/\`.
 
-URL: https://nubilio.org/apps/breath-ring/
+URL: https://example.com/apps/breath-ring/
 
 Verified:
 - \`node --check data/apps/breath-ring/app.js\`
 - public URL returned \`200\`
 
-https://nubilio.org/apps/breath-ring/`),
+https://example.com/apps/breath-ring/`),
     ).toBe(`Built the static breathing timer at \`data/apps/breath-ring/\`.
 
-URL: https://nubilio.org/apps/breath-ring/
+URL: https://example.com/apps/breath-ring/
 
 Verified:
 - \`node --check data/apps/breath-ring/app.js\`
@@ -104,9 +106,9 @@ Verified:
 
   it("deduplicates labeled and bare URL fallback summaries", () => {
     expect(
-      completionReasoningFromTurnOutput(`URL: https://nubilio.org/apps/breath-ring/
-https://nubilio.org/apps/breath-ring/`),
-    ).toBe("URL: https://nubilio.org/apps/breath-ring/");
+      completionReasoningFromTurnOutput(`URL: https://example.com/apps/breath-ring/
+https://example.com/apps/breath-ring/`),
+    ).toBe("URL: https://example.com/apps/breath-ring/");
   });
 });
 
@@ -131,14 +133,14 @@ describe("completeDecisionWithTurnOutput", () => {
           reasoning: "Accept the agent's reported value and source as final.",
           keyDecision: "Accept the agent's reported value and source as final.",
         },
-        "btc-parserfix-123 BTC is $81,000 USD from Coinbase at 2026-05-07T12:09:23Z.",
+        "Asset price is $81,000 USD from Market API at 2026-05-07T12:09:23Z.",
       ),
     ).toMatchObject({
       action: "complete",
       reasoning:
-        "btc-parserfix-123 BTC is $81,000 USD from Coinbase at 2026-05-07T12:09:23Z.",
+        "Asset price is $81,000 USD from Market API at 2026-05-07T12:09:23Z.",
       keyDecision:
-        "btc-parserfix-123 BTC is $81,000 USD from Coinbase at 2026-05-07T12:09:23Z.",
+        "Asset price is $81,000 USD from Market API at 2026-05-07T12:09:23Z.",
     });
   });
 
@@ -178,21 +180,20 @@ describe("completion synthesis guards", () => {
   });
 
   it("deduplicates identical completion summaries", () => {
-    expect(uniqueSummaryParts(["BTC $81k", " BTC   $81k ", "other"])).toEqual([
-      "BTC $81k",
-      "other",
-    ]);
+    expect(
+      uniqueSummaryParts(["Asset $81k", " Asset   $81k ", "other"]),
+    ).toEqual(["Asset $81k", "other"]);
   });
 
   it("deduplicates partial and complete versions of the same summary", () => {
     const partial = [
-      "disk-fresh Disk check: urgent. `/` is 97% used (`372G/387G`, only `15G` free), so this VPS needs cleanup soon.",
+      "Disk check: urgent. `/` is 97% used (`372G/387G`, only `15G` free), so this VPS needs cleanup soon.",
       "`df -h` source:",
       "```text",
       "/dev/sda1 387G 372G 15G 97% /",
     ].join("\n");
     const complete = [
-      "disk-fresh Disk check: urgent. `/` is 97% used (`372G/387G`, only `15G` free), so this VPS needs cleanup soon.",
+      "Disk check: urgent. `/` is 97% used (`372G/387G`, only `15G` free), so this VPS needs cleanup soon.",
       "`df -h` source:",
       "```text",
       "/dev/sda1  387G  372G  15G  97%  /",

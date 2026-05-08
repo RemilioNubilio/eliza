@@ -209,32 +209,10 @@ export function preserveUserPromptInTask(
   const task = (extractedTask ?? "").trim();
   const raw = (userText ?? "").trim();
   if (!raw) return task;
-  if (hasConflictingRequestToken(task, raw)) return raw;
+  if (!task) return raw;
   if (task.toLowerCase().includes(raw.toLowerCase())) return task;
   if (raw.toLowerCase().includes(task.toLowerCase())) return raw;
   return `${task}\n\n# Full user message (preserved — may contain context the action-selector trimmed)\n\n${raw}`;
-}
-
-function hasConflictingRequestToken(task: string, raw: string): boolean {
-  const taskTokens = extractRequestTokens(task);
-  const rawTokens = extractRequestTokens(raw);
-  if (taskTokens.size === 0 || rawTokens.size === 0) {
-    return false;
-  }
-  for (const token of taskTokens) {
-    if (rawTokens.has(token)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function extractRequestTokens(text: string): Set<string> {
-  return new Set(
-    text
-      .match(/\b[a-z][a-z0-9]*(?:-[a-z0-9]+)*-\d{8,}\b/giu)
-      ?.map((token) => token.toLowerCase()) ?? [],
-  );
 }
 
 /**

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { splitAgentSpecsParam } from "../actions/coding-task-handlers.js";
+import { pushDefaultRules } from "../services/pty-auto-response.js";
 import {
   needsIsolatedCodexHome,
   resolveOrchestratorIgnorePath,
@@ -169,6 +170,36 @@ describe("Codex auth home selection", () => {
     expect(
       needsIsolatedCodexHome({ extraConfigToml: 'model_provider = "x"' }),
     ).toBe(true);
+  });
+});
+
+describe("pushDefaultRules", () => {
+  it("lets non-interactive Codex sessions accept routine organization selection prompts", async () => {
+    const rules: Array<{ pattern: RegExp; keys?: string[]; type: string }> = [];
+
+    await pushDefaultRules(
+      {
+        manager: {
+          addAutoResponseRule: async (_sessionId: string, rule: never) => {
+            rules.push(rule);
+          },
+        },
+        usingBunWorker: true,
+        runtime: {},
+        log: () => undefined,
+      } as never,
+      "session-1",
+      "codex",
+    );
+
+    const rule = rules.find((candidate) =>
+      candidate.pattern.test("Organization selection"),
+    );
+
+    expect(rule).toMatchObject({
+      type: "config",
+      keys: ["enter"],
+    });
   });
 });
 

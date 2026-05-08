@@ -2308,7 +2308,17 @@ export async function handleTurnComplete(
       },
     });
 
-    if (ctx.pendingBlocked.has(sessionId)) {
+    if (
+      ctx.pendingBlocked.has(sessionId) &&
+      decision.action === "complete" &&
+      turnOutput.trim().length > 0
+    ) {
+      ctx.pendingBlocked.delete(sessionId);
+      ctx.lastBlockedPromptFingerprint.delete(sessionId);
+      ctx.log(
+        `Ignoring buffered blocked prompt for "${taskCtx.label}" because task_complete produced final output`,
+      );
+    } else if (ctx.pendingBlocked.has(sessionId)) {
       ctx.log(
         `Deferring turn assessment execution for "${taskCtx.label}" because a newer blocked prompt arrived during assessment`,
       );

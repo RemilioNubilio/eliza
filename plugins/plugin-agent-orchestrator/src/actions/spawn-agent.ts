@@ -289,7 +289,7 @@ export const spawnAgentAction: Action = {
     const plannerTask =
       (params?.task as string) ?? (content.task as string) ?? "";
     const userText = (content.text as string)?.trim() || "";
-    const task = preserveUserPromptInTask(plannerTask, userText) || userText;
+    let task = preserveUserPromptInTask(plannerTask, userText) || userText;
 
     // SPAWN_AGENT spawns a single PTY session and has no `agents` parameter,
     // so a multi-intent prompt routed here would single-task and silently
@@ -316,6 +316,16 @@ export const spawnAgentAction: Action = {
       }
     }
 
+    const routeText = userText || task;
+    const workdirSelection = resolveTaskWorkdirSelection(runtime, {
+      routeText,
+      contentWorkdir: content.workdir as string | undefined,
+      plannerWorkdir: params?.workdir as string | undefined,
+    });
+    if (workdirSelection.source === "route" && userText) {
+      task = userText;
+    }
+
     // Shared guard with START_CODING_TASK: reject shell/pi/bash agentType hints when
     // the task text is prose so the LLM-supplied shortcut doesn't crash the
     // subagent. Helper lives next to looksLikeProseTask in start-coding-task.
@@ -325,12 +335,6 @@ export const spawnAgentAction: Action = {
       task,
       "[SPAWN_AGENT]",
     );
-    const routeText = userText || task;
-    const workdirSelection = resolveTaskWorkdirSelection(runtime, {
-      routeText,
-      contentWorkdir: content.workdir as string | undefined,
-      plannerWorkdir: params?.workdir as string | undefined,
-    });
     let workdir = workdirSelection.workdir;
     const configuredWorkdirRoute = workdirSelection.route;
     const rawAgentType =
@@ -847,7 +851,7 @@ export const spawnAgentAction: Action = {
     {
       name: "keepAliveAfterComplete",
       description:
-        "Keep the spawned task-agent session alive after a completed turn so it can receive another tracked task. Leave unset or false for normal one-off chat tasks; set true only when the user explicitly asks to keep working in the same task-agent session.",
+        "Keep the spawned task-agent session alive after a completed turn so it can receive another tracked task. Leave unset or false for normal one-off tasks. Set true only when the latest user message explicitly asks to keep, reuse, continue, or follow up in the same task-agent session. Do not set true merely because an app, server, file, URL, or PR should remain available after the task completes.",
       required: false,
       schema: { type: "boolean" as const },
     },

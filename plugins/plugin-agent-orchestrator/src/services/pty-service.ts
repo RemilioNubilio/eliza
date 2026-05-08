@@ -176,7 +176,7 @@ Eliza watches stdout for \`DECISION:\` lines. Use them for architectural choices
 
 # End cleanly
 
-End with the concrete result: files changed, validation run, URLs/app ids when relevant, and any remaining blocker. Avoid internal monologue in the final answer.`;
+End with the concrete result: files changed, validation run, URLs/app ids when relevant, and any remaining blocker. When reporting facts from live, external, web, API, or document sources, include provenance the user can follow: a source URL, API endpoint, document path, command, or service name as appropriate. If no link or endpoint is available, say that plainly. Avoid internal monologue in the final answer.`;
 
 const TOOL_DISCOVERY_HINTS: Record<CodingAgentType, string> = {
   claude: CLAUDE_SKILL_ESSENTIALS,

@@ -23,6 +23,7 @@ rules:
     * no action verbs like search, find, get, fetch, save, send, create, update, delete, run, execute, or call are present
     * the answer would not meaningfully change if checked against up-to-date information, world state, or memory
     * when uncertain: prefer planning over simple
+- a platform mention, reply target, channel, room, or connector context does not by itself disqualify the simple shortcut; use simple when the current message only needs a direct conversational reply
 - never choose "simple" if the request needs tools, actions, subagents, providers, filesystem/runtime inspection, network/browser/API lookup, live/current/external data, side effects, long-running work, or verification
 - never choose "simple" if the message names a person, place, file, document, or data source; asks about schedules or past interactions ("what did I say earlier", "what's on my calendar", "how many X"); searches/browses/looks up current facts; runs shell or terminal commands; inspects files/logs/repos/services/disk; builds or deploys apps; creates PRs; spawns coding/task agents; sends messages; schedules tasks; or would benefit from any tool call even if the agent could fabricate a plausible answer
 - do not choose "simple" for requests to change, persist, update, or remember agent/user settings, preferences, identity, persona, character, response style, or future behavior; select settings and any other relevant context instead

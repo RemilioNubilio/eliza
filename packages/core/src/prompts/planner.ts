@@ -9,8 +9,9 @@ rules:
 - never add undeclared tuning knobs such as model, reasoning, provider, timeout, or approval fields unless that exact parameter is listed for the selected tool
 - set optional session-lifetime/reuse fields true only when the latest user message explicitly asks to keep or reuse the same agent/session; otherwise omit them or set false
 - the current request is the latest user message in the rendered context; when history contains older similar requests, do not copy their tags, task text, workdirs, URLs, ids, or stale facts into new tool arguments
-- preserve exact current-turn tags/tokens from the latest user message when the user asks for them
+- preserve exact current-turn tags/tokens from the latest user message only when the user explicitly asks for a tag/token/id or provides an opaque marker to include; do not invent a tag from the request text
 - the task is not complete while the user still needs live/current/external data, filesystem/runtime state, command output, repo work, app builds, PR work, deployment, verification, or another side effect and a relevant exposed tool can attempt it
+- if the current context includes a tool-required router decision or instruction, do not return a terminal answer until after at least one exposed non-terminal tool has run for the current request
 - when a relevant exposed tool can attempt the needed work, call that tool instead of replying that the current context cannot browse, search, run commands, inspect, build, deploy, or verify
 - prior attachments, memory, or conversation snippets are not a substitute for an explicit current request to run, check, fetch, inspect, build, deploy, verify, or look something up now; use a relevant exposed tool for the current turn
 - for live/current/external-data requests, prefer SEARCH when it is exposed; otherwise use an exposed task-agent tool such as SPAWN_AGENT or START_CODING_TASK when one is available

@@ -185,6 +185,10 @@ export async function runPlannerLoop(
 		});
 
 		if (trajectory.plannedQueue.length === 0) {
+			const plannerToolChoice =
+				requireNonTerminalToolCall && !hasExecutedNonTerminalTool(trajectory)
+					? "required"
+					: params.toolChoice;
 			const plannerOutput = await callPlanner({
 				runtime: params.runtime,
 				context: trajectory.context,
@@ -193,7 +197,7 @@ export async function runPlannerLoop(
 				modelType: params.modelType,
 				provider: params.provider,
 				tools: params.tools,
-				toolChoice: params.toolChoice,
+				toolChoice: plannerToolChoice,
 				recorder: params.recorder,
 				trajectoryId: params.trajectoryId,
 				parentStageId: params.parentStageId,

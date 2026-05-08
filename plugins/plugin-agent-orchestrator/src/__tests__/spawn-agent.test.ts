@@ -21,6 +21,9 @@ describe("SPAWN_AGENT registration", () => {
 
     expect(keepAlive?.description).toContain("Leave unset or false");
     expect(keepAlive?.description).toContain("explicitly asks");
+    expect(keepAlive?.description).toContain(
+      "Do not set true merely because an app",
+    );
   });
 
   it("executes keepAliveAfterComplete only when the current user asks to reuse the session", async () => {
@@ -271,7 +274,7 @@ describe("SPAWN_AGENT registration", () => {
       worldId: "world-1",
       content: {
         source: "discord",
-        text: "app-finalclean-1778164527888 build me a tiny polished breathing app I can open on your site.",
+        text: "build me a tiny polished breathing app I can open on your site.",
       },
     } as unknown as Memory;
 
@@ -282,17 +285,17 @@ describe("SPAWN_AGENT registration", () => {
       {
         parameters: {
           agentType: "codex",
-          task: "Look up the current BTC price in USD and include btc-finalclean-1778164527888.",
-          workdir: "/workspace/stale-btc-scratch",
+          task: "Inspect the unrelated scratch workspace.",
+          workdir: "/workspace/stale-scratch",
           memoryContent:
-            "Work only in /workspace/stale-btc-scratch while checking the BTC price.",
+            "Work only in /workspace/stale-scratch while inspecting the unrelated scratch workspace.",
         },
       },
       vi.fn(),
     );
 
     const expectedTask =
-      "app-finalclean-1778164527888 build me a tiny polished breathing app I can open on your site.";
+      "build me a tiny polished breathing app I can open on your site.";
     expect(result?.success).toBe(true);
     expect(spawnOptions).toMatchObject({
       workdir: "/workspace/site",
@@ -301,10 +304,10 @@ describe("SPAWN_AGENT registration", () => {
     expect(String(spawnOptions?.memoryContent)).toContain(
       "Use existing local workspace: /workspace/site",
     );
+    expect(String(spawnOptions?.memoryContent)).not.toContain("stale-scratch");
     expect(String(spawnOptions?.memoryContent)).not.toContain(
-      "stale-btc-scratch",
+      "unrelated scratch workspace",
     );
-    expect(String(spawnOptions?.memoryContent)).not.toContain("BTC price");
     expect(coordinator.registerTask).toHaveBeenCalledWith(
       "pty-grounded",
       expect.objectContaining({
@@ -377,7 +380,7 @@ describe("SPAWN_AGENT registration", () => {
       worldId: "world-1",
       content: {
         source: "discord",
-        text: "app-groundcheck-1778176946 build me a tiny polished focus reset timer app I can open on your site.",
+        text: "build me a tiny polished focus reset timer app I can open on your site.",
       },
     } as unknown as Memory;
 
@@ -388,7 +391,7 @@ describe("SPAWN_AGENT registration", () => {
       {
         parameters: {
           agentType: "codex",
-          task: "Build a tiny polished focus reset timer app in this workspace. Keep it self-contained and production-ready for the Nubilio site.",
+          task: "Build a tiny polished focus reset timer app in this workspace. Keep it self-contained and production-ready for the production site.",
           workdir: "/workspace/planner-scratch",
         },
       },
@@ -398,10 +401,9 @@ describe("SPAWN_AGENT registration", () => {
     expect(result?.success).toBe(true);
     expect(spawnOptions).toMatchObject({
       workdir: "/workspace/site",
+      initialTask:
+        "build me a tiny polished focus reset timer app I can open on your site.",
     });
-    expect(String(spawnOptions?.initialTask)).toContain(
-      "app-groundcheck-1778176946",
-    );
     expect(String(spawnOptions?.memoryContent)).toContain(
       "Use existing local workspace: /workspace/site",
     );

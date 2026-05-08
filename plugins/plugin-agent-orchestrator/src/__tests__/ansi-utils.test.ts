@@ -15,15 +15,15 @@ describe("extractCompletionSummary", () => {
       "custom domain options (one-time, paid from your cloud credits):",
       "monetization: enabled for app chat inference",
       "auth: eliza cloud oauth",
-      "https://nubilio.org",
-      "https://cloud.nubs.site",
+      "https://example.com",
+      "https://cloud.example.com",
       "codex",
-      "disk-runtimeactions-1778170115195 `/dev/sda1`: 95% used, 22G free. Urgent: cleanup should happen now.",
+      "Disk check: `/dev/sda1` is 95% used with 22G free. Urgent: cleanup should happen now.",
       "tokens used 1234",
     ].join("\n");
 
     expect(extractCompletionSummary(raw)).toBe(
-      "disk-runtimeactions-1778170115195 `/dev/sda1`: 95% used, 22G free. Urgent: cleanup should happen now.",
+      "Disk check: `/dev/sda1` is 95% used with 22G free. Urgent: cleanup should happen now.",
     );
   });
 
@@ -31,7 +31,7 @@ describe("extractCompletionSummary", () => {
     const raw = [
       "codex",
       "Built Pocket Breath.",
-      "URL: https://nubilio.org/apps/pocket-breath/",
+      "URL: https://example.com/apps/pocket-breath/",
       "Verified: public 200 OK and controls work.",
       "tokens used 1234",
     ].join("\n");
@@ -39,7 +39,7 @@ describe("extractCompletionSummary", () => {
     expect(extractCompletionSummary(raw)).toBe(
       [
         "Built Pocket Breath.",
-        "URL: https://nubilio.org/apps/pocket-breath/",
+        "URL: https://example.com/apps/pocket-breath/",
         "Verified: public 200 OK and controls work.",
       ].join("\n"),
     );
@@ -49,7 +49,7 @@ describe("extractCompletionSummary", () => {
     const raw = [
       "Built the static app at:",
       "",
-      "URL: https://nubilio.org/apps/tiny-stretch-timer/",
+      "URL: https://example.com/apps/tiny-stretch-timer/",
       "",
       "Files changed:",
       "- `data/apps/tiny-stretch-timer/index.html`",
@@ -63,15 +63,13 @@ describe("extractCompletionSummary", () => {
       "- Public route returned `200 OK`",
       "",
       "Browser automation was not available: Chromium is not installed.",
-      "",
-      "Tag: app-currentargs-1778184418",
     ].join("\n");
 
     expect(extractCompletionSummary(raw)).toBe(
       [
         "Built the static app at:",
         "",
-        "URL: https://nubilio.org/apps/tiny-stretch-timer/",
+        "URL: https://example.com/apps/tiny-stretch-timer/",
         "",
         "Files changed:",
         "- `data/apps/tiny-stretch-timer/index.html`",
@@ -85,8 +83,6 @@ describe("extractCompletionSummary", () => {
         "- Public route returned `200 OK`",
         "",
         "Browser automation was not available: Chromium is not installed.",
-        "",
-        "Tag: app-currentargs-1778184418",
       ].join("\n"),
     );
   });
@@ -94,18 +90,42 @@ describe("extractCompletionSummary", () => {
   it("drops a bare duplicate URL when the final block also has a sourced line", () => {
     const raw = [
       "codex",
-      "https://api.coinbase.com/v2/prices/BTC-USD/spot",
-      "btc-final BTC/USD: $79,821.015",
-      "Source: Coinbase Spot Price API https://api.coinbase.com/v2/prices/BTC-USD/spot",
+      "https://api.example.test/v1/market/asset-usd",
+      "Asset/USD spot price: $79,821.015",
+      "Source: Market Spot Price API https://api.example.test/v1/market/asset-usd",
       "UTC timestamp: 2026-05-07T17:11:49.779Z",
       "tokens used 1234",
     ].join("\n");
 
     expect(extractCompletionSummary(raw)).toBe(
       [
-        "btc-final BTC/USD: $79,821.015",
-        "Source: Coinbase Spot Price API https://api.coinbase.com/v2/prices/BTC-USD/spot",
+        "Asset/USD spot price: $79,821.015",
+        "Source: Market Spot Price API https://api.example.test/v1/market/asset-usd",
         "UTC timestamp: 2026-05-07T17:11:49.779Z",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps a standalone URL when it is the value for the preceding heading", () => {
+    const raw = [
+      "codex",
+      "Built the app at:",
+      "",
+      "https://example.com/apps/breathing-timer/",
+      "",
+      "Verified:",
+      "- Public URL plus CSS/JS assets return `200` at https://example.com/apps/breathing-timer/",
+      "tokens used 1234",
+    ].join("\n");
+
+    expect(extractCompletionSummary(raw)).toBe(
+      [
+        "Built the app at:",
+        "",
+        "https://example.com/apps/breathing-timer/",
+        "",
+        "Verified:",
+        "- Public URL plus CSS/JS assets return `200` at https://example.com/apps/breathing-timer/",
       ].join("\n"),
     );
   });
@@ -116,32 +136,32 @@ describe("summarizeUserFacingTurnOutput", () => {
     const raw = [
       "transient correlation id",
       "",
-      "Built the stretch break timer here: https://nubilio.org/apps/stretch-break-timer/",
+      "Built the stretch break timer here: https://example.com/apps/stretch-break-timer/",
       "",
-      "Changed `data/apps/stretch-break-timer/` with the app HTML/CSS/JS/meta. Verified `app.js` syntax, local route `200` for HTML/CSS/JS, and public Nubilio route `200` for HTML/CSS/JS/meta.",
+      "Changed `data/apps/stretch-break-timer/` with the app HTML/CSS/JS/meta. Verified `app.js` syntax, local route `200` for HTML/CSS/JS, and public route `200` for HTML/CSS/JS/meta.",
     ].join("\n");
 
     expect(summarizeUserFacingTurnOutput(raw)).toBe(
       [
-        "Built the stretch break timer here: https://nubilio.org/apps/stretch-break-timer/",
+        "Built the stretch break timer here: https://example.com/apps/stretch-break-timer/",
         "",
-        "Changed `data/apps/stretch-break-timer/` with the app HTML/CSS/JS/meta. Verified `app.js` syntax, local route `200` for HTML/CSS/JS, and public Nubilio route `200` for HTML/CSS/JS/meta.",
+        "Changed `data/apps/stretch-break-timer/` with the app HTML/CSS/JS/meta. Verified `app.js` syntax, local route `200` for HTML/CSS/JS, and public route `200` for HTML/CSS/JS/meta.",
       ].join("\n"),
     );
   });
 
   it("dedupes a bare URL from concise captured answers when a sourced line has the same URL", () => {
     const raw = [
-      "https://api.coinbase.com/v2/prices/BTC-USD/spot",
-      "btc-final BTC/USD: $79,821.015",
-      "Source: Coinbase Spot Price API https://api.coinbase.com/v2/prices/BTC-USD/spot",
+      "https://api.example.test/v1/market/asset-usd",
+      "Asset/USD spot price: $79,821.015",
+      "Source: Market Spot Price API https://api.example.test/v1/market/asset-usd",
       "UTC timestamp: 2026-05-07T17:11:49.779Z",
     ].join("\n");
 
     expect(summarizeUserFacingTurnOutput(raw)).toBe(
       [
-        "btc-final BTC/USD: $79,821.015",
-        "Source: Coinbase Spot Price API https://api.coinbase.com/v2/prices/BTC-USD/spot",
+        "Asset/USD spot price: $79,821.015",
+        "Source: Market Spot Price API https://api.example.test/v1/market/asset-usd",
         "UTC timestamp: 2026-05-07T17:11:49.779Z",
       ].join("\n"),
     );
@@ -191,42 +211,42 @@ describe("summarizeUserFacingTurnOutput", () => {
 
   it("collapses duplicated status summaries while keeping the richer repeated line", () => {
     const raw = [
-      "Branch: `remilio/local-eliza-link-precedence-20260507` at `46191f5c9`",
+      "Branch: `feature/link-precedence` at `46191f5c9`",
       "Worktree: clean.",
       "Upstream/tracking: `origin/develop`. Ahead/behind relative to `origin/develop`: `ahead 1, behind 1`.",
-      "Open PR: `#2119` open, `RemilioNubilio:remilio/local-eliza-link-precedence-20260507` `develop`",
-      "`https://github.com/milady-ai/milady/pull/2119`",
+      "Open PR: `#123` open, `example:feature/link-precedence` `develop`",
+      "`https://github.com/example/project/pull/123`",
       "Remotes:",
-      "- `origin`: `https://github.com/milady-ai/milady.git`",
-      "- `remilio`: `https://github.com/RemilioNubilio/milady.git`",
+      "- `origin`: `https://github.com/example/project.git`",
+      "- `fork`: `https://github.com/example-fork/project.git`",
       "No files changed.",
       "",
-      "Branch: `remilio/local-eliza-link-precedence-20260507` at `46191f5c9`",
+      "Branch: `feature/link-precedence` at `46191f5c9`",
       "",
       "Worktree: clean.",
       "",
       "Upstream/tracking: `origin/develop`. Ahead/behind relative to `origin/develop`: `ahead 1, behind 1`.",
       "",
-      "Open PR: `#2119` open, `RemilioNubilio:remilio/local-eliza-link-precedence-20260507` → `develop`",
-      "`https://github.com/milady-ai/milady/pull/2119`",
+      "Open PR: `#123` open, `example:feature/link-precedence` → `develop`",
+      "`https://github.com/example/project/pull/123`",
       "",
       "Remotes:",
-      "- `origin`: `https://github.com/milady-ai/milady.git`",
-      "- `remilio`: `https://github.com/RemilioNubilio/milady.git`",
+      "- `origin`: `https://github.com/example/project.git`",
+      "- `fork`: `https://github.com/example-fork/project.git`",
       "",
       "No files changed.",
     ].join("\n");
 
     expect(summarizeUserFacingTurnOutput(raw)).toBe(
       [
-        "Branch: `remilio/local-eliza-link-precedence-20260507` at `46191f5c9`",
+        "Branch: `feature/link-precedence` at `46191f5c9`",
         "Worktree: clean.",
         "Upstream/tracking: `origin/develop`. Ahead/behind relative to `origin/develop`: `ahead 1, behind 1`.",
-        "Open PR: `#2119` open, `RemilioNubilio:remilio/local-eliza-link-precedence-20260507` `develop`",
-        "https://github.com/milady-ai/milady/pull/2119",
+        "Open PR: `#123` open, `example:feature/link-precedence` `develop`",
+        "https://github.com/example/project/pull/123",
         "Remotes:",
-        "- `origin`: https://github.com/milady-ai/milady.git",
-        "- `remilio`: https://github.com/RemilioNubilio/milady.git",
+        "- `origin`: https://github.com/example/project.git",
+        "- `fork`: https://github.com/example-fork/project.git",
         "No files changed.",
       ].join("\n"),
     );
@@ -238,7 +258,7 @@ describe("closeUnbalancedMarkdownFences", () => {
     expect(
       closeUnbalancedMarkdownFences(
         [
-          "disk-fresh Disk check: urgent.",
+          "Disk check: urgent.",
           "`df -h` source:",
           "```text",
           "/dev/sda1 387G 372G 15G 97% /",
@@ -246,10 +266,104 @@ describe("closeUnbalancedMarkdownFences", () => {
       ),
     ).toBe(
       [
-        "disk-fresh Disk check: urgent.",
+        "Disk check: urgent.",
         "`df -h` source:",
         "```text",
         "/dev/sda1 387G 372G 15G 97% /",
+        "```",
+      ].join("\n"),
+    );
+  });
+
+  it("closes plain command-output fences before following prose summaries", () => {
+    expect(
+      closeUnbalancedMarkdownFences(
+        [
+          "Source: `status` run locally.",
+          "```text",
+          "Name State Size Used",
+          "primary active 100G 98%",
+          "secondary active 50G 12%",
+          "Urgent: primary is near capacity and needs cleanup soon.",
+          "Everything else shown is fine. No files changed.",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "Source: `status` run locally.",
+        "```text",
+        "Name State Size Used",
+        "primary active 100G 98%",
+        "secondary active 50G 12%",
+        "```",
+        "Urgent: primary is near capacity and needs cleanup soon.",
+        "Everything else shown is fine. No files changed.",
+      ].join("\n"),
+    );
+  });
+
+  it("closes one-line command-output fences before following prose summaries", () => {
+    expect(
+      closeUnbalancedMarkdownFences(
+        [
+          "Ran `status`.",
+          "```text",
+          "primary active 100G 98%",
+          "That is urgent: primary is near capacity.",
+          "No files changed.",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "Ran `status`.",
+        "```text",
+        "primary active 100G 98%",
+        "```",
+        "That is urgent: primary is near capacity.",
+        "No files changed.",
+      ].join("\n"),
+    );
+  });
+
+  it("does not split literal text fences that contain prose only", () => {
+    expect(
+      closeUnbalancedMarkdownFences(
+        [
+          "Example:",
+          "```text",
+          "This is a literal text sample.",
+          "It contains sentences on purpose.",
+          "```",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "Example:",
+        "```text",
+        "This is a literal text sample.",
+        "It contains sentences on purpose.",
+        "```",
+      ].join("\n"),
+    );
+  });
+
+  it("does not split non-plain code fences before prose-like code comments", () => {
+    expect(
+      closeUnbalancedMarkdownFences(
+        [
+          "Patch:",
+          "```ts",
+          "const value = 1;",
+          "// This comment intentionally looks like prose.",
+          "```",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "Patch:",
+        "```ts",
+        "const value = 1;",
+        "// This comment intentionally looks like prose.",
         "```",
       ].join("\n"),
     );

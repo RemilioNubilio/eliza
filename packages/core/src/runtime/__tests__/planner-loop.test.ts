@@ -96,6 +96,9 @@ describe("v5 planner loop skeleton", () => {
 			"preserve exact current-turn tags/tokens",
 		);
 		expect(v5PlannerTemplate).toContain(
+			"do not invent a tag from the request text",
+		);
+		expect(v5PlannerTemplate).toContain(
 			"declared by the selected tool's parameter schema",
 		);
 		expect(v5PlannerTemplate).toContain("never add undeclared tuning knobs");
@@ -281,9 +284,15 @@ describe("v5 planner loop skeleton", () => {
 		});
 
 		expect(runtime.useModel).toHaveBeenCalledTimes(2);
+		const firstParams = runtime.useModel.mock.calls[0]?.[1] as {
+			toolChoice?: string;
+		};
+		expect(firstParams.toolChoice).toBe("required");
 		const retryParams = runtime.useModel.mock.calls[1]?.[1] as {
 			messages?: Array<{ role?: string; content?: string | null }>;
+			toolChoice?: string;
 		};
+		expect(retryParams.toolChoice).toBe("required");
 		expect(retryParams.messages?.[1]?.content).toContain(
 			"previous planner response was not valid",
 		);

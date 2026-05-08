@@ -80,10 +80,7 @@ describe("task workdir routes", () => {
     });
 
     expect(
-      resolveTaskWorkdirRoute(
-        runtime,
-        "build a tiny app for the current Milady site",
-      ),
+      resolveTaskWorkdirRoute(runtime, "build a tiny app for the current site"),
     ).toMatchObject({ workdir: "/workspace/site" });
     expect(
       resolveTaskWorkdirRoute(
@@ -122,8 +119,8 @@ describe("task workdir routes", () => {
     expect(
       resolveTaskWorkdirSelection(runtime, {
         routeText:
-          "app-finalclean-1778164527888 build me a tiny polished breathing app I can open on your site.",
-        plannerWorkdir: "/workspace/stale-btc-scratch",
+          "build me a tiny polished breathing app I can open on your site.",
+        plannerWorkdir: "/workspace/stale-scratch",
       }),
     ).toMatchObject({
       workdir: "/workspace/site",
@@ -167,7 +164,7 @@ describe("task workdir routes", () => {
 
     expect(
       resolveTaskWorkdirSelection(runtime, {
-        routeText: "check current btc price",
+        routeText: "inspect current market data",
         plannerWorkdir: "/workspace/lookup",
       }),
     ).toMatchObject({

@@ -215,6 +215,20 @@ function compactCompletionBlankLines(lines: string[]): string[] {
   return compacted;
 }
 
+function isBareUrlLineAfterValueHeading(
+  line: string,
+  previousLine: string,
+): boolean {
+  const matches = line.match(PUBLIC_URL_RE) ?? [];
+  if (
+    matches.length !== 1 ||
+    line.trim() !== normalizeUrlForDedupe(matches[0])
+  ) {
+    return false;
+  }
+  return isSummarySectionHeadingLine(previousLine);
+}
+
 function isSummaryLabelLine(line: string): boolean {
   return /^(?:[-*]\s+)?[\p{L}\p{N}][^:\n]{0,80}:\s+\S/u.test(
     unwrapInlineCodeUrls(line).trim(),
@@ -323,19 +337,26 @@ function dedupeCompletionBlockLines(lines: string[]): string[] {
   }
 
   let inFence = false;
+  let previousMeaningfulLine = "";
   for (const line of normalizedLines) {
     const fence = line.trim();
     if (fence.startsWith("```")) {
       inFence = !inFence || !/^```\s*$/.test(fence);
       result.push(line);
+      if (line.trim()) previousMeaningfulLine = line;
       continue;
     }
 
     const matches = line.match(PUBLIC_URL_RE) ?? [];
     const normalizedMatches = matches.map(normalizeUrlForDedupe);
+    const isBareHeadingValueUrl = isBareUrlLineAfterValueHeading(
+      line,
+      previousMeaningfulLine,
+    );
     const isBareRepeatedUrl =
       normalizedMatches.length === 1 &&
       line.trim() === normalizedMatches[0] &&
+      !isBareHeadingValueUrl &&
       (seenUrls.has(normalizedMatches[0]) ||
         urlsWithContext.has(normalizedMatches[0]));
     if (isBareRepeatedUrl) continue;
@@ -355,6 +376,7 @@ function dedupeCompletionBlockLines(lines: string[]): string[] {
     }
 
     result.push(line);
+    if (line.trim()) previousMeaningfulLine = line;
     for (const normalized of normalizedMatches) {
       seenUrls.add(normalized);
     }
@@ -363,28 +385,98 @@ function dedupeCompletionBlockLines(lines: string[]): string[] {
   return compactCompletionBlankLines(result);
 }
 
+function markdownFenceInfo(line: string): string | null {
+  const match = line.trim().match(/^```\s*([^\s`]*)/u);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function isPlainTextOutputFence(info: string): boolean {
+  return (
+    info === "" ||
+    info === "text" ||
+    info === "txt" ||
+    info === "output" ||
+    info === "log" ||
+    info === "console" ||
+    info === "terminal"
+  );
+}
+
+function isLikelyCommandOutputLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (/[.!?]$/u.test(trimmed)) return false;
+  const columns = trimmed.split(/\s+/);
+  if (columns.length < 4) return false;
+  return /(?:\d|%|\/|:)/u.test(trimmed);
+}
+
+function shouldCloseTextFenceBeforeSummaryLine(
+  fenceInfo: string,
+  fenceLines: readonly string[],
+  line: string,
+): boolean {
+  if (!isPlainTextOutputFence(fenceInfo)) return false;
+
+  const meaningfulFenceLines = fenceLines.filter((fenceLine) =>
+    fenceLine.trim(),
+  );
+  if (meaningfulFenceLines.length < 1) return false;
+  if (!meaningfulFenceLines.some(isLikelyCommandOutputLine)) return false;
+
+  const trimmed = unwrapInlineCodeUrls(line).trim();
+  if (!trimmed || isLikelyCommandOutputLine(trimmed)) return false;
+  return (
+    isSummaryLabelLine(trimmed) ||
+    isBulletSummaryLine(trimmed) ||
+    isSentenceLikeSummaryLine(trimmed)
+  );
+}
+
 export function closeUnbalancedMarkdownFences(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
 
   const fixedLines: string[] = [];
   let openFence = false;
+  let openFenceInfo = "";
+  let openFenceLines: string[] = [];
 
   for (const line of trimmed.split("\n")) {
     const fence = line.trim();
     if (!fence.startsWith("```")) {
+      if (
+        openFence &&
+        shouldCloseTextFenceBeforeSummaryLine(
+          openFenceInfo,
+          openFenceLines,
+          line,
+        )
+      ) {
+        fixedLines.push("```");
+        openFence = false;
+        openFenceInfo = "";
+        openFenceLines = [];
+      }
       fixedLines.push(line);
+      if (openFence) {
+        openFenceLines.push(line);
+      }
       continue;
     }
 
     if (!openFence) {
       openFence = true;
+      openFenceInfo = markdownFenceInfo(line) ?? "";
+      openFenceLines = [];
       fixedLines.push(line);
       continue;
     }
 
     if (/^```\s*$/.test(fence)) {
       openFence = false;
+      openFenceInfo = "";
+      openFenceLines = [];
       fixedLines.push(line);
       continue;
     }
@@ -394,6 +486,8 @@ export function closeUnbalancedMarkdownFences(text: string): string {
     // preserving the next one.
     fixedLines.push("```");
     fixedLines.push(line);
+    openFenceInfo = markdownFenceInfo(line) ?? "";
+    openFenceLines = [];
   }
 
   if (openFence) {
