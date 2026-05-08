@@ -324,6 +324,45 @@ function buildCodexToolBridgeRetryPrompt(
   ].join("\n");
 }
 
+function isCodexEmptyResponseError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /^codex exec produced an empty model response\b/i.test(message);
+}
+
+function buildCodexEmptyResponseRetryPrompt(originalPrompt: string): string {
+  return [
+    "Your previous Codex CLI attempt completed without producing a final model output.",
+    "Retry the exact same elizaOS model-provider task now.",
+    "Return the required final output only, following every response-format and host-tool instruction from the original prompt.",
+    "Do not explain the retry and do not return an empty response.",
+    "",
+    originalPrompt,
+  ].join("\n");
+}
+
+async function runCodexExecWithEmptyRetry(
+  prompt: string,
+  options: CodexExecOptions,
+  input: CodexExecInput = {},
+  modelType = "model",
+): Promise<string> {
+  try {
+    return await runCodexExec(prompt, options, input);
+  } catch (error) {
+    if (!isCodexEmptyResponseError(error)) {
+      throw error;
+    }
+    logger.info(
+      `[codex-model-provider] retrying ${modelType} after empty Codex CLI response`,
+    );
+    return await runCodexExec(
+      buildCodexEmptyResponseRetryPrompt(prompt),
+      options,
+      input,
+    );
+  }
+}
+
 export function buildCodexImageDescriptionPrompt(
   params: ImageDescriptionParams | string,
 ): string {
@@ -980,12 +1019,13 @@ export async function codexCliImageDescriptionModel(
     logger.info(
       `[codex-model-provider] running codex exec for IMAGE_DESCRIPTION in ${options.workdir}`,
     );
-    const text = await runCodexExec(
+    const text = await runCodexExecWithEmptyRetry(
       buildCodexImageDescriptionPrompt(params),
       options,
       {
         imagePaths: [imagePath],
       },
+      "IMAGE_DESCRIPTION",
     );
     return parseCodexImageDescriptionResult(text);
   } finally {
@@ -1004,7 +1044,12 @@ export async function codexCliTextModel(
   logger.info(
     `[codex-model-provider] running codex exec for ${modelType ?? "text"} in ${options.workdir}`,
   );
-  const text = await runCodexExec(prompt, options);
+  const text = await runCodexExecWithEmptyRetry(
+    prompt,
+    options,
+    {},
+    modelType ?? "text",
+  );
   const toolCallResult = parseCodexToolCallResult(text, params);
   if (toolCallResult) {
     return toolCallResult;
@@ -1013,9 +1058,11 @@ export async function codexCliTextModel(
     logger.info(
       `[codex-model-provider] retrying ${modelType ?? "text"} after invalid host-tool refusal`,
     );
-    const retryText = await runCodexExec(
+    const retryText = await runCodexExecWithEmptyRetry(
       buildCodexToolBridgeRetryPrompt(prompt, text),
       options,
+      {},
+      `${modelType ?? "text"} tool bridge retry`,
     );
     return parseCodexToolCallResult(retryText, params) ?? retryText;
   }
@@ -1033,6 +1080,11 @@ export async function codexCliObjectModel(
   logger.info(
     `[codex-model-provider] running codex exec for ${modelType ?? "object"} in ${options.workdir}`,
   );
-  const text = await runCodexExec(prompt, options);
+  const text = await runCodexExecWithEmptyRetry(
+    prompt,
+    options,
+    {},
+    modelType ?? "object",
+  );
   return parseCodexObjectResult(text);
 }

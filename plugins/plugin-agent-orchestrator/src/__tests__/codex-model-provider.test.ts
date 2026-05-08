@@ -301,6 +301,64 @@ describe("codex model provider", () => {
     });
   });
 
+  it("retries once when Codex CLI writes an empty final message", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "codex-provider-test-"));
+    try {
+      const fakeCodex = path.join(tempDir, "fake-codex");
+      await writeFile(
+        fakeCodex,
+        `#!/usr/bin/env node
+const { readFileSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const args = process.argv.slice(2);
+if (args[0] === "exec" && args.includes("--help")) {
+  console.log("--output-last-message");
+  process.exit(0);
+}
+readFileSync(0, "utf8");
+const outputPath = args[args.indexOf("--output-last-message") + 1];
+const countPath = join(process.cwd(), "count.txt");
+let count = 0;
+try { count = Number(readFileSync(countPath, "utf8")) || 0; } catch {}
+writeFileSync(countPath, String(count + 1));
+writeFileSync(
+  outputPath,
+  count === 0
+    ? ""
+    : JSON.stringify({ name: "SPAWN_AGENT", arguments: { task: "inspect docs" } }),
+);
+`,
+        { mode: 0o755 },
+      );
+
+      const result = await codexCliTextModel(
+        runtimeWithSettings({
+          PARALLAX_CODEX_BIN: fakeCodex,
+          PARALLAX_CODEX_MODEL_WORKDIR: tempDir,
+          PARALLAX_CODEX_MODEL_TIMEOUT_MS: "5000",
+        }),
+        {
+          prompt: "Plan the docs task.",
+          modelType: "ACTION_PLANNER",
+          tools: [{ name: "SPAWN_AGENT" }],
+          toolChoice: "auto",
+        } as never,
+      );
+
+      expect(result).toMatchObject({
+        finishReason: "tool_calls",
+        toolCalls: [
+          {
+            name: "SPAWN_AGENT",
+            arguments: { task: "inspect docs" },
+          },
+        ],
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps direct OpenAI runtime credentials out of Codex CLI subprocesses by default", () => {
     const env = buildCodexExecEnv(
       {
