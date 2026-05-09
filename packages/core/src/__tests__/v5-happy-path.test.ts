@@ -9,6 +9,7 @@ import type {
 	HandlerCallback,
 	HandlerOptions,
 } from "../types/components";
+import { ActionMode } from "../types/components";
 import type { ContextRegistry } from "../types/contexts";
 import type { Memory } from "../types/memory";
 import { ModelType } from "../types/model";
@@ -125,6 +126,7 @@ function makeMockAction(opts: {
 		callback?: HandlerCallback,
 	) => Promise<ActionResult>;
 	validate?: Action["validate"];
+	mode?: Action["mode"];
 	subActions?: string[];
 	contexts?: Action["contexts"];
 	parameters?: Array<{
@@ -142,6 +144,7 @@ function makeMockAction(opts: {
 		parameters: opts.parameters ?? [],
 		validate: opts.validate ?? (async () => true),
 		handler: opts.handler,
+		...(opts.mode ? { mode: opts.mode } : {}),
 		...(opts.subActions ? { subActions: opts.subActions } : {}),
 		...(opts.contexts ? { contexts: opts.contexts } : {}),
 	} as unknown as Action;
@@ -180,6 +183,69 @@ function readRecordedTrajectories(agentId: string): unknown[] {
 }
 
 describe("v5 happy path — message handler → planner → executor → evaluator", () => {
+	it("does not expose hook actions as planner tools", async () => {
+		const plannerAction = makeMockAction({
+			name: "PLANNER_ACTION",
+			handler: async () => ({
+				success: true,
+				text: "planner action complete",
+				data: { actionName: "PLANNER_ACTION" },
+			}),
+		});
+		const hookAction = makeMockAction({
+			name: "ALWAYS_AFTER_HOOK",
+			mode: ActionMode.ALWAYS_AFTER,
+			handler: async () => ({
+				success: true,
+				text: "hook complete",
+				data: { actionName: "ALWAYS_AFTER_HOOK" },
+			}),
+		});
+		const runtime = makeRuntime({
+			actions: [plannerAction, hookAction],
+			responses: [
+				{
+					expectModelType: ModelType.RESPONSE_HANDLER,
+					body: JSON.stringify({
+						processMessage: "RESPOND",
+						thought: "A planner action is needed.",
+						plan: { contexts: ["general"], requiresTool: true },
+					}),
+				},
+				{
+					expectModelType: ModelType.ACTION_PLANNER,
+					body: {
+						text: "Using the planner action.",
+						toolCalls: [{ name: "PLANNER_ACTION", args: {} }],
+					},
+				},
+				{
+					expectModelType: ModelType.RESPONSE_HANDLER,
+					body: JSON.stringify({
+						success: true,
+						decision: "FINISH",
+						thought: "The planner action completed.",
+						messageToUser: "Done.",
+					}),
+				},
+			],
+		});
+
+		await runV5MessageRuntimeStage1({
+			runtime,
+			message: makeMessage("run the planner action"),
+			state: makeState(),
+			responseId: RESPONSE_ID,
+		});
+
+		const plannerParams = getCalls(runtime)[1]?.params as
+			| { tools?: Array<{ name: string }> }
+			| undefined;
+		expect(plannerParams?.tools?.map((tool) => tool.name)).toEqual([
+			"PLANNER_ACTION",
+		]);
+	});
+
 	it("runs the full pipeline and records every stage to disk", async () => {
 		let webSearchCalls = 0;
 		const webSearch = makeMockAction({
@@ -538,6 +604,100 @@ describe("v5 happy path — message handler → planner → executor → evaluat
 		const toolNames = plannerParams?.tools?.map((tool) => tool.name) ?? [];
 		expect(toolNames).toContain("SPAWN_AGENT");
 		expect(toolNames).not.toContain("SEARCH");
+	});
+
+	it("keeps task-agent fallback available for media tasks when native media tools are unavailable", async () => {
+		let spawnCalls = 0;
+		const unavailableImage = makeMockAction({
+			name: "GENERATE_MEDIA_IMAGE",
+			contexts: ["general", "media", "files"],
+			validate: async () => false,
+			handler: async () => {
+				throw new Error("GENERATE_MEDIA_IMAGE should not execute");
+			},
+		});
+		const spawnAgent = makeMockAction({
+			name: "SPAWN_AGENT",
+			contexts: ["general", "code", "automation", "media", "files"],
+			contextGate: {
+				anyOf: ["general", "code", "automation", "media", "files"],
+			},
+			parameters: [
+				{
+					name: "task",
+					description: "Task to delegate",
+					required: true,
+					schema: { type: "string" },
+				},
+			],
+			validate: async () => true,
+			handler: async (_runtime, _message, _state, options) => {
+				spawnCalls++;
+				expect(options.parameters).toMatchObject({
+					task: "Generate a small image asset for the current request.",
+				});
+				return {
+					success: true,
+					text: "",
+					data: { actionName: "SPAWN_AGENT", sessionId: "codex-1" },
+				};
+			},
+		});
+
+		const runtime = makeRuntime({
+			actions: [unavailableImage, spawnAgent],
+			responses: [
+				{
+					expectModelType: ModelType.RESPONSE_HANDLER,
+					body: JSON.stringify({
+						action: "RESPOND",
+						simple: false,
+						contexts: ["media"],
+						thought: "Image creation needs tool work.",
+					}),
+				},
+				{
+					expectModelType: ModelType.ACTION_PLANNER,
+					body: {
+						text: "Delegating image asset work.",
+						toolCalls: [
+							{
+								id: "call-1",
+								name: "SPAWN_AGENT",
+								args: {
+									task: "Generate a small image asset for the current request.",
+								},
+							},
+						],
+					},
+				},
+				{
+					expectModelType: ModelType.RESPONSE_HANDLER,
+					body: JSON.stringify({
+						success: true,
+						decision: "FINISH",
+						thought: "Delegation started.",
+						messageToUser: "I started a task agent for the image work.",
+					}),
+				},
+			],
+		});
+
+		await runV5MessageRuntimeStage1({
+			runtime,
+			message: makeMessage("generate an image of a cozy neon office"),
+			state: makeState(),
+			responseId: RESPONSE_ID,
+		});
+
+		expect(spawnCalls).toBe(1);
+		const calls = getCalls(runtime);
+		const plannerParams = calls[1]?.params as
+			| { tools?: Array<{ name: string }> }
+			| undefined;
+		const toolNames = plannerParams?.tools?.map((tool) => tool.name) ?? [];
+		expect(toolNames).toContain("SPAWN_AGENT");
+		expect(toolNames).not.toContain("GENERATE_MEDIA_IMAGE");
 	});
 
 	it("chains a second tool when evaluator returns CONTINUE", async () => {

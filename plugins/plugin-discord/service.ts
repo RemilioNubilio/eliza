@@ -118,6 +118,65 @@ import { VoiceManager } from "./voice";
 
 const DISCORD_SNOWFLAKE_PATTERN = /^\d{15,20}$/;
 const DISCORD_CONNECTOR_CONTEXTS = ["social", "connectors"];
+const DEFAULT_DISCORD_LOGIN_MAX_ATTEMPTS = 30;
+const DEFAULT_DISCORD_LOGIN_RETRY_DELAY_MS = 5_000;
+const DEFAULT_DISCORD_LOGIN_ATTEMPT_TIMEOUT_MS = 60_000;
+const MAX_DISCORD_LOGIN_RETRY_DELAY_MS = 60_000;
+
+function getPositiveIntegerSetting(
+	runtime: IAgentRuntime,
+	key: string,
+	fallback: number,
+): number {
+	const raw = runtime.getSetting?.(key) ?? process.env[key];
+	const parsed =
+		typeof raw === "number"
+			? raw
+			: typeof raw === "string"
+				? Number.parseInt(raw, 10)
+				: Number.NaN;
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isDiscordLoginAuthError(error: unknown): boolean {
+	const code =
+		error && typeof error === "object" && "code" in error
+			? String((error as { code?: unknown }).code)
+			: "";
+	const message = error instanceof Error ? error.message : String(error);
+	return (
+		code === "TokenInvalid" ||
+		code === "50014" ||
+		/\b(?:invalid token|unauthorized|401)\b/iu.test(message)
+	);
+}
+
+function createDiscordClient(): DiscordJsClient {
+	return new DiscordJsClient({
+		intents: [
+			GatewayIntentBits.Guilds,
+			GatewayIntentBits.GuildMembers,
+			GatewayIntentBits.GuildPresences,
+			GatewayIntentBits.DirectMessages,
+			GatewayIntentBits.GuildVoiceStates,
+			GatewayIntentBits.MessageContent,
+			GatewayIntentBits.GuildMessages,
+			GatewayIntentBits.DirectMessageTyping,
+			GatewayIntentBits.GuildMessageTyping,
+			GatewayIntentBits.GuildMessageReactions,
+		],
+		partials: [
+			Partials.Channel,
+			Partials.Message,
+			Partials.User,
+			Partials.Reaction,
+		],
+	});
+}
 const DISCORD_CONNECTOR_CAPABILITIES = [
 	"send_message",
 	"resolve_targets",
@@ -389,7 +448,7 @@ export class DiscordService extends Service implements IDiscordService {
 				}
 
 				const generalCommands = this.slashCommands.filter(
-					(cmd) => cmd.guildIds.length === 0,
+					(cmd) => (cmd.guildIds?.length ?? 0) === 0,
 				);
 				const globalCommands = generalCommands.filter(
 					(cmd) => !isGuildOnlyCommand(cmd),
@@ -646,63 +705,132 @@ export class DiscordService extends Service implements IDiscordService {
 		}
 
 		try {
-			const client = new DiscordJsClient({
-				intents: [
-					GatewayIntentBits.Guilds,
-					GatewayIntentBits.GuildMembers,
-					GatewayIntentBits.GuildPresences,
-					GatewayIntentBits.DirectMessages,
-					GatewayIntentBits.GuildVoiceStates,
-					GatewayIntentBits.MessageContent,
-					GatewayIntentBits.GuildMessages,
-					GatewayIntentBits.DirectMessageTyping,
-					GatewayIntentBits.GuildMessageTyping,
-					GatewayIntentBits.GuildMessageReactions,
-				],
-				partials: [
-					Partials.Channel,
-					Partials.Message,
-					Partials.User,
-					Partials.Reaction,
-				],
-			});
-			this.client = client;
-
 			this.runtime = createCompatRuntime(runtime);
-			this.voiceManager = new VoiceManager(this, this.runtime);
-			this.messageManager = new MessageManager(this, this.runtime);
 
 			this.clientReadyPromise = new Promise((resolve, reject) => {
-				// once logged in
-				client.once(Events.ClientReady, async (readyClient) => {
-					try {
-						await this.onReady(readyClient);
-						resolve();
-					} catch (error) {
-						this.runtime.logger.error(
-							`Error in onReady: ${error instanceof Error ? error.message : String(error)}`,
-						);
-						reject(error);
+				let completed = false;
+				const maxLoginAttempts = getPositiveIntegerSetting(
+					this.runtime,
+					"DISCORD_LOGIN_MAX_ATTEMPTS",
+					DEFAULT_DISCORD_LOGIN_MAX_ATTEMPTS,
+				);
+				const retryDelayMs = getPositiveIntegerSetting(
+					this.runtime,
+					"DISCORD_LOGIN_RETRY_DELAY_MS",
+					DEFAULT_DISCORD_LOGIN_RETRY_DELAY_MS,
+				);
+				const attemptTimeoutMs = getPositiveIntegerSetting(
+					this.runtime,
+					"DISCORD_LOGIN_ATTEMPT_TIMEOUT_MS",
+					DEFAULT_DISCORD_LOGIN_ATTEMPT_TIMEOUT_MS,
+				);
+
+				const loginWithRetry = async () => {
+					for (let attempt = 1; attempt <= maxLoginAttempts; attempt++) {
+						const client = createDiscordClient();
+						let attemptDone = false;
+						this.installClientForLogin(client);
+
+						const readyPromise = new Promise<void>((attemptResolve) => {
+							client.once(Events.ClientReady, (readyClient) => {
+								if (attemptDone) return;
+								this._loginFailed = false;
+								attemptDone = true;
+								attemptResolve();
+								void this.onReady(readyClient).catch((error) => {
+									this.runtime.logger.error(
+										`Error in onReady: ${error instanceof Error ? error.message : String(error)}`,
+									);
+								});
+							});
+							client.on(Events.Error, (error) => {
+								this.runtime.logger.error(
+									`Discord client error: ${error instanceof Error ? error.message : String(error)}`,
+								);
+							});
+						});
+
+						let timeout: ReturnType<typeof setTimeout> | undefined;
+						const attemptTimeout = new Promise<never>((_, attemptReject) => {
+							timeout = setTimeout(() => {
+								attemptReject(
+									new Error(
+										`Discord login attempt timed out after ${attemptTimeoutMs}ms`,
+									),
+								);
+							}, attemptTimeoutMs);
+						});
+
+						try {
+							const loginFailurePromise = client.login(token).then(
+								() => new Promise<never>(() => {}),
+								(error) => {
+									if (attemptDone) {
+										return new Promise<never>(() => {});
+									}
+									throw error;
+								},
+							);
+							await Promise.race([
+								readyPromise,
+								loginFailurePromise,
+								attemptTimeout,
+							]);
+							if (timeout) clearTimeout(timeout);
+							completed = true;
+							resolve();
+							return;
+						} catch (error) {
+							if (timeout) clearTimeout(timeout);
+							attemptDone = true;
+							client.removeAllListeners();
+							client.destroy();
+							if (this.client === client) {
+								this.client = null;
+								this.messageManager = undefined;
+								this.voiceManager = undefined;
+							}
+							if (completed) return;
+							const authRejected = isDiscordLoginAuthError(error);
+							if (!authRejected && attempt < maxLoginAttempts) {
+								const nextRetryMs = Math.min(
+									retryDelayMs * attempt,
+									MAX_DISCORD_LOGIN_RETRY_DELAY_MS,
+								);
+								this.runtime.logger.warn(
+									{
+										src: "plugin:discord",
+										agentId: this.runtime.agentId,
+										attempt,
+										maxLoginAttempts,
+										nextRetryMs,
+										error:
+											error instanceof Error ? error.message : String(error),
+									},
+									"Discord login failed; retrying",
+								);
+								await sleep(nextRetryMs);
+								continue;
+							}
+							this.runtime.logger.warn(
+								{
+									src: "plugin:discord",
+									agentId: this.runtime.agentId,
+									attempt,
+									maxLoginAttempts,
+									authRejected,
+									error: error instanceof Error ? error.message : String(error),
+								},
+								authRejected
+									? "Failed to login to Discord: token was rejected"
+									: "Failed to login to Discord after all retry attempts",
+							);
+							reject(error);
+							return;
+						}
 					}
-				});
-				// Handle client errors that might prevent ready event
-				client.once(Events.Error, (error) => {
-					this.runtime.logger.error(
-						`Discord client error: ${error instanceof Error ? error.message : String(error)}`,
-					);
-					reject(error);
-				});
-				// now start login
-				client.login(token).catch((error) => {
-					this.runtime.logger.warn(
-						`Failed to login to Discord: ${error instanceof Error ? error.message : String(error)} — check your DISCORD_API_TOKEN`,
-					);
-					if (this.client) {
-						this.client.destroy().catch(() => {});
-					}
-					this.client = null;
-					reject(error);
-				});
+				};
+				void loginWithRetry();
 			});
 
 			// Attach error handler to prevent unhandled promise rejection
@@ -717,14 +845,19 @@ export class DiscordService extends Service implements IDiscordService {
 				);
 				this._loginFailed = true;
 			});
-
-			this.setupEventListeners();
 		} catch (error) {
 			runtime.logger.error(
 				`Error initializing Discord client: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			this.client = null;
 		}
+	}
+
+	private installClientForLogin(client: DiscordJsClient): void {
+		this.client = client;
+		this.voiceManager = new VoiceManager(this, this.runtime);
+		this.messageManager = new MessageManager(this, this.runtime);
+		this.setupEventListeners();
 	}
 
 	public isHealthy(): boolean {

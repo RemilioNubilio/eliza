@@ -62,31 +62,6 @@ export async function executePlannedToolCall(
 		return emitToolResult(toolCall, failureResult(action.name, gateFailure));
 	}
 
-	if (action.validate) {
-		let available = false;
-		try {
-			available = await action.validate(runtime, ctx.message, ctx.state);
-		} catch (error) {
-			return emitToolResult(
-				toolCall,
-				failureResult(
-					action.name,
-					`Action ${action.name} validation failed: ${stringifyError(error)}`,
-					{ error },
-				),
-			);
-		}
-		if (!available) {
-			return emitToolResult(
-				toolCall,
-				failureResult(
-					action.name,
-					`Action ${action.name} is not available for this message`,
-				),
-			);
-		}
-	}
-
 	const validation = validateToolArgs(action, normalizeToolArgs(toolCall));
 	if (!validation.valid) {
 		return emitToolResult(
@@ -118,6 +93,35 @@ export async function executePlannedToolCall(
 				),
 		},
 	};
+
+	let available = false;
+	try {
+		available = await action.validate(
+			runtime,
+			ctx.message,
+			ctx.state,
+			handlerOptions,
+		);
+	} catch (error) {
+		return emitToolResult(toolCall, {
+			...failureResult(
+				action.name,
+				`Action ${action.name} validation failed: ${stringifyError(error)}`,
+				{ error },
+			),
+			continueChain: false,
+		});
+	}
+	if (!available) {
+		return emitToolResult(toolCall, {
+			...failureResult(
+				action.name,
+				`Action ${action.name} is not available for the current message or runtime state`,
+				{ error: "ACTION_UNAVAILABLE" },
+			),
+			continueChain: false,
+		});
+	}
 
 	const messageId = ctx.message.id as UUID | undefined;
 	const roomId = ctx.message.roomId as UUID;

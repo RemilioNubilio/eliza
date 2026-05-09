@@ -74,6 +74,7 @@ import {
   buildSpawnConfig,
   setupDeferredTaskDelivery,
   setupOutputBuffer,
+  shouldDeliverInitialTaskInteractively,
   shouldUseCodexExecMode,
 } from "./pty-spawn.js";
 import type {
@@ -1401,16 +1402,27 @@ export class PTYService {
       }
     }
 
-    // Defer initial task until session is ready.
-    // IMPORTANT: Set up the listener BEFORE pushDefaultRules (which has a 1500ms sleep),
-    // otherwise session_ready fires during pushDefaultRules and the listener misses it.
-    if (resolvedInitialTask) {
+    // Defer interactive initial tasks until the session is ready.
+    // IMPORTANT: Set up the listener BEFORE pushDefaultRules (which has a
+    // 1500ms sleep), otherwise session_ready fires during pushDefaultRules and
+    // the listener misses it. Non-interactive Codex exec receives the task as
+    // argv via adapterConfig.initialPrompt, so writing the same task to stdin
+    // would duplicate work and corrupt response capture.
+    if (
+      resolvedInitialTask &&
+      shouldDeliverInitialTaskInteractively({
+        agentType: resolvedAgentType,
+        initialTask: resolvedInitialTask,
+      })
+    ) {
       setupDeferredTaskDelivery(
         ctx,
         session,
         resolvedInitialTask,
         resolvedAgentType,
       );
+    } else if (codexExecMode && resolvedInitialTask) {
+      ctx.markTaskDelivered(session.id);
     }
 
     await this.pushDefaultRules(session.id, resolvedAgentType);

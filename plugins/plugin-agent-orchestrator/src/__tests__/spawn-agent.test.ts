@@ -22,6 +22,15 @@ describe("SPAWN_AGENT registration", () => {
     expect(keepAlive).toBeUndefined();
   });
 
+  it("is available in media and file contexts for task-agent fallback work", () => {
+    expect(spawnAgentAction.contexts).toEqual(
+      expect.arrayContaining(["media", "files", "research"]),
+    );
+    expect(spawnAgentAction.contextGate?.anyOf).toEqual(
+      expect.arrayContaining(["media", "files", "research"]),
+    );
+  });
+
   it("treats role aliases like worker as omitted and uses the configured default framework", async () => {
     const coordinator = {
       createTaskThread: vi.fn(async () => ({ id: "thread-1" })),
@@ -103,6 +112,86 @@ describe("SPAWN_AGENT registration", () => {
     expect(result?.data).toMatchObject({
       agentType: "codex",
       effectiveArgs: { agentType: "codex" },
+    });
+  });
+
+  it("does not report ignored planner approval hints as effective execution args", async () => {
+    const coordinator = {
+      createTaskThread: vi.fn(async () => ({ id: "thread-1" })),
+      registerTask: vi.fn(async () => undefined),
+    };
+    let spawnOptions: Record<string, unknown> | undefined;
+    const ptyService = {
+      coordinator,
+      defaultApprovalPreset: "autonomous",
+      resolveAgentType: vi.fn(async () => "codex"),
+      checkAvailableAgents: vi.fn(async () => [
+        { adapter: "codex", installed: true },
+      ]),
+      spawnSession: vi.fn(async (options: Record<string, unknown>) => {
+        spawnOptions = options;
+        const session = {
+          id: "pty-approval",
+          name: options.name as string,
+          agentType: options.agentType as string,
+          workdir: options.workdir as string,
+          status: "running",
+          createdAt: new Date(),
+          lastActivityAt: new Date(),
+          metadata: options.metadata as Record<string, unknown> | undefined,
+        };
+        const beforeInitialTask = options.beforeInitialTask as
+          | ((value: typeof session) => Promise<void> | void)
+          | undefined;
+        await beforeInitialTask?.(session);
+        return session;
+      }),
+      onSessionEvent: vi.fn(() => undefined),
+      subscribeToOutput: vi.fn(() => () => undefined),
+    };
+    const runtime = {
+      agentId: "agent-1",
+      getService: vi.fn((name: string) =>
+        name === "PTY_SERVICE" ? ptyService : undefined,
+      ),
+      getSetting: vi.fn((name: string) =>
+        name === "CODING_AGENT_SANDBOX" ? "off" : undefined,
+      ),
+      getRoom: vi.fn(async () => ({ source: "discord" })),
+    } as unknown as IAgentRuntime;
+
+    const result = await spawnAgentAction.handler?.(
+      runtime,
+      {
+        id: "message-approval",
+        entityId: "agent-1",
+        roomId: "room-1",
+        worldId: "world-1",
+        content: {
+          source: "discord",
+          text: "generate an image of a computer setup on fire",
+        },
+      } as unknown as Memory,
+      undefined,
+      {
+        parameters: {
+          agentType: "codex",
+          task: "generate an image of a computer setup on fire",
+          workdir: "/tmp",
+          approvalPreset: "readonly",
+        },
+      },
+      vi.fn(),
+    );
+
+    expect(result?.success).toBe(true);
+    expect(spawnOptions).toMatchObject({
+      approvalPreset: "autonomous",
+    });
+    expect(result?.data).toMatchObject({
+      effectiveArgs: expect.not.objectContaining({
+        approvalPreset: "readonly",
+      }),
     });
   });
 

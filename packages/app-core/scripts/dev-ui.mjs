@@ -155,6 +155,14 @@ const { CAPACITOR_PLUGIN_NAMES, NATIVE_PLUGINS_ROOT } = await import(
 syncElizaEnvAliases();
 
 const API_PORT = resolveDesktopApiPort(process.env);
+const API_PORT_WAIT_TIMEOUT_MS = readPositiveIntegerEnv(
+  ["ELIZA_DEV_API_PORT_WAIT_TIMEOUT_MS", "ELIZA_DEV_API_WAIT_TIMEOUT_MS"],
+  300_000,
+);
+const AGENT_READY_WAIT_TIMEOUT_MS = readPositiveIntegerEnv(
+  ["ELIZA_DEV_AGENT_READY_WAIT_TIMEOUT_MS", "ELIZA_DEV_API_WAIT_TIMEOUT_MS"],
+  300_000,
+);
 const JSON5 = JSON5Module.default ?? JSON5Module;
 const cwd = process.cwd();
 
@@ -198,6 +206,18 @@ function getCliName() {
   }
 
   return "eliza";
+}
+
+function readPositiveIntegerEnv(names, fallback) {
+  for (const name of names) {
+    const raw = process.env[name]?.trim();
+    if (!raw) continue;
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return fallback;
 }
 
 const cliName = getCliName();
@@ -961,13 +981,16 @@ if (uiOnly) {
   }
 
   const devServerEntry = resolveDevServerEntryRelativePath(cwd);
+  const apiWatchEnabled =
+    process.env.ELIZA_DEV_API_WATCH !== "0" &&
+    process.env.ELIZA_DEV_DISABLE_API_WATCH !== "1";
 
   const apiCmd = hasBun
     ? [
         "bun",
         "--no-install",
         ...nodeStealthImports.flatMap((filePath) => ["--preload", filePath]),
-        "--watch",
+        ...(apiWatchEnabled ? ["--watch"] : []),
         devServerEntry,
       ]
     : [
@@ -975,9 +998,14 @@ if (uiOnly) {
         "--import",
         "tsx",
         ...nodeStealthImports.flatMap((filePath) => ["--import", filePath]),
-        "--watch",
+        ...(apiWatchEnabled ? ["--watch"] : []),
         devServerEntry,
       ];
+  if (!apiWatchEnabled) {
+    console.log(
+      `  ${green(logPrefix)} ${dim("API watch mode disabled by ELIZA_DEV_API_WATCH=0")}`,
+    );
+  }
   const childEnv = createDevChildEnv(process.env);
   const apiSpawnEnv = extendNodePathEnv(
     {
@@ -1048,14 +1076,16 @@ if (uiOnly) {
     );
   }, 1000);
 
-  waitForPort(API_PORT)
+  waitForPort(API_PORT, { timeout: API_PORT_WAIT_TIMEOUT_MS })
     .then(() => {
       const portElapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       process.stdout.write(
         `\r  ${green(logPrefix)} ${green(`API port open`)} ${dim(`(${portElapsed}s)`)}          \n`,
       );
       phase = "agent";
-      return waitForAgentReady(API_PORT);
+      return waitForAgentReady(API_PORT, {
+        timeout: AGENT_READY_WAIT_TIMEOUT_MS,
+      });
     })
     .then(() => {
       clearInterval(dots);

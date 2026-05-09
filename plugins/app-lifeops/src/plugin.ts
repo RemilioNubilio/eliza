@@ -5,7 +5,7 @@ import {
   type Plugin,
   registerSendPolicy,
 } from "@elizaos/core";
-import { manageBrowserBridgeAction } from "./action.ts";
+import { manageBrowserBridgeAction } from "./action.js";
 import { appBlockAction } from "./actions/app-block.js";
 import { autofillAction } from "./actions/autofill.js";
 import { bookTravelAction } from "./actions/book-travel.js";
@@ -53,7 +53,7 @@ import {
   registerLifeOpsTaskWorker,
 } from "./lifeops/runtime.js";
 import { lifeOpsSchema } from "./lifeops/schema.js";
-import { browserBridgeProvider } from "./provider.ts";
+import { browserBridgeProvider } from "./provider.js";
 // Activity-profile (proactive agent: GM/GN/nudges)
 import { activityProfileProvider } from "./providers/activity-profile.js";
 import { appBlockerProvider } from "./providers/app-blocker.js";
@@ -64,7 +64,7 @@ import { healthProvider } from "./providers/health.js";
 import { inboxTriageProvider } from "./providers/inbox-triage.js";
 import { lifeOpsProvider } from "./providers/lifeops.js";
 import { websiteBlockerProvider } from "./providers/website-blocker.js";
-import { BrowserBridgePluginService } from "./service.ts";
+import { BrowserBridgePluginService } from "./service.js";
 import {
   blockUntilTaskCompleteAction,
   listActiveBlocksAction,

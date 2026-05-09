@@ -14,13 +14,13 @@ import { parseJsonModelRecord } from "../utils/json-model-output.js";
 import {
   APP_BLOCKER_ACCESS_ERROR,
   getAppBlockerAccess,
-} from "../app-blocker/access.ts";
+} from "../app-blocker/access.js";
 import {
   getAppBlockerStatus,
   getInstalledApps,
   startAppBlock,
   stopAppBlock,
-} from "../app-blocker/engine.ts";
+} from "../app-blocker/engine.js";
 import { formatPromptSection } from "./lib/prompt-format.js";
 import { recentConversationTexts as collectRecentConversationTexts } from "./lib/recent-context.js";
 import {

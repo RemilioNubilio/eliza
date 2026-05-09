@@ -15,8 +15,8 @@ import { parseJsonModelRecord } from "../utils/json-model-output.js";
 import {
   getSelfControlAccess,
   SELFCONTROL_ACCESS_ERROR,
-} from "../website-blocker/access.ts";
-import { hasActiveHarshNoBypassRule } from "../website-blocker/chat-integration/harsh-mode-check.ts";
+} from "../website-blocker/access.js";
+import { hasActiveHarshNoBypassRule } from "../website-blocker/chat-integration/harsh-mode-check.js";
 import {
   formatWebsiteList,
   type getSelfControlPermissionState,
@@ -26,8 +26,8 @@ import {
   requestSelfControlPermission,
   startSelfControlBlock,
   stopSelfControlBlock,
-} from "../website-blocker/engine.ts";
-import { syncWebsiteBlockerExpiryTask } from "../website-blocker/service.ts";
+} from "../website-blocker/engine.js";
+import { syncWebsiteBlockerExpiryTask } from "../website-blocker/service.js";
 import {
   resolveActionArgs,
   type SubactionsMap,

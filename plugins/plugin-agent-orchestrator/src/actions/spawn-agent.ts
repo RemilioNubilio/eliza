@@ -167,8 +167,10 @@ function resolveKeepAliveAfterComplete(options: {
 
 export const spawnAgentAction: Action = {
   name: "SPAWN_AGENT",
-  contexts: ["general", "code", "automation"],
-  contextGate: { anyOf: ["general", "code", "automation"] },
+  contexts: ["general", "code", "automation", "media", "files", "research"],
+  contextGate: {
+    anyOf: ["general", "code", "automation", "media", "files", "research"],
+  },
   roleGate: { minRole: "USER" },
 
   similes: [
@@ -185,7 +187,7 @@ export const spawnAgentAction: Action = {
 
   description:
     "Spawn a specific task agent inside an existing workspace when you need direct control. " +
-    "These agents are intentionally open-ended and can handle investigation, current-information lookups, writing, planning, testing, synthesis, repo work, and general async task execution. " +
+    "These agents are intentionally open-ended and can handle investigation, current-information lookups, writing, planning, testing, synthesis, repo work, media asset work, document/file work, and general async task execution. " +
     "Use this for live/current/external information when no direct SEARCH tool is exposed, because the configured task-agent provider may have its own web and terminal tools. " +
     "Returns a session ID that can be used to interact with the agent.",
   descriptionCompressed:
@@ -643,6 +645,8 @@ export const spawnAgentAction: Action = {
         userId: (message as unknown as Record<string, unknown>).userId,
         ...(keepAliveAfterComplete ? { keepAliveAfterComplete: true } : {}),
       };
+      const effectiveParams = { ...(params ?? {}) };
+      delete effectiveParams.approvalPreset;
 
       let coordinatorTaskRegistered = false;
       const registerCoordinatorTask = async (session: {
@@ -783,7 +787,7 @@ export const spawnAgentAction: Action = {
               : session.agentType,
           workdir: session.workdir,
           effectiveArgs: {
-            ...(params ?? {}),
+            ...effectiveParams,
             task,
             workdir: session.workdir,
             agentType: piRequested
@@ -791,6 +795,7 @@ export const spawnAgentAction: Action = {
               : opencodeRequested
                 ? "opencode"
                 : session.agentType,
+            ...(approvalPreset ? { approvalPreset } : {}),
             keepAliveAfterComplete,
           },
           status: session.status,

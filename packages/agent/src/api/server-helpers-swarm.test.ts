@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   handleSwarmSynthesis,
@@ -164,6 +167,61 @@ describe("handleSwarmSynthesis", () => {
       text: "done",
       source: "swarm_synthesis",
       inReplyTo: "1501955635959435505",
+    });
+  });
+
+  it("attaches referenced task-workdir artifacts to connector synthesis", async () => {
+    const workdir = await mkdtemp(path.join(tmpdir(), "swarm-artifact-"));
+    const imagePath = path.join(workdir, "result.png");
+    await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const sent: Array<{ target: unknown; content: Record<string, unknown> }> =
+      [];
+    const runtimeWithConnector = {
+      getService() {
+        return null;
+      },
+      getRoom: async () => ({
+        id: "room-1",
+        source: "discord",
+        channelId: "channel-1",
+        serverId: "guild-1",
+      }),
+      sendMessageToTarget: async (target: unknown, content: unknown) => {
+        sent.push({ target, content: content as Record<string, unknown> });
+      },
+    } as never;
+
+    await handleSwarmSynthesis(
+      { runtime: runtimeWithConnector },
+      {
+        tasks: [
+          {
+            sessionId: "pty-1",
+            label: "image",
+            agentType: "codex",
+            originalTask: "generate an image",
+            status: "completed",
+            completionSummary: `Created image at \`${imagePath}\`.`,
+            workdir,
+            roomId: "room-1",
+          },
+        ],
+        total: 1,
+        completed: 1,
+        stopped: 0,
+        errored: 0,
+      },
+      async () => undefined,
+    );
+
+    expect(sent[0].content).toMatchObject({
+      attachments: [
+        expect.objectContaining({
+          url: imagePath,
+          title: "result.png",
+          contentType: "image",
+        }),
+      ],
     });
   });
 });

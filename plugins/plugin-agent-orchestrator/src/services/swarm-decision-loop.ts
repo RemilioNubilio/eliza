@@ -1555,7 +1555,37 @@ export async function executeDecision(
         ]);
 
         if (validation.verdict === "revise") {
-          await ctx.ptyService.sendToSession(sessionId, followUpPrompt);
+          try {
+            await ctx.ptyService.sendToSession(sessionId, followUpPrompt);
+          } catch (error) {
+            if (!isMissingPtySessionError(error)) throw error;
+
+            const summary = `Validation requested another turn, but the task-agent session had already exited. ${validation.summary}`;
+            ctx.log(
+              `Validation revise for "${taskCtx.label}" could not continue because the PTY session is gone`,
+            );
+            taskCtx.status = "error";
+            taskCtx.completionSummary = summary;
+            taskCtx.validationSummary = validation.summary;
+            await Promise.all([
+              ctx.syncTaskContext(taskCtx),
+              ctx.taskRegistry.appendEvent({
+                threadId: taskCtx.threadId,
+                sessionId,
+                eventType: "task_status_changed",
+                summary: `Task "${taskCtx.label}" could not continue after validation revise`,
+                data: {
+                  status: "error",
+                  verdict: validation.verdict,
+                  summary: validation.summary,
+                  reportPath: validation.reportPath || null,
+                  reason: "session_missing_after_validation_revision",
+                },
+              }),
+            ]);
+            checkAllTasksComplete(ctx);
+            return;
+          }
           taskCtx.lastInputSentAt = Date.now();
           await ctx.syncTaskContext(taskCtx);
           // Validator-driven continuation is coordinator-internal;
@@ -2388,6 +2418,7 @@ export async function handleTurnComplete(
       if (
         decision.action === "complete" &&
         isMissingPtySessionError(err) &&
+        taskCtx.status === "tool_running" &&
         taskCtx.completionSummary?.trim()
       ) {
         ctx.log(

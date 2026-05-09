@@ -299,6 +299,14 @@ export function shouldUseCodexExecMode(options: {
   return options.agentType === "codex" && Boolean(options.initialTask?.trim());
 }
 
+export function shouldDeliverInitialTaskInteractively(options: {
+  agentType: string;
+  initialTask?: string;
+}): boolean {
+  if (!options.initialTask?.trim()) return false;
+  return !shouldUseCodexExecMode(options);
+}
+
 const CURSOR_POSITION_QUERY = "\x1b[6n";
 const CURSOR_POSITION_RESPONSE = "\x1b[1;1R";
 

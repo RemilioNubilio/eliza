@@ -15,6 +15,7 @@ rules:
 - when a relevant exposed tool can attempt the needed work, call that tool instead of replying that the current context cannot browse, search, run commands, inspect, build, deploy, or verify
 - prior attachments, memory, or conversation snippets are not a substitute for an explicit current request to run, check, fetch, inspect, build, deploy, verify, or look something up now; use a relevant exposed tool for the current turn
 - for live/current/external-data requests, prefer SEARCH when it is exposed; otherwise use an exposed task-agent tool such as SPAWN_AGENT or START_CODING_TASK when one is available
+- for creation, analysis, or file/media tasks, use the specialized exposed tool when it can do the work; if no specialized tool is exposed and a task-agent tool is exposed, delegate to the task agent rather than claiming the capability is unavailable
 - if the task is complete or the only next step is speaking to the user, return no toolCalls and set messageToUser
 - do not invent tool names, connector names, providers, ids, or benchmark ids
 

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { v5PlannerTemplate } from "../../prompts/planner";
 import { type ChatMessage, ModelType } from "../../types/model";
-import { TrajectoryLimitExceeded } from "../limits";
 import { parsePlannerOutput, runPlannerLoop } from "../planner-loop";
 import type { TrajectoryRecorder } from "../trajectory-recorder";
 
@@ -213,6 +212,74 @@ describe("v5 planner loop skeleton", () => {
 		expect(result.finalMessage).toBe("Done.");
 	});
 
+	it("repairs a FINISH evaluation that omits the user-facing message after tool use", async () => {
+		const runtime = {
+			useModel: vi.fn(async () => ({
+				text: "",
+				toolCalls: [
+					{
+						id: "call-1",
+						name: "SHELL_COMMAND",
+						arguments: { command: "status check" },
+					},
+				],
+			})),
+			logger: { warn: vi.fn() },
+		};
+		const executeToolCall = vi.fn(async () => ({
+			success: true,
+			text: [
+				"$ status check",
+				"[exit 0]",
+				"--- stdout ---",
+				"service ready with 37G available",
+			].join("\n"),
+		}));
+		const evaluate = vi
+			.fn()
+			.mockResolvedValueOnce({
+				success: true,
+				decision: "FINISH" as const,
+				thought: "The tool result satisfies the request.",
+			})
+			.mockImplementationOnce(
+				async ({
+					context,
+				}: {
+					context: { events?: Array<{ content?: string }> };
+				}) => {
+					expect(JSON.stringify(context.events ?? [])).toContain(
+						"did not include messageToUser",
+					);
+					return {
+						success: true,
+						decision: "FINISH" as const,
+						thought: "The tool result satisfies the request.",
+						messageToUser: "The service is ready with 37G available.",
+					};
+				},
+			);
+
+		const result = await runPlannerLoop({
+			runtime,
+			context: { id: "ctx" },
+			executeToolCall,
+			evaluate,
+		});
+
+		expect(evaluate).toHaveBeenCalledTimes(2);
+		expect(result.status).toBe("finished");
+		expect(result.finalMessage).toBe(
+			"The service is ready with 37G available.",
+		);
+		expect(result.finalMessage).not.toContain("$ status check");
+		expect(result.trajectory.evaluatorOutputs).toHaveLength(2);
+		expect(runtime.logger.warn).toHaveBeenCalledWith(
+			expect.objectContaining({ iteration: 1 }),
+			"Evaluator selected FINISH without a user-facing message; retrying evaluation",
+		);
+	});
+
 	it("evaluates terminal-only planner output without executing tools", async () => {
 		const runtime = {
 			useModel: vi.fn(
@@ -394,7 +461,7 @@ describe("v5 planner loop skeleton", () => {
 		});
 	});
 
-	it("throws when the same tool failure repeats beyond the configured limit", async () => {
+	it("stops with the latest tool error when the same failure repeats beyond the configured limit", async () => {
 		const runtime = {
 			useModel: vi.fn(async () => ({
 				text: "",
@@ -404,6 +471,7 @@ describe("v5 planner loop skeleton", () => {
 		const executeToolCall = vi.fn(async () => ({
 			success: false,
 			error: "boom",
+			text: "Lookup is unavailable.",
 		}));
 		const evaluate = vi.fn(async () => ({
 			success: false,
@@ -411,15 +479,18 @@ describe("v5 planner loop skeleton", () => {
 			thought: "Retry.",
 		}));
 
-		await expect(
-			runPlannerLoop({
-				runtime,
-				context: { id: "ctx" },
-				config: { maxRepeatedFailures: 1 },
-				executeToolCall,
-				evaluate,
-			}),
-		).rejects.toBeInstanceOf(TrajectoryLimitExceeded);
+		const result = await runPlannerLoop({
+			runtime,
+			context: { id: "ctx" },
+			config: { maxRepeatedFailures: 1 },
+			executeToolCall,
+			evaluate,
+		});
+
+		expect(result.status).toBe("finished");
+		expect(result.finalMessage).toBe("Lookup is unavailable.");
+		expect(result.trajectory.steps).toHaveLength(2);
+		expect(result.trajectory.steps.at(-1)?.result?.continueChain).toBe(false);
 	});
 
 	it("compacts old assistant/tool suffixes when the planner input crosses the budget threshold", async () => {

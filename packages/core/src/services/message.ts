@@ -81,6 +81,7 @@ import type {
 	Provider,
 	StreamChunkCallback,
 } from "../types/components";
+import { ActionMode } from "../types/components";
 import type { ContextEvent, ContextObject } from "../types/context-object";
 import type { ContextDefinition, RoleGateRole } from "../types/contexts";
 import type { Room } from "../types/environment";
@@ -1327,8 +1328,11 @@ async function collectValidatedPlannerActions(args: {
 	selectedContexts: readonly AgentContext[];
 	userRoles?: readonly RoleGateRole[];
 }): Promise<Action[]> {
+	const plannerActions = args.runtime.actions.filter(
+		(action) => (action.mode ?? ActionMode.PLANNER) === ActionMode.PLANNER,
+	);
 	const contextAllowed = filterByContextGate(
-		args.runtime.actions,
+		plannerActions,
 		args.selectedContexts,
 		args.userRoles,
 	);

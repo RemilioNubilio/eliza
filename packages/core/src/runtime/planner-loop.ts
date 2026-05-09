@@ -26,9 +26,9 @@ import type { EvaluatorEffects, EvaluatorOutput } from "./evaluator";
 import { runEvaluator } from "./evaluator";
 import { parseJsonObject, stringifyForModel } from "./json-output";
 import {
-	assertRepeatedFailureLimit,
 	assertTrajectoryLimit,
 	type ChainingLoopConfig,
+	countRepeatedFailures,
 	type FailureLike,
 	mergeChainingLoopConfig,
 } from "./limits";
@@ -315,7 +315,7 @@ export async function runPlannerLoop(
 			return {
 				status: "finished",
 				trajectory,
-				finalMessage: latestStep.result.text,
+				finalMessage: latestToolResultText(trajectory),
 			};
 		}
 
@@ -330,22 +330,22 @@ export async function runPlannerLoop(
 			logger: params.runtime.logger,
 		});
 
-		const evaluator = await evaluateTrajectory(params, trajectory, iteration);
+		let evaluator = await evaluateTrajectory(params, trajectory, iteration);
 		trajectory.evaluatorOutputs.push(evaluator);
-		trajectory.context = appendContextEvent(trajectory.context, {
-			id: `evaluation:${iteration}:${Date.now()}`,
-			type: "evaluation",
-			source: "planner-loop",
-			createdAt: Date.now(),
-			metadata: {
+		appendEvaluatorContextEvent(trajectory, evaluator, iteration);
+
+		if (
+			evaluator.decision === "FINISH" &&
+			!getNonEmptyString(evaluator.messageToUser) &&
+			hasExecutedNonTerminalTool(trajectory)
+		) {
+			evaluator = await repairFinishWithoutUserMessage({
+				params,
+				trajectory,
 				iteration,
-				success: evaluator.success,
-				decision: evaluator.decision,
-				thought: evaluator.thought,
-				messageToUser: evaluator.messageToUser,
-				recommendedToolCallId: evaluator.recommendedToolCallId,
-			},
-		});
+				evaluator,
+			});
+		}
 
 		if (evaluator.decision === "FINISH") {
 			return {
@@ -1106,6 +1106,65 @@ async function evaluateTrajectory(
 	});
 }
 
+function appendEvaluatorContextEvent(
+	trajectory: PlannerTrajectory,
+	evaluator: EvaluatorOutput,
+	iteration: number,
+): void {
+	trajectory.context = appendContextEvent(trajectory.context, {
+		id: `evaluation:${iteration}:${Date.now()}`,
+		type: "evaluation",
+		source: "planner-loop",
+		createdAt: Date.now(),
+		metadata: {
+			iteration,
+			success: evaluator.success,
+			decision: evaluator.decision,
+			thought: evaluator.thought,
+			messageToUser: evaluator.messageToUser,
+			recommendedToolCallId: evaluator.recommendedToolCallId,
+		},
+	});
+}
+
+async function repairFinishWithoutUserMessage(args: {
+	params: PlannerLoopParams;
+	trajectory: PlannerTrajectory;
+	iteration: number;
+	evaluator: EvaluatorOutput;
+}): Promise<EvaluatorOutput> {
+	const createdAt = Date.now();
+	args.params.runtime.logger?.warn?.(
+		{
+			iteration: args.iteration,
+			decision: args.evaluator.decision,
+			success: args.evaluator.success,
+		},
+		"Evaluator selected FINISH without a user-facing message; retrying evaluation",
+	);
+	args.trajectory.context = appendContextEvent(args.trajectory.context, {
+		id: `evaluation-missing-message:${args.iteration}:${createdAt}`,
+		type: "instruction",
+		source: "planner-loop",
+		createdAt,
+		content:
+			"The previous evaluator selected FINISH after tool use but did not include messageToUser. Re-evaluate and, if the task is complete, include a concise user-facing message grounded in the completed tool results. Do not paste raw tool transcripts, command banners, or internal logs unless the user explicitly asked for raw output.",
+		metadata: {
+			iteration: args.iteration,
+			decision: args.evaluator.decision,
+			success: args.evaluator.success,
+		},
+	});
+	const repaired = await evaluateTrajectory(
+		args.params,
+		args.trajectory,
+		args.iteration,
+	);
+	args.trajectory.evaluatorOutputs.push(repaired);
+	appendEvaluatorContextEvent(args.trajectory, repaired, args.iteration);
+	return repaired;
+}
+
 async function executeQueuedToolCall(params: {
 	params: PlannerLoopParams;
 	trajectory: PlannerTrajectory;
@@ -1159,11 +1218,25 @@ async function executeQueuedToolCall(params: {
 	};
 	if (!result.success || result.error != null) {
 		params.failures.push(failure);
-		assertRepeatedFailureLimit({
-			failures: params.failures,
-			latestFailure: failure,
-			maxRepeatedFailures: params.config.maxRepeatedFailures,
-		});
+		const repeatedFailures = countRepeatedFailures(params.failures, failure);
+		if (repeatedFailures > params.config.maxRepeatedFailures) {
+			result = {
+				...result,
+				text:
+					result.text?.trim() ||
+					`Tool ${params.toolCall.name} failed repeatedly: ${stringifyForModel(
+						result.error ?? "failed",
+					)}`,
+				data: {
+					...(result.data ?? {}),
+					repeatedFailureLimit: {
+						max: params.config.maxRepeatedFailures,
+						observed: repeatedFailures,
+					},
+				},
+				continueChain: false,
+			};
+		}
 	}
 
 	params.trajectory.steps.push({

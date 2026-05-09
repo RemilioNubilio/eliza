@@ -16,7 +16,10 @@ import {
   type SessionIOContext,
   stopSession as stopSessionIO,
 } from "../services/pty-session-io.js";
-import { buildSpawnConfig } from "../services/pty-spawn.js";
+import {
+  buildSpawnConfig,
+  shouldDeliverInitialTaskInteractively,
+} from "../services/pty-spawn.js";
 
 const require = createRequire(import.meta.url);
 
@@ -61,6 +64,29 @@ describe("buildSpawnConfig", () => {
       initialPrompt: "check a domain",
       outputLastMessage: "/tmp/codex-last-message.txt",
     });
+  });
+});
+
+describe("initial task delivery mode", () => {
+  it("does not send Codex exec prompts a second time through the interactive PTY path", () => {
+    expect(
+      shouldDeliverInitialTaskInteractively({
+        agentType: "codex",
+        initialTask: "generate an image",
+      }),
+    ).toBe(false);
+    expect(
+      shouldDeliverInitialTaskInteractively({
+        agentType: "claude",
+        initialTask: "generate an image",
+      }),
+    ).toBe(true);
+    expect(
+      shouldDeliverInitialTaskInteractively({
+        agentType: "codex",
+        initialTask: "   ",
+      }),
+    ).toBe(false);
   });
 });
 

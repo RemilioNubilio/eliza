@@ -14,8 +14,10 @@ import type {
 import {
   type AgentRuntime,
   ChannelType,
+  ContentType,
   createMessageMemory,
   logger,
+  type Media,
   stringToUuid,
   type UUID,
 } from "@elizaos/core";
@@ -43,6 +45,31 @@ const CHAT_SUPPRESSED_AUTONOMY_SOURCES = new Set([
   "proactive-gm",
   "proactive-gn",
   "proactive-nudge",
+]);
+
+const MAX_SYNTHESIS_ATTACHMENTS = 4;
+const MAX_SYNTHESIS_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const SYNTHESIS_ATTACHMENT_CONTENT_TYPES = new Map<
+  string,
+  Media["contentType"]
+>([
+  [".png", ContentType.IMAGE],
+  [".jpg", ContentType.IMAGE],
+  [".jpeg", ContentType.IMAGE],
+  [".gif", ContentType.IMAGE],
+  [".webp", ContentType.IMAGE],
+  [".svg", ContentType.IMAGE],
+  [".mp4", ContentType.VIDEO],
+  [".webm", ContentType.VIDEO],
+  [".mov", ContentType.VIDEO],
+  [".mp3", ContentType.AUDIO],
+  [".wav", ContentType.AUDIO],
+  [".m4a", ContentType.AUDIO],
+  [".pdf", ContentType.DOCUMENT],
+  [".txt", ContentType.DOCUMENT],
+  [".md", ContentType.DOCUMENT],
+  [".json", ContentType.DOCUMENT],
+  [".csv", ContentType.DOCUMENT],
 ]);
 
 export async function routeAutonomyTextToUser(
@@ -264,6 +291,7 @@ export async function handleSwarmSynthesis(
   );
 
   const resultText = await buildSynthesisResultText(payload);
+  const attachments = await collectSynthesisAttachments(payload, resultText);
   logger.info("[swarm-synthesis] Synthesis generated, routing to user");
   await routeMessage(resultText, "swarm_synthesis");
   // coordinator.sourceRoomId is declared on the interface but never assigned
@@ -297,6 +325,7 @@ export async function handleSwarmSynthesis(
   await routeSynthesisToConnector(
     runtime,
     resultText,
+    attachments,
     fallbackRoomId,
     fallbackReplyToExternalMessageId,
   );
@@ -381,6 +410,71 @@ function preserveEvidenceUrls(summary: string, evidence: string): string {
   return [summary, ...missingUrls].join("\n");
 }
 
+async function collectSynthesisAttachments(
+  payload: {
+    tasks: Array<{
+      workdir?: string;
+      completionSummary: string;
+      validationSummary?: string;
+    }>;
+  },
+  resultText: string,
+): Promise<Media[]> {
+  const seen = new Set<string>();
+  const attachments: Media[] = [];
+  for (const task of payload.tasks) {
+    if (!task.workdir) continue;
+    const workdir = path.resolve(task.workdir);
+    const referencedPaths = extractLocalArtifactPaths(
+      [resultText, task.completionSummary, task.validationSummary ?? ""].join(
+        "\n",
+      ),
+    );
+    for (const referencedPath of referencedPaths) {
+      if (attachments.length >= MAX_SYNTHESIS_ATTACHMENTS) return attachments;
+      const resolved = path.resolve(referencedPath);
+      if (
+        seen.has(resolved) ||
+        (resolved !== workdir && !resolved.startsWith(`${workdir}${path.sep}`))
+      ) {
+        continue;
+      }
+      const contentType = SYNTHESIS_ATTACHMENT_CONTENT_TYPES.get(
+        path.extname(resolved).toLowerCase(),
+      );
+      if (!contentType) continue;
+      try {
+        const stat = await fs.stat(resolved);
+        if (!stat.isFile() || stat.size > MAX_SYNTHESIS_ATTACHMENT_BYTES) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      seen.add(resolved);
+      attachments.push({
+        id: crypto.randomUUID(),
+        url: resolved,
+        title: path.basename(resolved),
+        source: "task-agent-artifact",
+        contentType,
+      });
+    }
+  }
+  return attachments;
+}
+
+function extractLocalArtifactPaths(text: string): string[] {
+  const paths = new Set<string>();
+  for (const match of text.matchAll(/`(\/[^`\n]+)`/gu)) {
+    paths.add(match[1]);
+  }
+  for (const match of text.matchAll(/(?:^|\s)(\/[^\s"'`<>|]+)/gmu)) {
+    paths.add(match[1].replace(/[),.;:!?]+$/u, ""));
+  }
+  return [...paths];
+}
+
 async function readAgentFinalAssistantMessage(
   workdir: string,
 ): Promise<string | null> {
@@ -459,6 +553,7 @@ async function isPortServing(port: string): Promise<boolean> {
 async function routeSynthesisToConnector(
   runtime: AgentRuntime,
   resultText: string,
+  attachments: Media[] = [],
   fallbackRoomId: string | null = null,
   replyToExternalMessageId: string | null = null,
 ): Promise<void> {
@@ -478,6 +573,7 @@ async function routeSynthesisToConnector(
       {
         text: resultText,
         source: "swarm_synthesis",
+        ...(attachments.length > 0 ? { attachments } : {}),
         ...(replyToExternalMessageId
           ? { inReplyTo: replyToExternalMessageId }
           : {}),

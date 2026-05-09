@@ -183,6 +183,76 @@ describe("executeDecision", () => {
       expect.objectContaining({ type: "task_complete" }),
     );
   });
+
+  it("does not complete stale output when validation cannot revise an exited session", async () => {
+    mockedValidateTaskCompletion.mockResolvedValueOnce({
+      verdict: "revise",
+      summary: "No generated image artifact was found.",
+      followUpPrompt: "Continue and produce the image artifact.",
+      reportPath: "",
+      artifacts: [],
+    });
+
+    const sessionId = "pty-test";
+    const taskCtx = {
+      agentType: "codex",
+      completionSummary: "",
+      decisions: [],
+      label: "agent-test",
+      originalTask: "generate an image",
+      status: "active",
+      threadId: "thread-test",
+      workdir: "/repo",
+    };
+    const sendChatMessage = vi.fn();
+    const sendToSession = vi.fn(async () => {
+      throw new Error(`Session ${sessionId} not found`);
+    });
+    const ctx = {
+      broadcast: vi.fn(),
+      getSwarmCompleteCallback: vi.fn(() => undefined),
+      log: vi.fn(),
+      ptyService: {
+        getSessionOutput: vi.fn(async () => "web search:\nweb search: url"),
+        sendToSession,
+        stopSession: vi.fn(async () => undefined),
+      },
+      runtime: {},
+      sendChatMessage,
+      sharedDecisions: [],
+      swarmCompleteNotified: false,
+      syncTaskContext: vi.fn(async () => undefined),
+      taskRegistry: {
+        appendEvent: vi.fn(async () => undefined),
+        getSession: vi.fn(async () => null),
+        getThread: vi.fn(async () => null),
+        updateThreadSummary: vi.fn(async () => undefined),
+      },
+      tasks: new Map([[sessionId, taskCtx]]),
+    };
+
+    await executeDecision(ctx as never, sessionId, {
+      action: "complete",
+      reasoning: "web search:\nweb search: url",
+    });
+    await vi.waitFor(() => expect(sendChatMessage).toHaveBeenCalled());
+
+    expect(sendToSession).toHaveBeenCalledWith(
+      sessionId,
+      "Continue and produce the image artifact.",
+    );
+    expect(taskCtx.status).toBe("error");
+    expect(taskCtx.completionSummary).toContain(
+      "Validation requested another turn",
+    );
+    expect(taskCtx.validationSummary).toBe(
+      "No generated image artifact was found.",
+    );
+    expect(sendChatMessage).toHaveBeenCalledWith(
+      "No generated image artifact was found.",
+      "task-agent",
+    );
+  });
 });
 
 describe("taskAgentFailureReasonFromTurnOutput", () => {
