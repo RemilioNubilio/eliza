@@ -3264,6 +3264,23 @@ export class AgentRuntime implements IAgentRuntime {
 				const val = this.getSetting(`${prefix}${settingKey}`);
 				if (typeof val === "string" && val) return val;
 			}
+			// Canonical two-knob pair: ranked with the bare aliases for display
+			// (small-family slots read ELIZA_MODEL_SMALL, large-family read LARGE).
+			const canonicalKey =
+				candidate === "TEXT_LARGE" || candidate === "TEXT_MEGA"
+					? "ELIZA_MODEL_LARGE"
+					: candidate === "TEXT_SMALL" ||
+							candidate === "TEXT_NANO" ||
+							candidate === "TEXT_MINI"
+						? "ELIZA_MODEL_SMALL"
+						: undefined;
+			if (canonicalKey) {
+				const val = this.getSetting(canonicalKey);
+				if (typeof val === "string" && val && !val.includes("/")) return val;
+				if (typeof val === "string" && val.includes("/")) {
+					return val.slice(val.indexOf("/") + 1);
+				}
+			}
 		}
 
 		return resolvedModelType;

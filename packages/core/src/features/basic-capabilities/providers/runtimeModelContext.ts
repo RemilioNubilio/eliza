@@ -121,6 +121,22 @@ function fallbackModelString(
 			const configured = readSetting(runtime, `${prefix}${suffix}`);
 			if (configured) return configured;
 		}
+		// Canonical two-knob pair: small-family slots display ELIZA_MODEL_SMALL,
+		// large-family display ELIZA_MODEL_LARGE (bare id when qualified).
+		const canonicalKey =
+			candidate === ModelType.TEXT_LARGE || candidate === ModelType.TEXT_MEGA
+				? "ELIZA_MODEL_LARGE"
+				: candidate === ModelType.TEXT_SMALL ||
+						candidate === ModelType.TEXT_NANO
+					? "ELIZA_MODEL_SMALL"
+					: undefined;
+		if (canonicalKey) {
+			const configured = readSetting(runtime, canonicalKey);
+			if (configured) {
+				const slash = configured.indexOf("/");
+				return slash > 0 ? configured.slice(slash + 1) : configured;
+			}
+		}
 	}
 	return String(modelType);
 }
