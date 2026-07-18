@@ -2276,7 +2276,11 @@ export function applyCloudConfigToEnv(config: ElizaConfig): void {
       llmText?.smallModel ||
       models?.small ||
       readEffectiveEnvValue(config, "ELIZAOS_CLOUD_SMALL_MODEL") ||
-      readCanonicalModel(null, "small", "elizacloud") ||
+      readCanonicalModel(
+        { getSetting: (key) => readEffectiveEnvValue(config, key) ?? null },
+        "small",
+        "elizacloud",
+      ) ||
       DEFAULT_ELIZA_CLOUD_TEXT_MODEL;
     const medium =
       llmText?.mediumModel ||
@@ -2287,7 +2291,11 @@ export function applyCloudConfigToEnv(config: ElizaConfig): void {
       llmText?.largeModel ||
       models?.large ||
       readEffectiveEnvValue(config, "ELIZAOS_CLOUD_LARGE_MODEL") ||
-      readCanonicalModel(null, "large", "elizacloud") ||
+      readCanonicalModel(
+        { getSetting: (key) => readEffectiveEnvValue(config, key) ?? null },
+        "large",
+        "elizacloud",
+      ) ||
       DEFAULT_ELIZA_CLOUD_TEXT_MODEL;
     const mega =
       llmText?.megaModel ||
