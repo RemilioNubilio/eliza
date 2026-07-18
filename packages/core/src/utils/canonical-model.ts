@@ -23,6 +23,37 @@ import { resolveSetting, type SettingReader } from "./resolve-setting.js";
 
 export type CanonicalModelTier = "small" | "large";
 
+/** Every token that counts as a family qualification prefix. */
+const KNOWN_FAMILY_TOKENS: ReadonlySet<string> = new Set(
+	Object.values({
+		openai: ["openai", "gpt"],
+		anthropic: ["anthropic", "claude"],
+		ollama: ["ollama"],
+		google: ["google", "google-genai", "gemini"],
+		elizacloud: ["elizacloud", "eliza-cloud", "cloud"],
+		cerebras: ["cerebras"],
+		groq: ["groq"],
+		codex: ["codex"],
+	}).flat(),
+);
+
+/**
+ * Whether the raw canonical value for a tier is family-qualified (its first
+ * "/" segment is a known family token). Seed-time guards use this to decide
+ * whether a heuristic id-shape check still applies: a qualified value was
+ * explicitly targeted by the operator; an unqualified one was not.
+ */
+export function canonicalModelIsQualified(
+	runtime: SettingReader | null | undefined,
+	tier: CanonicalModelTier,
+): boolean {
+	const raw = resolveSetting(runtime, CANONICAL_MODEL_ENV_KEYS[tier])?.trim();
+	if (!raw) return false;
+	const slash = raw.indexOf("/");
+	if (slash <= 0) return false;
+	return KNOWN_FAMILY_TOKENS.has(raw.slice(0, slash).trim().toLowerCase());
+}
+
 export const CANONICAL_MODEL_ENV_KEYS: Readonly<
 	Record<CanonicalModelTier, string>
 > = {
@@ -72,12 +103,19 @@ export function readCanonicalModel(
 	const slash = value.indexOf("/");
 	if (slash <= 0) return value;
 
+	const prefix = value.slice(0, slash).trim().toLowerCase();
+	// Native model ids legitimately contain "/" (groq's openai/gpt-oss-120b,
+	// meta-llama/llama-4-*, ollama's hf.co/...). Only a KNOWN family token in
+	// the first segment is a qualification; anything else is part of the id.
+	// To pin a slash-bearing id to a family, prefix it with the family token:
+	// groq/openai/gpt-oss-120b.
+	if (!KNOWN_FAMILY_TOKENS.has(prefix)) return value;
+
 	// A qualified value names its family; without a family to check against it
 	// must NOT leak the bare id to arbitrary consumers (a family-agnostic
 	// caller would otherwise feed e.g. a claude id into a groq seed).
 	if (!family) return undefined;
 
-	const prefix = value.slice(0, slash).trim().toLowerCase();
 	const model = value.slice(slash + 1).trim();
 	if (!model) return undefined;
 

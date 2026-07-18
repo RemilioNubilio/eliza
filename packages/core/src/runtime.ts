@@ -3255,17 +3255,21 @@ export class AgentRuntime implements IAgentRuntime {
 		};
 
 		const providerPrefixes = ["OLLAMA_", "OPENAI_", "ANTHROPIC_", ""];
-		for (const candidate of getModelFallbackChain(
-			resolvedModelType as ModelTypeName,
-		)) {
+		const chain = getModelFallbackChain(resolvedModelType as ModelTypeName);
+		for (const candidate of chain) {
 			const settingKey = slotToSetting[candidate];
 			if (!settingKey) continue;
 			for (const prefix of providerPrefixes) {
 				const val = this.getSetting(`${prefix}${settingKey}`);
 				if (typeof val === "string" && val) return val;
 			}
-			// Canonical two-knob pair: ranked with the bare aliases for display
-			// (small-family slots read ELIZA_MODEL_SMALL, large-family read LARGE).
+		}
+		// Canonical two-knob pair, checked only after every lane-specific key
+		// across the whole fallback chain (mirroring serving precedence, where
+		// lane keys always outrank the pair). Family-agnostic display: only an
+		// unqualified value is safe to report — a qualified value may have been
+		// rejected by the serving lane's family gate.
+		for (const candidate of chain) {
 			const canonicalKey =
 				candidate === "TEXT_LARGE" || candidate === "TEXT_MEGA"
 					? "ELIZA_MODEL_LARGE"
@@ -3274,13 +3278,9 @@ export class AgentRuntime implements IAgentRuntime {
 							candidate === "TEXT_MINI"
 						? "ELIZA_MODEL_SMALL"
 						: undefined;
-			if (canonicalKey) {
-				const val = this.getSetting(canonicalKey);
-				if (typeof val === "string" && val && !val.includes("/")) return val;
-				if (typeof val === "string" && val.includes("/")) {
-					return val.slice(val.indexOf("/") + 1);
-				}
-			}
+			if (!canonicalKey) continue;
+			const val = this.getSetting(canonicalKey);
+			if (typeof val === "string" && val && !val.includes("/")) return val;
 		}
 
 		return resolvedModelType;

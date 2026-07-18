@@ -114,15 +114,19 @@ function fallbackModelString(
 	runtime: IAgentRuntime,
 	modelType: ModelTypeName,
 ): string {
-	for (const candidate of getModelFallbackChain(modelType)) {
+	const chain = getModelFallbackChain(modelType);
+	for (const candidate of chain) {
 		const suffix = MODEL_SETTING_SUFFIX[candidate];
 		if (!suffix) continue;
 		for (const prefix of MODEL_PROVIDER_PREFIXES) {
 			const configured = readSetting(runtime, `${prefix}${suffix}`);
 			if (configured) return configured;
 		}
-		// Canonical two-knob pair: small-family slots display ELIZA_MODEL_SMALL,
-		// large-family display ELIZA_MODEL_LARGE (bare id when qualified).
+	}
+	// Canonical two-knob pair, only after every lane-specific key across the
+	// chain; unqualified values only (a qualified one may have been rejected by
+	// the serving lane's family gate — reporting it would lie about the model).
+	for (const candidate of chain) {
 		const canonicalKey =
 			candidate === ModelType.TEXT_LARGE || candidate === ModelType.TEXT_MEGA
 				? "ELIZA_MODEL_LARGE"
@@ -130,13 +134,9 @@ function fallbackModelString(
 						candidate === ModelType.TEXT_NANO
 					? "ELIZA_MODEL_SMALL"
 					: undefined;
-		if (canonicalKey) {
-			const configured = readSetting(runtime, canonicalKey);
-			if (configured) {
-				const slash = configured.indexOf("/");
-				return slash > 0 ? configured.slice(slash + 1) : configured;
-			}
-		}
+		if (!canonicalKey) continue;
+		const configured = readSetting(runtime, canonicalKey);
+		if (configured && !configured.includes("/")) return configured;
 	}
 	return String(modelType);
 }

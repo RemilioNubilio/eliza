@@ -280,15 +280,22 @@ function getCerebrasLargeModel(runtime: IAgentRuntime): string | undefined {
     : undefined;
 }
 
-function getEvoLinkModel(runtime: IAgentRuntime): string | undefined {
-  return isEvoLinkMode(runtime) ? (getSetting(runtime, "EVOLINK_MODEL") ?? "gpt-5.2") : undefined;
+function getEvoLinkModel(
+  runtime: IAgentRuntime,
+  tier: "small" | "large" = "large"
+): string | undefined {
+  return isEvoLinkMode(runtime)
+    ? (getSetting(runtime, "EVOLINK_MODEL") ??
+        readCanonicalModel(runtime, tier, "openai") ??
+        "gpt-5.2")
+    : undefined;
 }
 
 export function getSmallModel(runtime: IAgentRuntime): string {
   return (
     getSetting(runtime, "OPENAI_SMALL_MODEL") ??
     getCerebrasSmallModel(runtime) ??
-    getEvoLinkModel(runtime) ??
+    getEvoLinkModel(runtime, "small") ??
     readCanonicalModel(runtime, "small", "openai") ??
     getSetting(runtime, "SMALL_MODEL") ??
     "gpt-5.6-luna"
@@ -299,7 +306,7 @@ export function getNanoModel(runtime: IAgentRuntime): string {
   return (
     getSetting(runtime, "OPENAI_NANO_MODEL") ??
     getCerebrasSmallModel(runtime) ??
-    getEvoLinkModel(runtime) ??
+    getEvoLinkModel(runtime, "small") ??
     getSetting(runtime, "NANO_MODEL") ??
     getSmallModel(runtime)
   );
@@ -309,7 +316,7 @@ export function getMediumModel(runtime: IAgentRuntime): string {
   return (
     getSetting(runtime, "OPENAI_MEDIUM_MODEL") ??
     getCerebrasSmallModel(runtime) ??
-    getEvoLinkModel(runtime) ??
+    getEvoLinkModel(runtime, "small") ??
     getSetting(runtime, "MEDIUM_MODEL") ??
     getSmallModel(runtime)
   );

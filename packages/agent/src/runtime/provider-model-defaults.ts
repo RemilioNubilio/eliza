@@ -6,7 +6,7 @@
  * Seeding order matters: every default here is set-if-missing, so explicit
  * operator config (env or character settings folded into env) always wins.
  */
-import { readCanonicalModel } from "@elizaos/core";
+import { canonicalModelIsQualified, readCanonicalModel } from "@elizaos/core";
 import { DEFAULT_CEREBRAS_TEXT_MODEL } from "@elizaos/shared";
 
 /** Set an env default without clobbering an operator-provided value. */
@@ -44,6 +44,23 @@ export function isLikelyOpenAiTextModel(value: string | undefined): boolean {
     model.startsWith("codex-") ||
     /^o[134](?:-|$)/.test(model)
   );
+}
+
+/**
+ * Canonical-pair leg for the Groq/Cerebras seeds. A family-qualified value
+ * (groq/..., cerebras/...) was explicitly targeted by the operator and is
+ * accepted verbatim; an unqualified value still passes the same
+ * OpenAI-id-shape guard the shared-model candidates use, so a bare gpt-* pair
+ * never poisons a non-OpenAI provider's seed.
+ */
+function guardedCanonicalSeed(
+  tier: "small" | "large",
+  family: string,
+): string | undefined {
+  const value = readCanonicalModel(null, tier, family);
+  if (!value) return undefined;
+  if (canonicalModelIsQualified(null, tier)) return value;
+  return isLikelyOpenAiTextModel(value) ? undefined : value;
 }
 
 export function applyProviderModelEnvDefaults(): void {
@@ -87,13 +104,13 @@ export function applyProviderModelEnvDefaults(): void {
     "GROQ_SMALL_MODEL",
     currentSharedSmallModel && !isLikelyOpenAiTextModel(currentSharedSmallModel)
       ? currentSharedSmallModel
-      : (readCanonicalModel(null, "small", "groq") ?? "openai/gpt-oss-120b"),
+      : (guardedCanonicalSeed("small", "groq") ?? "openai/gpt-oss-120b"),
   );
   setEnvIfMissing(
     "GROQ_LARGE_MODEL",
     currentSharedLargeModel && !isLikelyOpenAiTextModel(currentSharedLargeModel)
       ? currentSharedLargeModel
-      : (readCanonicalModel(null, "large", "groq") ?? "openai/gpt-oss-120b"),
+      : (guardedCanonicalSeed("large", "groq") ?? "openai/gpt-oss-120b"),
   );
 
   // Seed independent Cerebras tiers from the matching shared tiers. Keep an
@@ -103,7 +120,7 @@ export function applyProviderModelEnvDefaults(): void {
   const cerebrasSmallModel =
     currentSharedSmallModel && !isLikelyOpenAiTextModel(currentSharedSmallModel)
       ? currentSharedSmallModel
-      : (readCanonicalModel(null, "small", "cerebras") ??
+      : (guardedCanonicalSeed("small", "cerebras") ??
         DEFAULT_CEREBRAS_TEXT_MODEL);
   if (!explicitLegacyCerebrasModel) {
     setEnvIfMissing("CEREBRAS_SMALL_MODEL", cerebrasSmallModel);
@@ -112,7 +129,7 @@ export function applyProviderModelEnvDefaults(): void {
       currentSharedLargeModel &&
         !isLikelyOpenAiTextModel(currentSharedLargeModel)
         ? currentSharedLargeModel
-        : cerebrasSmallModel,
+        : (guardedCanonicalSeed("large", "cerebras") ?? cerebrasSmallModel),
     );
   }
   setEnvIfMissing(
