@@ -64,9 +64,14 @@ export function normalizeSchemaForCerebras(
 		const hasAnyOf = Array.isArray(node.anyOf) && node.anyOf.length > 0;
 		const hasOneOf = Array.isArray(node.oneOf) && node.oneOf.length > 0;
 		if (!hasProps && !hasAnyOf && !hasOneOf) {
-			delete node.properties;
+			// Cerebras' current validator requires object schemas to carry a
+			// `properties` key — a bare {type:"object"} 400s with wrong_api_format
+			// ("Object fields require at least one of: 'properties' or 'anyOf'"),
+			// notably in `response_format`. Empty `properties:{}` is accepted
+			// (verified live), so keep the key present-but-empty rather than deleting.
+			node.properties = {};
+			node.additionalProperties = false;
 			delete node.required;
-			delete node.additionalProperties;
 		} else if (hasProps) {
 			const next: Record<string, unknown> = {};
 			for (const [k, v] of Object.entries(props as Record<string, unknown>)) {
