@@ -31,7 +31,6 @@ export const KNOWN_CANNED_FAILURE_REPLIES: readonly string[] = [
   "Something went wrong on my end. Please try again.",
   // packages/core fallback-reply.ts (shared with connectors)
   "Eliza Cloud credits are depleted. Top up the cloud balance and try again.",
-  "My model provider's account is out of credits. Add funds to the provider account and try again.",
   // the bridge's own no-reply fabrication (also flagged fallback:true)
   "Agent runtime is online, but no model response was produced before the cloud bridge timeout.",
   // cloud-agent native /bridge with an empty handleMessage callback

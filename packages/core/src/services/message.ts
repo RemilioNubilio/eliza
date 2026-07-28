@@ -298,9 +298,8 @@ import {
 	normalizeActionIdentifier,
 } from "./message/direct-action-heuristics";
 import {
-	buildAuthFailedReply,
 	buildFailureReplyPrompt,
-	buildInsufficientCreditsReply,
+	INSUFFICIENT_CREDITS_REPLY,
 	isAuthError,
 	isInsufficientCreditsError,
 	isRateLimitError,
@@ -1412,9 +1411,9 @@ interface StrategyResult {
 type FailureReplyAttempt =
 	| { kind: "text"; value: string }
 	| { kind: "noProvider" }
-	| { kind: "creditsExhausted"; provider?: string }
+	| { kind: "creditsExhausted" }
 	| { kind: "rateLimited" }
-	| { kind: "authFailed"; provider?: string };
+	| { kind: "authFailed" };
 
 export function shouldSkipResponseMemoryPersistence(memory: Memory): boolean {
 	const content = memory.content as Record<string, unknown> | undefined;
@@ -11731,41 +11730,14 @@ export class DefaultMessageService implements IMessageService {
 		return "(unavailable)";
 	}
 
-	/**
-	 * Name the model provider whose handler serves `modelType`, keyed on
-	 * registration identity (never on error-message text): the provider that
-	 * answered the most recent successful call for the slot when known, else
-	 * the highest-priority registration `useModel` selects. Returns undefined —
-	 * never a fabricated name — when neither source is available (e.g. a
-	 * partial test runtime), so the failure reply degrades to provider-neutral
-	 * phrasing instead of blaming the wrong account.
-	 */
-	private resolveActiveModelProvider(
-		runtime: IAgentRuntime,
-		modelType: string,
-	): string | undefined {
-		const lastResolved = runtime.getLastResolvedModelProvider?.(modelType);
-		if (typeof lastResolved === "string" && lastResolved.trim().length > 0) {
-			return lastResolved;
-		}
-		if (typeof runtime.getModelRegistrations !== "function") {
-			return undefined;
-		}
-		return runtime
-			.getModelRegistrations()
-			.find((entry) => entry.modelType === modelType)?.provider;
-	}
-
 	private async generateFailureReplyText(
 		runtime: IAgentRuntime,
 		prompt: string,
 		stage: string,
 	): Promise<FailureReplyAttempt> {
 		let sawCreditsExhausted = false;
-		let creditsProvider: string | undefined;
 		let sawRateLimit = false;
 		let sawAuthError = false;
-		let authProvider: string | undefined;
 		for (const modelType of [
 			ModelType.TEXT_LARGE,
 			ModelType.RESPONSE_HANDLER,
@@ -11810,19 +11782,9 @@ export class DefaultMessageService implements IMessageService {
 				// Credits are classified before rate limits below: a 429 *with*
 				// billing context is a drained balance ("top up"), not a
 				// transient throttle ("try again in a few seconds").
-				if (!sawCreditsExhausted && isInsufficientCreditsError(error)) {
-					sawCreditsExhausted = true;
-					// Attribute the drained account to the provider whose handler
-					// serves this slot so the reply names the real account to top
-					// up — a direct-provider 402 is not an Eliza Cloud balance
-					// problem.
-					creditsProvider = this.resolveActiveModelProvider(runtime, modelType);
-				}
+				sawCreditsExhausted ||= isInsufficientCreditsError(error);
 				sawRateLimit = isRateLimitError(error);
 				sawAuthError = isAuthError(error);
-				authProvider = sawAuthError
-					? this.resolveActiveModelProvider(runtime, modelType)
-					: undefined;
 				runtime.logger.warn(
 					{
 						src: "service:message",
@@ -11839,7 +11801,7 @@ export class DefaultMessageService implements IMessageService {
 		// permanent until the user tops up — "try again" can never succeed, so
 		// surface the actionable top-up message.
 		if (sawCreditsExhausted) {
-			return { kind: "creditsExhausted", provider: creditsProvider };
+			return { kind: "creditsExhausted" };
 		}
 		// When the final cause was provider rate-limiting (429), tell the user
 		// that plainly instead of the opaque generic message — the honest
@@ -11850,7 +11812,7 @@ export class DefaultMessageService implements IMessageService {
 		// An auth failure (bad/expired/unauthorized cloud key) is actionable —
 		// tell the user to fix their key/credits, not the opaque generic message.
 		if (sawAuthError) {
-			return { kind: "authFailed", provider: authProvider };
+			return { kind: "authFailed" };
 		}
 		return { kind: "text", value: "" };
 	}
@@ -11909,7 +11871,7 @@ export class DefaultMessageService implements IMessageService {
 				const tmpl = runtime.character.templates?.insufficientCreditsReply;
 				replyText =
 					(typeof tmpl === "function" ? tmpl({ state }) : tmpl) ||
-					buildInsufficientCreditsReply(attempt.provider);
+					INSUFFICIENT_CREDITS_REPLY;
 			} else if (attempt.kind === "rateLimited") {
 				const tmpl = runtime.character.templates?.rateLimitedReply;
 				replyText =
@@ -11919,7 +11881,7 @@ export class DefaultMessageService implements IMessageService {
 				const tmpl = runtime.character.templates?.authFailedReply;
 				replyText =
 					(typeof tmpl === "function" ? tmpl({ state }) : tmpl) ||
-					buildAuthFailedReply(attempt.provider);
+					"My Eliza Cloud key isn't authorized for inference right now — check that your cloud key is valid and your account has credits, then try again.";
 			} else {
 				const tmpl = runtime.character.templates?.transientFailureReply;
 				replyText =
