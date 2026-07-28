@@ -151,70 +151,14 @@ export function isRateLimitError(error: unknown): boolean {
 }
 
 /**
- * The user-facing reply for a credit-exhausted provider when the failing
- * provider cannot be identified. Deliberately provider-neutral: the failure is
- * an Eliza Cloud balance problem only when the active model handler IS the
- * cloud plugin, and claiming "cloud credits" for a direct-provider 402 (e.g.
- * plugin-openai pointed at a Cerebras base URL) sends the user to top up the
- * wrong account. One string for every delivery path: the direct chat API
- * (`packages/agent` re-uses it) and the connector failure-reply path below.
- * Characters override via `character.templates.insufficientCreditsReply`;
- * callers that know the failing provider use
- * {@link buildInsufficientCreditsReply} instead.
+ * The user-facing reply for a credit-exhausted provider. One string for every
+ * delivery path: the direct chat API (`packages/agent` re-uses it) and the
+ * connector failure-reply path below, so a Discord/Telegram user and a
+ * dashboard user read the same actionable condition. Characters override via
+ * `character.templates.insufficientCreditsReply`.
  */
 export const INSUFFICIENT_CREDITS_REPLY =
-	"My model provider's account is out of credits. Add funds to the provider account and try again.";
-
-/**
- * Registered model-provider names that identify the managed Eliza Cloud
- * gateway. "elizaOSCloud" is the load-bearing runtime identity the cloud
- * plugin registers its model handlers under; the comparison keys on that
- * registration identity — a structured field — never on error-message text.
- */
-const ELIZA_CLOUD_PROVIDER_NAMES = new Set(["elizaoscloud", "elizacloud"]);
-
-export function isElizaCloudProviderName(
-	provider: string | undefined,
-): boolean {
-	return (
-		typeof provider === "string" &&
-		ELIZA_CLOUD_PROVIDER_NAMES.has(provider.trim().toLowerCase())
-	);
-}
-
-/**
- * Provider-attributed credit-exhaustion reply. `provider` is the registered
- * model-provider name of the handler whose call failed (runtime model
- * registry / last-resolved-provider bookkeeping). Only the genuine cloud
- * provider yields the "Eliza Cloud" phrasing; a direct provider is named so
- * the user tops up the right account; an unknown provider falls back to the
- * neutral reply rather than fabricating a cause.
- */
-export function buildInsufficientCreditsReply(provider?: string): string {
-	const name = provider?.trim();
-	if (!name) return INSUFFICIENT_CREDITS_REPLY;
-	if (isElizaCloudProviderName(name)) {
-		return "Eliza Cloud credits are depleted. Top up the cloud balance and try again.";
-	}
-	return `The ${name} API key is out of credits or over its quota. Add funds to that provider account and try again.`;
-}
-
-/**
- * Provider-attributed auth-failure reply (401/403). Mirrors
- * {@link buildInsufficientCreditsReply}: only the genuine cloud provider is
- * described as an Eliza Cloud key problem; a direct provider is named; an
- * unknown provider gets provider-neutral phrasing.
- */
-export function buildAuthFailedReply(provider?: string): string {
-	const name = provider?.trim();
-	if (name && isElizaCloudProviderName(name)) {
-		return "My Eliza Cloud key isn't authorized for inference right now — check that your cloud key is valid and your account has credits, then try again.";
-	}
-	if (name) {
-		return `The ${name} API key isn't authorized right now. Check that the key is valid and its account is in good standing, then try again.`;
-	}
-	return "My model provider's API key isn't authorized right now. Check that the key is valid and its account is in good standing, then try again.";
-}
+	"Eliza Cloud credits are depleted. Top up the cloud balance and try again.";
 
 // Credits-specific phrases only — deliberately no plain rate-limit tokens
 // (e.g. `rate_limit_exceeded`), so a transient throttle can never classify as
@@ -278,10 +222,10 @@ export function isInsufficientCreditsError(error: unknown): boolean {
 
 /**
  * Detect provider auth failures (401/403 — invalid/expired/unauthorized API key)
- * so the user-facing failure reply (see {@link buildAuthFailedReply}) can name
- * the failing provider's key instead of the opaque generic "something went
- * wrong". Mirrors {@link isRateLimitError}: structured HTTP status first,
- * message-substring fallback second.
+ * so the user-facing failure reply can say "my cloud key isn't authorized — check
+ * your Eliza Cloud key / add credits" instead of the opaque generic
+ * "something went wrong". Mirrors {@link isRateLimitError}: structured HTTP status
+ * first, message-substring fallback second.
  */
 export function isAuthError(error: unknown): boolean {
 	const unwrapped = unwrapRetryError(error);
