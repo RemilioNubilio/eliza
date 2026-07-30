@@ -2839,9 +2839,10 @@ async function handleReadWithContact(
 	recentMessages.sort((a, b) =>
 		(b.createdAt ?? "").localeCompare(a.createdAt ?? ""),
 	);
-	const sentCount = recentMessages.filter(
-		(m) => m.direction === "sent",
-	).length;
+	// The reply claims a count "in the last N", so count within the same slice
+	// the payload returns — not the full multi-room collection.
+	const recentWindow = recentMessages.slice(0, RECENT_BODY_LIMIT);
+	const sentCount = recentWindow.filter((m) => m.direction === "sent").length;
 
 	return opSuccess(
 		"read_with_contact",
@@ -2851,7 +2852,7 @@ async function handleReadWithContact(
 			primaryEntityId: person.primaryEntityId,
 			conversations,
 			totalMessages,
-			recentMessages: recentMessages.slice(0, RECENT_BODY_LIMIT),
+			recentMessages: recentWindow,
 			platforms: [...new Set(conversations.map((c) => c.platform))],
 		},
 	);
