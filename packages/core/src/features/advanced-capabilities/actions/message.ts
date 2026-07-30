@@ -2813,9 +2813,7 @@ async function handleReadWithContact(
 					recentMessages.push({
 						direction: m.entityId === runtime.agentId ? "sent" : "received",
 						text,
-						createdAt: m.createdAt
-							? new Date(m.createdAt).toISOString()
-							: null,
+						createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : null,
 					});
 				}
 				totalMessages += memories.length;
