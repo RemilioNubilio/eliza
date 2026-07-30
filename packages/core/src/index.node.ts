@@ -429,6 +429,7 @@ export {
 export { Semaphore } from "./utils/batch-queue/semaphore.js";
 export * from "./utils/boolean";
 export * from "./utils/buffer";
+export * from "./utils/canonical-model";
 // Export channel utilities (room/world helpers)
 export * from "./utils/channel-utils";
 export type {
@@ -461,7 +462,6 @@ export * from "./utils/prompt-compression";
 export * from "./utils/read-env";
 // Canonical runtime-setting → env resolver (per-agent setting first, then env)
 export * from "./utils/resolve-setting";
-export * from "./utils/canonical-model";
 export * from "./utils/server-health";
 // Eliza state-dir resolution (ELIZA_STATE_DIR → XDG state home)
 export * from "./utils/state-dir";
