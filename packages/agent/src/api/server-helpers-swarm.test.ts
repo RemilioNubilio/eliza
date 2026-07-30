@@ -91,7 +91,10 @@ describe("handleSwarmSynthesis", () => {
     await writeFile(
       path.join(projectDir, "session.jsonl"),
       `${JSON.stringify({
-        message: { role: "assistant", content: [{ type: "text", text: narration }] },
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: narration }],
+        },
       })}\n`,
       "utf8",
     );
@@ -129,9 +132,7 @@ describe("handleSwarmSynthesis", () => {
       },
     );
 
-    expect(routed).toEqual([
-      "verification failed: launch check did not pass",
-    ]);
+    expect(routed).toEqual(["verification failed: launch check did not pass"]);
   });
 
   it("falls back to a lifecycle line for a stopped Claude task with no verdict", async () => {
