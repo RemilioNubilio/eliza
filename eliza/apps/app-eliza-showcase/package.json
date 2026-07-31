@@ -2,7 +2,7 @@
   "name": "eliza-showcase",
   "version": "0.0.0",
   "type": "module",
-  "description": "Eliza Showcase app scaffolded with elizaOS",
+  "description": "An informational showcase of elizaOS: its runtime primitives and headline features, served identically to the web page and a DESCRIBE_ELIZA agent action.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
@@ -41,6 +41,7 @@
     "vitest": "^4.0.0"
   },
   "elizaos": {
+    "kind": "app",
     "app": {
       "displayName": "Eliza Showcase",
       "category": "utility",

@@ -1,22 +1,11 @@
 /**
- * Minimal React entrypoint for the scaffolded app shell.
+ * Browser entrypoint: mounts the Showcase page into #root. All content lives in
+ * <App/>; this file only owns the DOM handshake.
  */
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-
-const APP_NAME = "Eliza Showcase";
-
-function App() {
-  return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "2rem" }}>
-      <h1>Hello from {APP_NAME}</h1>
-      <p>
-        This Eliza app was scaffolded from <code>packages/elizaos/templates/min-project</code>.
-      </p>
-    </main>
-  );
-}
+import { App } from "./App.js";
 
 const container = document.getElementById("root");
 if (!container) {
