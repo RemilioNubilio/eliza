@@ -322,7 +322,7 @@ export function createAppAction(deps: AppActionDeps = {}): Action {
 		): Promise<ActionResult> => {
 			const actionOptions = normalizeActionOptions(options);
 			if (!(await canManageApps(runtime, message))) {
-				const text = "Sorry — only my owner can manage apps.";
+				const text = "Permission denied: only the owner may manage apps.";
 				await callback?.({ text });
 				return { success: false, text };
 			}
