@@ -2648,28 +2648,33 @@ async function runHistory(
       );
       const count = allTasks.length;
       const tasks = allTasks.slice(0, limit);
-      const filterParts = [
-        windowFilters.label ? `window ${windowFilters.label}` : undefined,
-        statuses.length > 0 ? `statuses ${statuses.join(", ")}` : undefined,
-        search ? `search "${search}"` : undefined,
-        projectId ? `project ${projectId}` : undefined,
-        sessionId ? `session ${sessionId}` : undefined,
-        includeArchived ? "including archived" : undefined,
-      ].filter((part): part is string => Boolean(part));
-      const filterSuffix =
-        filterParts.length > 0 ? ` matching ${filterParts.join("; ")}` : "";
+      // `text` is user-presentable by contract: the planner loop is entitled
+      // to relay an ActionResult.text verbatim to chat (its deterministic
+      // evaluator-protocol-failure fallback does exactly that), so no raw
+      // session UUIDs and no verbatim planner-supplied filter args here. The
+      // machine-precise filter echo lives in data.filters below, which the
+      // model reads when it needs the exact query shape.
+      const hasFilters = Boolean(
+        windowFilters.label ||
+          statuses.length > 0 ||
+          search ||
+          projectId ||
+          sessionId ||
+          includeArchived,
+      );
+      const filterSuffix = hasFilters ? " matching those filters" : "";
 
       let responseText = "";
       if (metric === "count") {
-        responseText = `I found ${count} orchestrator task${count === 1 ? "" : "s"}${filterSuffix}.`;
+        responseText = `I found ${count} task${count === 1 ? "" : "s"}${filterSuffix}.`;
       } else if (tasks.length === 0) {
-        responseText = `I did not find any orchestrator task threads${filterSuffix}.`;
+        responseText = `I did not find any tasks${filterSuffix}.`;
       } else if (metric === "detail") {
         const task = tasks[0];
         responseText = [
           sessionId
-            ? `The orchestrator task containing session ${sessionId} is "${task.title}" [${task.status}].`
-            : `The most recent orchestrator task is "${task.title}" [${task.status}].`,
+            ? `The task for that session is "${task.title}" [${task.status}].`
+            : `The most recent task is "${task.title}" [${task.status}].`,
           `Task id: ${task.id}`,
           `Latest session: ${task.latestSessionLabel ?? task.latestSessionId ?? "none"}`,
           `Workspace: ${task.latestWorkdir ?? "none"}`,
@@ -2680,7 +2685,7 @@ async function runHistory(
           .join("\n");
       } else {
         responseText = [
-          `I found ${count} orchestrator task${count === 1 ? "" : "s"}${filterSuffix}.`,
+          `I found ${count} task${count === 1 ? "" : "s"}${filterSuffix}.`,
           ...tasks.map(renderThreadLine),
         ].join("\n");
       }
